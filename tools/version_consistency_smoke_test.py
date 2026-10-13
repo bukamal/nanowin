@@ -50,12 +50,15 @@ for flag, expected in (("--version", APP_VERSION), ("--build", BUILD_NUMBER)):
     assert out == expected, f"app_version.py {flag} -> {out!r} != {expected!r}"
 
 # --- build scripts derive instead of hardcoding ---------------------------
+# NOTE (nanowin flavor): the Android APK workflow intentionally does not
+# exist here (see docs/WINDOWS_BUILD_AR.md) -- the Windows installer
+# workflow takes its place in the same contract.
 scripts = [
     ROOT / "build_nano_apk.sh",
     ROOT / "installer/build_nano_apk.sh",
     ROOT / "build_nano_apk.bat",
     ROOT / "installer/build_nano_apk.bat",
-    ROOT / ".github/workflows/build-android-apk.yml",
+    ROOT / ".github/workflows/build-windows.yml",
 ]
 for path in scripts:
     text = path.read_text(encoding="utf-8")
