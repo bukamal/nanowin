@@ -22,6 +22,12 @@ jobs:
     env:
       FLET_CLI_SKIP_FLUTTER_DOCTOR: "1"
       FLET_CLI_NO_RICH_OUTPUT: "1"
+      # Windows runner consoles default to cp1252, which cannot encode the
+      # ▶/Arabic log lines tools/quality_gate.py and the smoke scripts print
+      # (UnicodeEncodeError on the very first line). Force UTF-8 stdio for
+      # every Python step instead of touching shared scripts for a
+      # Windows-only console quirk.
+      PYTHONUTF8: "1"
 
     steps:
       - uses: actions/checkout@v4
