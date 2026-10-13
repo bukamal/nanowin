@@ -26,6 +26,7 @@ rsync -a --delete \
   --exclude '/src/nano_offline/core/platform_capabilities.py' \
   --exclude '/tools/sync_from_nano.sh' \
   --exclude '/.github/workflows/build-windows.yml' \
+  --exclude '/windows/' \
   --exclude '/docs/WINDOWS_BUILD_AR.md' \
   --exclude '/NANOWIN.md' \
   "$SRC/" "$DST/"

@@ -67,6 +67,22 @@ jobs:
         run: |
           flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
 
+      - name: Build Windows installer (Inno Setup)
+        # The project ships as a real installer, not a portable exe: Inno
+        # Setup bundles flet's Release folder (exe + flutter DLLs + data)
+        # into Nano-Setup-<version>.exe. windows/installer.iss takes all
+        # release values as /D defines so no version is ever hardcoded.
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $release = Get-ChildItem build/windows -Recurse -Directory -Filter Release | Select-Object -First 1
+          if (-not $release) { throw "Release folder not found under build/windows" }
+          $exe = Get-ChildItem $release.FullName -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "No exe found in $($release.FullName)" }
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc /DAppVersion="${{ steps.appver.outputs.build_version }}" "/DExeName=$($exe.Name)" "/DSourceDir=$($release.FullName)" windows/installer.iss
+          Get-ChildItem build/windows/installer/*.exe
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -74,13 +90,14 @@ jobs:
           name: flet-build-log-windows
           path: flet-build.log
 
-      - name: Upload EXE
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: nano-windows-exe
-          # flet stages the exe under build/windows/<arch>/runner/Release --
-          # glob so a layout rename can't silently upload nothing.
+          name: nano-windows-installer
+          # Nano-Setup-<version>.exe produced by the Inno Setup step above --
+          # if-no-files-found: error makes a missing installer fail the job
+          # loudly instead of a hollow "success".
           path: |
-            build/windows/**/*.exe
+            build/windows/installer/*.exe
           if-no-files-found: error
           retention-days: 14

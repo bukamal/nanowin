@@ -10,7 +10,8 @@ target and a thin platform layer differ.
   `docs/WINDOWS_BUILD_AR.md`, section 5).
 - Windows-specific files owned by this repo: `NANOWIN.md`,
   `docs/WINDOWS_BUILD_AR.md`, `tools/sync_from_nano.sh`,
-  `.github/workflows/build-windows.yml`,
+  `.github/workflows/build-windows.yml`, `windows/installer.iss`,
   `src/nano_offline/core/platform_capabilities.py`.
-- CI (`Build Windows EXE`) runs the quality gate and uploads the exe as
-  the `nano-windows-exe` artifact.
+- CI (`Build Windows EXE`) runs the quality gate, builds an Inno Setup
+  installer (not portable), and uploads it as the `nano-windows-installer`
+  artifact.

@@ -24,8 +24,11 @@ python tools/quality_gate.py
 flet build windows --skip-flutter-doctor
 ```
 
-الناتج: `build/windows/x64/runner/Release/*.exe`. وعبر CI: كل push يشغّل
-`Build Windows EXE` ويرفع الـexe كـartifact باسم `nano-windows-exe`.
+الناتج النهائي **مثبّت (installer) لا نسخة محمولة**: بعد `flet build windows`
+يجمّع Inno Setup مجلد الـRelease في `Nano-Setup-<version>.exe` عبر
+`windows/installer.iss` (النسخة والملف التنفيذي تُمرَّر كـ`/D defines` فلا
+شيء مُصلَّب). وعبر CI: كل push يشغّل `Build Windows EXE` ويرفع المثبّت
+كـartifact باسم `nano-windows-installer`.
 
 ## 3) أين البيانات على ويندوز؟
 
@@ -49,5 +52,6 @@ flet build windows --skip-flutter-doctor
 - `src/nano_offline/core/platform_capabilities.py`
 - `tools/sync_from_nano.sh`
 - `.github/workflows/build-windows.yml`
+- `windows/installer.iss`
 - `docs/WINDOWS_BUILD_AR.md` (هذا الملف)
 - `NANOWIN.md`
