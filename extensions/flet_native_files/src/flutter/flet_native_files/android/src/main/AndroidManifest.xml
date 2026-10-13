@@ -1,0 +1,64 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.nano.homewidget">
+
+    <!-- Voice commands: on-device SpeechRecognizer -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+      PHASE10: home screen widget (Glance). This is a *plugin library*
+      manifest; Gradle's manifest merger folds the <receiver> below into
+      the generated app's final AndroidManifest.xml automatically, the same
+      standard mechanism flutter_local_notifications and workmanager already
+      rely on elsewhere in this project. Nothing here touches (or needs to
+      survive regeneration of) build/flutter/android/app/.../AndroidManifest.xml
+      directly; see build_nano_apk.sh's core-library-desugaring comment for
+      why editing that generated file directly is the approach to avoid.
+    -->
+    <application>
+        <!--
+          android:exported must be TRUE here, not false. This receiver is
+          invoked by the launcher/System Server process (a different app
+          entirely) via the APPWIDGET_UPDATE broadcast whenever the widget
+          is placed, resized, or hits its periodic update tick: that is
+          a genuine cross-process/cross-app call, exactly what `exported`
+          gates on Android 12+ (API 31 made the attribute mandatory and
+          the OS now enforces it strictly instead of silently defaulting).
+          With exported="false" the broadcast is dropped before it ever
+          reaches NanoWidgetReceiver, so the widget is added to the home
+          screen but never actually renders, which is exactly the
+          "يتعذر عرض المحتوى" / "Couldn't load widget" placeholder Android
+          shows for a provider that never responded, not a crash inside
+          NanoWidgetReceiver's own onUpdate() rendering (see FIX_0.9.1).
+        -->
+        <receiver
+            android:name="com.nano.homewidget.NanoWidgetReceiver"
+            android:exported="true"
+            android:label="Nano | نانو">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/nano_widget_info" />
+        </receiver>
+
+        <!--
+          PHASE10: Quick Settings tile, a fast launcher for Nano from the
+          QS panel. android:icon/android:label below are the static
+          fallback shown before the service first binds;
+          NanoQuickSettingsTileService overrides both at runtime in
+          onStartListening once it's live.
+        -->
+        <service
+            android:name="com.nano.homewidget.NanoQuickSettingsTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_nano_tile"
+            android:label="نانو"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

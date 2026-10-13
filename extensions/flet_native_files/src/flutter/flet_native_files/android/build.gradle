@@ -1,0 +1,59 @@
+group 'com.nano.homewidget'
+version '1.0'
+
+buildscript {
+    ext.kotlin_version = '1.9.22'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'com.nano.homewidget'
+    compileSdk 34
+
+    defaultConfig {
+        // Must not exceed the app module's own minSdkVersion (21, set by
+        // Flet from pyproject.toml) -- Gradle's manifest merger hard-fails
+        // otherwise. NanoQuickSettingsTileService (API 24) guards itself
+        // with @RequiresApi + a runtime SDK_INT check, so pre-24 devices
+        // simply never discover it instead of crashing.
+        minSdk 21
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+// FIX_0.9.1: the widget was rebuilt on the plain framework -- see
+// NanoWidgetReceiver.kt for why the Jetpack Glance layer was removed.
+// All Glance/Compose/DataStore dependencies (glance-appwidget,
+// glance-material3, ui-graphics, ui-unit, datastore-preferences) and the
+// compose buildFeatures block are gone with it. What remains is the bare
+// minimum the plugin module still needs: coroutines for the channel handler
+// and androidx.annotation (transitively used by Flutter plugin APIs).
+dependencies {
+    implementation "androidx.annotation:annotation:1.7.1"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+}

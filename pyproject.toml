@@ -1,0 +1,165 @@
+[project]
+name = "nano-offline"
+# Single source of truth: src/nano_offline/version.py (APP_VERSION).
+# `flet build`/`pip` read the resolved value below via [tool.setuptools.dynamic];
+# the Android build scripts and CI derive BUILD_NUMBER/BUILD_VERSION from the
+# same file, so the app, the wheel and the APK can never drift apart again.
+dynamic = ["version"]
+description = "Nano offline accounting and inventory suite built with Flet"
+requires-python = ">=3.10"
+dependencies = [
+  "flet==0.28.3",
+  # App-wide sound-cue system (core/sound.py) now lives entirely inside
+  # this extension too -- native AudioPool playback via the `audioplayers`
+  # Flutter package, declared as a normal dependency in this extension's
+  # own pubspec.yaml (see extensions/flet_native_files/.../pubspec.yaml).
+  # No separate `flet-audio` pip package, and no [tool.flet.flutter]
+  # section below either: unlike flet-audio (a thin Flet-control wrapper
+  # around audioplayers that had to be listed on *both* the Python and the
+  # Flutter side, and was pinned to a dead 0.1.0 release to stay
+  # resolvable against this project's flet==0.28.3 pin), a normal Flutter
+  # plugin dependency of an already-registered [tool.flet.dev_packages]
+  # extension is picked up by `flet build apk` automatically.
+  "flet-native-files==0.1.6",
+  # Encrypted .nanobackup (AES-GCM via backup_service) — imported lazily so
+  # the app still runs without it, but users who create encrypted backups
+  # need it installed; shipping it as a core dep keeps CI and release builds
+  # exercising the encrypted path consistently.
+  "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  # Property-based tests for the money/accounting invariants
+  # (tests/integration/test_money_invariants.py).
+  "hypothesis>=6.100",
+]
+
+# `flet-native-files` is never published to PyPI -- it only exists as the
+# local extension at extensions/flet_native_files (its build location for
+# `flet build apk`'s Flutter/Dart packaging is declared separately below in
+# [tool.flet.dev_packages], which `flet build` reads but `uv` does not).
+# Without this section, `uv sync`/`uv run` looks it up on the PyPI registry
+# to satisfy the `flet-native-files==0.1.5` entry in [project.dependencies],
+# doesn't find it there, and fails dependency resolution before the build
+# even starts -- unrelated to and not fixed by retrying.
+[tool.uv.sources]
+flet-native-files = { path = "extensions/flet_native_files" }
+
+[tool.ruff]
+line-length = 320  # this codebase intentionally keeps single-line Flet control trees; not a style target to enforce yet
+target-version = "py310"
+exclude = ["build", "dist", "extensions"]
+
+[tool.ruff.lint]
+# Start narrow and additive: real-bug categories only, no style/formatting
+# opinions imposed on the existing code. Expand this list gradually.
+select = [
+  "F",   # pyflakes: unused imports/vars, undefined names, etc.
+  "E9",  # syntax errors
+  "B",   # bugbear: common real-world bug patterns (mutable defaults, etc.)
+]
+ignore = [
+  "B008",  # function calls in default args are used intentionally with Flet controls
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests/unit", "tests/integration"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers"
+markers = [
+  "unit: fast pure-python tests (no DB/UI runtime needed)",
+  "integration: tests that build a real AppContext / database",
+  "contract: source-text contract tests migrated from tools/ smoke scripts",
+]
+
+[tool.coverage.run]
+source = ["nano_offline"]
+branch = true
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# Realistic floor: coverage only counts the (growing) unit/integration
+# surface, not the whole 35k-line app yet. Raise this as tests migrate.
+fail_under = 10
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = { attr = "nano_offline.version.APP_VERSION" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.flet]
+org = "com.nano"
+product = "Nano | نانو"
+company = "Nano"
+copyright = "Copyright © 2026"
+# Kept in lock-step with version.py:BUILD_NUMBER by
+# tools/version_consistency_smoke_test.py (build_number has no dynamic form
+# in [tool.flet], so the contract test is what enforces it).
+build_number = 48
+android_permissions = [
+  "android.permission.INTERNET",
+  "android.permission.CAMERA",
+  # Voice «مكالمة ذكية» — SpeechRecognizer requires RECORD_AUDIO (runtime-
+  # requested by NanoSpeechHandler.listen, declared here so the APK ships it).
+  "android.permission.RECORD_AUDIO",
+  # For the closed-app smart-notification check (WorkManager +
+  # flutter_local_notifications, see extensions/flet_native_files):
+  # POST_NOTIFICATIONS is the Android 13+ runtime permission actually
+  # showing a notification requires; RECEIVE_BOOT_COMPLETED lets
+  # WorkManager re-arm the periodic task after a device reboot instead of
+  # silently staying cancelled until the app is next opened; WAKE_LOCK is
+  # what WorkManager itself needs to run the check off-schedule reliably.
+  "android.permission.POST_NOTIFICATIONS",
+  "android.permission.RECEIVE_BOOT_COMPLETED",
+  "android.permission.WAKE_LOCK",
+]
+
+[tool.flet.app]
+path = "src"
+module = "main"
+
+[tool.flet.splash]
+color = "#0F766E"
+dark_color = "#115E59"
+android = true
+ios = true
+web = true
+
+[tool.flet.android]
+adaptive_icon_background = "#0F766E"
+
+[tool.flet.android.manifest_application]
+allowBackup = "false"
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.CAMERA" = true
+"android.permission.RECORD_AUDIO" = true
+"android.permission.POST_NOTIFICATIONS" = true
+"android.permission.RECEIVE_BOOT_COMPLETED" = true
+"android.permission.WAKE_LOCK" = true
+
+# Not "required" -- devices without a camera can still install and use Nano;
+# barcode scanning is just unavailable there. Camera permission above is
+# still requested only at the moment the user taps the scan button.
+[tool.flet.android.feature]
+"android.hardware.camera" = false
+"android.hardware.camera.autofocus" = false
+
+[tool.flet.dev_packages]
+"flet-native-files" = "extensions/flet_native_files"

@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# Smoke scripts import nano_offline directly; guarantee src is importable
+# even when the package isn't pip-installed (fresh CI runner).
+env = {**os.environ, "PYTHONPATH": str(ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")}
+
+
+def _has_module(name: str) -> bool:
+    return subprocess.run([sys.executable, "-c", f"import {name}"], cwd=ROOT, capture_output=True).returncode == 0
+
+
+print("▶ compileall", flush=True)
+subprocess.run([sys.executable, "-m", "compileall", "-q", "src", "tools", "tests", "extensions/flet_native_files/src"], check=True, cwd=ROOT)
+
+# ---------------------------------------------------------------------------
+# pytest suite: tests/unit (pure-python) + tests/integration (real DB).
+# Skips gracefully when pytest isn't installed so the gate is never *weaker*
+# than it used to be -- the standalone smoke scripts below always run.
+# ---------------------------------------------------------------------------
+if _has_module("pytest"):
+    print("▶ pytest", flush=True)
+    args = [sys.executable, "-m", "pytest", "-q"]
+    if _has_module("coverage"):
+        args = [sys.executable, "-m", "coverage", "run", "-m", "pytest", "-q"]
+    result = subprocess.run(args, cwd=ROOT)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+    if _has_module("coverage"):
+        print("▶ coverage report", flush=True)
+        subprocess.run([sys.executable, "-m", "coverage", "report"], check=True, cwd=ROOT)
+else:
+    print("▶ pytest (skipped: pytest not installed in this environment)", flush=True)
+
+# ---------------------------------------------------------------------------
+# Standalone smoke/contract scripts. These predate pytest and are still the
+# authority for the phase-by-phase functional guarantees; several are also
+# mirrored as pytest contract tests under tests/contract, but the originals
+# stay wired here until that migration is complete.
+# ---------------------------------------------------------------------------
+SCRIPTS = [
+    "tools/schema_smoke_test.py",
+    "tools/core_smoke_test.py",
+    "tools/phase2_schema_upgrade_smoke_test.py",
+    "tools/phase2_invoice_editor_core_smoke_test.py",
+    "tools/phase2_flet_ui_contract_smoke_test.py",
+    "tools/phase2_project_contract_smoke_test.py",
+    "tools/phase3_schema_migration_smoke_test.py",
+    "tools/phase3_financial_workflow_smoke_test.py",
+    "tools/phase3_allocation_edge_cases_smoke_test.py",
+    "tools/phase3_flet_ui_contract_smoke_test.py",
+    "tools/phase3_project_contract_smoke_test.py",
+    "tools/phase4_reporting_core_smoke_test.py",
+    "tools/phase4_reporting_historical_smoke_test.py",
+    "tools/phase4_flet_ui_contract_smoke_test.py",
+    "tools/phase4_project_contract_smoke_test.py",
+    "tools/phase5_schema_migration_smoke_test.py",
+    "tools/phase5_auth_security_smoke_test.py",
+    "tools/phase5_backup_restore_smoke_test.py",
+    "tools/phase5_license_offline_smoke_test.py",
+    "tools/phase5_admin_ui_contract_smoke_test.py",
+    "tools/phase5_project_contract_smoke_test.py",
+    "tools/phase6_hawaa_activation_contract_smoke_test.py",
+    "tools/phase6_android_storage_smoke_test.py",
+    "tools/phase6_activation_ui_contract_smoke_test.py",
+    "tools/phase6_android_build_contract_smoke_test.py",
+    "tools/phase7_service_cost_smoke_test.py",
+    "tools/phase7_document_export_smoke_test.py",
+    "tools/phase7_native_extension_packaging_smoke_test.py",
+    "tools/phase7_ui_contract_smoke_test.py",
+    "tools/phase7_1_android_ci_environment_smoke_test.py",
+    "tools/phase7_2_flutter_dependency_alignment_smoke_test.py",
+    "tools/phase7_project_contract_smoke_test.py",
+    "tools/nano_branding_contract_smoke_test.py",
+    "tools/sound_system_smoke_test.py",
+    "tools/invoice_ui_android_regression_smoke_test.py",
+    "tools/search_select_contract_smoke_test.py",
+    "tools/quick_auth_saved_login_smoke_test.py",
+    "tools/cash_backup_pdf_android_smoke_test.py",
+    "tools/qeid_reference_design_phase1_smoke_test.py",
+    "tools/qeid_reference_design_phase2_smoke_test.py",
+    "tools/definitions_management_smoke_test.py",
+    "tools/item_delete_guard_smoke_test.py",
+    "tools/barcode_scan_smoke_test.py",
+    "tools/barcode_labels_branding_smoke_test.py",
+    "tools/phase10_audit_chain_smoke_test.py",
+    "tools/phase10_backup_encryption_smoke_test.py",
+    "tools/phase10_public_qr_verify_smoke_test.py",
+    "tools/phase10_receipt_capture_smoke_test.py",
+    "tools/phase10_forecast_smoke_test.py",
+    "tools/money_consistency_smoke_test.py",
+    "tools/phase11_router_contract_smoke_test.py",
+    "tools/version_consistency_smoke_test.py",
+    "tools/apk_release_preflight.py",
+]
+
+env_note = "(pytest already covered unit+integration; smoke scripts verify phase contracts)"
+print(f"▶ smoke/contract scripts {env_note}", flush=True)
+for script in SCRIPTS:
+    print("▶", script, flush=True)
+    subprocess.run([sys.executable, str(ROOT / script)], check=True, cwd=ROOT, env=env)
+print("quality_gate passed")

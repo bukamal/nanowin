@@ -1,0 +1,151 @@
+# Build the Nano (bilingual accounting) APK on every push/PR and on demand.
+#
+# Flet 0.28.3 needs a real Android SDK to produce an APK, so this workflow
+# provisions Java 17, the Android 35 platform and build-tools 34.0.0, runs the
+# project's own quality gate (tools/quality_gate.py), then packages the app.
+# The Flet build output (project-release.apk) and the full build log are kept
+# as artifacts so a broken build is diagnosable after the fact.
+name: Build Android APK
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      FLET_CLI_SKIP_FLUTTER_DOCTOR: "1"
+      FLET_CLI_NO_RICH_OUTPUT: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Provision Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK and accept licenses
+        # Manual provisioning instead of android-actions/setup-android@v3:
+        # that action has been flaky (dl.google 403/timeouts) and failed this
+        # job repeatedly. This installs the cmdline-tools directly and exports
+        # ANDROID_SDK_ROOT for the later steps -- same contract, no flake.
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          rm -rf "$SDK_ROOT/cmdline-tools/latest" /tmp/clt
+          mkdir -p "$SDK_ROOT/cmdline-tools"
+          curl -fsSL --retry 4 --retry-delay 8 -o /tmp/cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/clt
+          mv /tmp/clt/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
+          # NOT `yes | sdkmanager --licenses`: when sdkmanager closes stdin
+          # after accepting all licenses, `yes` keeps writing and dies with
+          # "Broken pipe" -- under pipefail that fails the whole step.
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses <<< "$(printf 'y\n%.0s' {1..30})" >/dev/null || true
+
+      - name: Install project dependencies
+        run: |
+          set -e
+          pip install --upgrade pip setuptools wheel
+          pip install "flet==0.28.3" pyyaml coverage
+          # The local extension first: flet-native-files is not on PyPI, so it
+          # must already satisfy the pin before `pip install -e .[dev]` resolves.
+          pip install -e extensions/flet_native_files
+          pip install -e ".[dev]"
+
+      - name: Run quality gate
+        run: |
+          python tools/quality_gate.py
+
+      - name: Resolve app version from version.py
+        # Single source of truth: the APK metadata is derived from the same
+        # src/nano_offline/version.py the app shows on its splash/login screen,
+        # so the built artifact can never report a version different from the
+        # code inside it (they used to be hardcoded 0.9.6/25 here).
+        id: appver
+        run: |
+          set -euo pipefail
+          eval "$(python tools/app_version.py --shell)"
+          echo "build_version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Building Nano $BUILD_VERSION (build $BUILD_NUMBER)"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMANAGER" --licenses <<< "$(printf 'y\n%.0s' {1..30})" >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;34.0.0" >/dev/null
+          # Core library desugaring for :app — flutter_local_notifications
+          # (via flet_native_files) requires it and the Flet-generated
+          # build.gradle.kts has no knob for it. A Gradle init script under
+          # ~/.gradle/init.d/ is auto-applied to EVERY build regardless of
+          # how many times flet regenerates the project (editing the
+          # generated file directly loses the race).
+          GRADLE_INIT_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+          mkdir -p "$GRADLE_INIT_DIR"
+          cat > "$GRADLE_INIT_DIR/nano-core-library-desugaring.init.gradle.kts" <<'EOF'
+          allprojects {
+              plugins.withId("com.android.application") {
+                  extensions.getByName("android").withGroovyBuilder {
+                      "compileOptions" {
+                          setProperty("coreLibraryDesugaringEnabled", true)
+                      }
+                  }
+                  dependencies {
+                      add("coreLibraryDesugaring", "com.android.tools:desugar_jdk_libs:2.1.4")
+                  }
+              }
+          }
+          EOF
+          # Stale Glance widget source: the checked-in NanoGlanceWidget.kt is
+          # an OLD copy whose symbols (Column, GlanceModifier, Text…) no longer
+          # resolve against the current Glance deps, and NanoWidgetReceiver.kt
+          # now DEFINES its own mainActivityClass()/NanoWidgetDiagnostics — so
+          # keeping both files makes :flet_native_files:compileReleaseKotlin
+          # fail with "Unresolved reference" + "Conflicting overloads" +
+          # "Redeclaration". Delete the stale file (wherever a copy exists:
+          # source tree AND flet's staged copy under build/flutter-packages)
+          # and wipe flet's staged project so it re-stages fresh sources.
+          find . -name "NanoGlanceWidget.kt" -type f -delete 2>/dev/null || true
+          rm -rf build/flutter-packages build/flutter 2>/dev/null || true
+          flet build apk --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | tee flet-build.log
+      - name: Verify native files
+        run: |
+          python tools/verify_flet_native_files_registration.py build/flutter
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flet-build-log
+          path: flet-build.log
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nano-release-apk
+          # flet names the output app-release.apk (any flavour) — glob so a
+          # rename in flet can't silently upload nothing. if-no-files-found:
+          # error makes a missing APK fail the job loudly instead of a
+          # hollow "success".
+          path: |
+            build/apk/*.apk
+            build/apk/**/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
