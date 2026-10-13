@@ -14,6 +14,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from nano_offline.core.fsutil import clean_tmpdir
 from nano_offline.app_context import AppContext
 from nano_offline.core import search_index
 
@@ -59,7 +60,7 @@ def test_database_initializes_search_index():
             assert search_index.fts_table_exists(conn, "customers_fts")
             assert search_index.fts_table_exists(conn, "suppliers_fts")
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 def test_items_search_parity_between_fts_and_like_contract():
@@ -77,7 +78,7 @@ def test_items_search_parity_between_fts_and_like_contract():
                 {r["id"] for r in ctx.items.list(search=query)}
             )
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 def test_long_query_short_query_routing():
@@ -97,7 +98,7 @@ def test_long_query_short_query_routing():
                 (ctx.items.get(i) or {})["name"] for i in search_index.query_rowids(conn, "items_fts", "get")
             }
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 def test_items_count_and_pagination_tile_the_result_set():
@@ -120,7 +121,7 @@ def test_items_count_and_pagination_tile_the_result_set():
         full = ctx.items.list(search="بند ثاني")
         assert [r["id"] for r in full] == seen
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 def test_triggers_keep_index_in_sync_on_create_update_delete():
@@ -138,7 +139,7 @@ def test_triggers_keep_index_in_sync_on_create_update_delete():
         assert ctx.items.list(search="XYZ") == []
         assert ctx.items.count(search="XYZ") == 0
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 def test_stale_index_repairs_and_missing_index_falls_back():
@@ -174,7 +175,7 @@ def test_stale_index_repairs_and_missing_index_falls_back():
             assert search_index.fts_table_exists(conn, "items_fts")
         assert {r["name"] for r in ctx.items.list(search="Widget")} == {"Widget", "Widget Pro"}
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 def test_parties_search_and_pagination():
@@ -197,4 +198,4 @@ def test_parties_search_and_pagination():
         assert [r["name"] for r in ctx.suppliers.list(search="مورد")] == ["مورد سمير"]
         assert ctx.suppliers.count(search="مورد") == 1
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)

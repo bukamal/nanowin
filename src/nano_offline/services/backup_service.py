@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nano_offline.core.database import Database, SCHEMA_VERSION
+from nano_offline.core.fsutil import replace_retry, unlink_retry
 
 BACKUP_FORMAT = 1
 PRIMARY_BACKUP_EXT = ".nanobackup"
@@ -275,16 +276,19 @@ class BackupService:
             if candidate.integrity_check().lower() != "ok":
                 raise RuntimeError("فشل فحص قاعدة الاسترجاع بعد الترحيل")
             candidate.checkpoint()
+            # Windows-safe removal: the candidate's WAL files were closed
+            # microseconds ago; AV/indexer scans can still hold them
+            # briefly (WinError 32), so plain unlink() flakes there.
             for suffix in ("-wal", "-shm"):
                 p = Path(str(temp_target) + suffix)
                 if p.exists():
-                    p.unlink()
+                    unlink_retry(p)
 
             for suffix in ("-wal", "-shm"):
                 p = Path(str(self.db.path) + suffix)
                 if p.exists():
-                    p.unlink()
-            os.replace(temp_target, self.db.path)
+                    unlink_retry(p)
+            replace_retry(temp_target, self.db.path)
 
         # Candidate is already migrated. Restore the device-bound license.
         self.db.initialize()

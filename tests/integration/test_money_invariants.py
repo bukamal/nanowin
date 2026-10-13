@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
 
+from nano_offline.core.fsutil import clean_tmpdir
 from nano_offline.app_context import AppContext
 from nano_offline.core import money
 from nano_offline.core.audit_chain import verify_audit_chain
@@ -118,7 +119,7 @@ def test_sale_invoice_money_invariants(specs, paid_cents):
 
         _assert_ledger_and_audit_clean(ctx)
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 @_SETTINGS
@@ -147,7 +148,7 @@ def test_purchase_invoice_money_invariants(specs, paid_cents):
 
         _assert_ledger_and_audit_clean(ctx)
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 @_SETTINGS
@@ -165,7 +166,7 @@ def test_overpayment_is_rejected(specs):
                 lines=_lines(item_id, specs),
             )
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
 
 
 @_SETTINGS
@@ -190,4 +191,4 @@ def test_anonymous_sale_is_cash_settled(paid_cents):
         assert money.to_cents(inv["paid_amount"]) == money.to_cents(inv["total"])
         _assert_ledger_and_audit_clean(ctx)
     finally:
-        tmp.cleanup()
+        clean_tmpdir(tmp)
