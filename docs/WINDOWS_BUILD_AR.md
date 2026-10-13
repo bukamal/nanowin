@@ -52,6 +52,8 @@ flet build windows --skip-flutter-doctor
 - `src/nano_offline/core/platform_capabilities.py`
 - `tools/sync_from_nano.sh`
 - `.github/workflows/build-windows.yml`
+- غياب `.github/workflows/build-android-apk.yml` مقصود: بناء الـAPK يبقى في
+  مستودع `nano` وحده حتى لا يبني هذا المستودع مخرجات أندرويد بالخطأ
 - `windows/installer.iss`
 - `docs/WINDOWS_BUILD_AR.md` (هذا الملف)
 - `NANOWIN.md`
