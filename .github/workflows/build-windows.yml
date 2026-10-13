@@ -51,16 +51,30 @@ jobs:
         run: |
           python tools/quality_gate.py
 
+      - name: Show toolchain versions
+        # Printed BEFORE the gate so a broken runner image is diagnosable
+        # from this step alone instead of from a downstream cryptic failure.
+        shell: pwsh
+        run: |
+          python --version
+          pip list 2>$null | Select-String -Pattern "^(flet|pytest|hypothesis|coverage|pyyaml|cryptography)"
+          flutter --version | Select-Object -First 3
+
       - name: Resolve app version from version.py
         # Single source of truth: the exe metadata is derived from the same
         # src/nano_offline/version.py the app shows on its splash/login screen.
+        # Separate --version/--build calls with .Trim(): parsing one
+        # multi-line --shell blob with regex keeps Windows CRLF tails
+        # ("0.17.3\r") that silently corrupt the flet --build-version flag.
         id: appver
         shell: pwsh
         run: |
-          python tools/app_version.py --shell | Out-String | ForEach-Object {
-            if ($_ -match 'BUILD_VERSION=(.*)') { "build_version=$($Matches[1])" >> $env:GITHUB_OUTPUT }
-            if ($_ -match 'BUILD_NUMBER=(.*)') { "build_number=$($Matches[1])" >> $env:GITHUB_OUTPUT }
-          }
+          $bv = (python tools/app_version.py --version).Trim()
+          $bn = (python tools/app_version.py --build).Trim()
+          if (-not $bv -or -not $bn) { throw "app_version.py returned empty version/build" }
+          "build_version=$bv" >> $env:GITHUB_OUTPUT
+          "build_number=$bn" >> $env:GITHUB_OUTPUT
+          echo "Building Nano $bv (build $bn)"
 
       - name: Build Windows EXE
         shell: pwsh
