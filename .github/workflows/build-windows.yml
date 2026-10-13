@@ -52,6 +52,18 @@ jobs:
           pip install -e extensions/flet_native_files
           pip install -e ".[dev]"
 
+      - name: Exclude workspace and temp from Defender scan
+        # The gate churns hundreds of fresh SQLite files (one temp DB per
+        # integration test) and deletes them milliseconds later. Windows
+        # Defender's real-time scan locks brand-new files in exactly that
+        # window, so teardown fails with WinError 32 ("used by another
+        # process") even though the app closed every handle -- the same
+        # tree is green on Ubuntu. Excluding the workspace and TEMP is the
+        # standard GH-runner fix and changes nothing about the product.
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:TEMP, $env:RUNNER_TEMP
+
       - name: Run quality gate
         shell: pwsh
         run: |
