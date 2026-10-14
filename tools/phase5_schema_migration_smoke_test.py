@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from nano_offline.core.database import Database, SCHEMA_VERSION
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano_phase5_migration_") as td:
+with tempdir(prefix="nano_phase5_migration_") as td:
     db_path = Path(td) / "nano.db"
     conn = sqlite3.connect(db_path)
     try:

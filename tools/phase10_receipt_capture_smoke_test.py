@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.core.database import Database, SCHEMA_VERSION
+from nano_offline.core.fsutil import tempdir
 
 FAKE_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64 + b"\xff\xd9"  # tiny non-empty JPEG-ish blob
 
-with tempfile.TemporaryDirectory(prefix="nano_phase10_capture_") as td:
+with tempdir(prefix="nano_phase10_capture_") as td:
     root = Path(td)
     ctx = AppContext.create(root / "data" / "nano.db")
     ctx.auth.create_initial_admin("admin", "المدير", "StrongPass1")

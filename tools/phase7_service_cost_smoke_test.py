@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.core.database import Database, SCHEMA_VERSION
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core.fsutil import tempdir
 
 
 def approx(a, b, eps=1e-7):
     assert abs(float(a) - float(b)) <= eps, (a, b)
 
 
-with tempfile.TemporaryDirectory(prefix="qeid-phase7-service-cost-") as td:
+with tempdir(prefix="qeid-phase7-service-cost-") as td:
     db_path = Path(td) / "nano.db"
     ctx = AppContext.create(db_path)
     customer_id = ctx.customers.create("عميل خدمة")

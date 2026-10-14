@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +8,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from nano_offline.app_context import AppContext
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core.fsutil import tempdir
 
 
 def close(a, b, eps=1e-6):
@@ -16,7 +16,7 @@ def close(a, b, eps=1e-6):
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="qeid-phase4-historical-") as td:
+    with tempdir(prefix="qeid-phase4-historical-") as td:
         ctx = AppContext.create(Path(td) / "nano.db")
         customer = ctx.customers.create("عميل تاريخي")
         item = ctx.items.create(name="خدمة زمنية", item_type="خدمة", selling_price=100)

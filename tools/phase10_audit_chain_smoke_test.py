@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.core import audit_chain
+from nano_offline.core.fsutil import tempdir
 
 
 def _fresh_ctx(root: Path) -> AppContext:
@@ -15,7 +15,7 @@ def _fresh_ctx(root: Path) -> AppContext:
     return ctx
 
 
-with tempfile.TemporaryDirectory(prefix="nano_phase10_audit_") as td:
+with tempdir(prefix="nano_phase10_audit_") as td:
     root = Path(td)
 
     # --- 1. fresh database: every insert gets hashed and the chain verifies ---

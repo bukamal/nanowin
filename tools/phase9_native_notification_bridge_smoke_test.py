@@ -17,13 +17,13 @@ Flutter/Dart SDK in this environment.
 from __future__ import annotations
 
 import json
-import tempfile
 from datetime import date
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano_phase9_native_notify_") as td:
+with tempdir(prefix="nano_phase9_native_notify_") as td:
     db_path = Path(td) / "nano.db"
     ctx = AppContext.create(db_path)
 

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import tempfile
 import zipfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano_phase10_enc_") as td:
+with tempdir(prefix="nano_phase10_enc_") as td:
     root = Path(td)
     ctx = AppContext.create(root / "data" / "nano.db")
     ctx.auth.create_initial_admin("admin", "المدير", "StrongPass1")

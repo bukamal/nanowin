@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +9,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from nano_offline.app_context import AppContext
 from nano_offline.core.database import SCHEMA_VERSION
+from nano_offline.core.fsutil import tempdir
 
 
 def make_phase2_db(path: Path) -> None:
@@ -40,7 +40,7 @@ def make_phase2_db(path: Path) -> None:
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="qeid-phase3-migrate-") as td:
+    with tempdir(prefix="qeid-phase3-migrate-") as td:
         path = Path(td) / "phase2.db"
         make_phase2_db(path)
         ctx = AppContext.create(path)

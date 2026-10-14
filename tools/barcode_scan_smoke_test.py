@@ -5,8 +5,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 from nano_offline.core.database import Database, SCHEMA_VERSION, SCHEMA_SQL
 from nano_offline.repositories.item_repository import ItemRepository
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix='qeid-barcode-') as td:
+with tempdir(prefix='qeid-barcode-') as td:
     # --- 1. upgrade path: a real schema-6 database (no barcode column, no
     # unique index) must gain both without breaking existing rows. ---
     old_db = Path(td) / 'old.db'

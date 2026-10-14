@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from nano_offline.core.paths import app_data_dir, database_path, migrate_legacy_database
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano_phase6_storage_") as td:
+with tempdir(prefix="nano_phase6_storage_") as td:
     root = Path(td)
     data = root / "android_data"
     previous = os.environ.get("FLET_APP_STORAGE_DATA")

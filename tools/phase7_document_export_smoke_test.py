@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core.fsutil import tempdir
 
 
-with tempfile.TemporaryDirectory(prefix="qeid-phase7-docs-") as td:
+with tempdir(prefix="qeid-phase7-docs-") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
     customer_id = ctx.customers.create("شركة الاختبار", "0999999999", "دمشق")
     service_id = ctx.items.create(name="خدمة تدقيق", item_type="خدمة", purchase_price=25, selling_price=75)

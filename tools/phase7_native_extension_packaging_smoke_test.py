@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tempfile
+from nano_offline.core.fsutil import tempdir
 import zipfile
 from pathlib import Path
 
@@ -28,7 +28,7 @@ dart = (EXT / "src/flutter/flet_native_files/lib/src/native_files.dart").read_te
 for needle in ["FilePicker.platform.pickFiles", "Share.shareXFiles", "Printing.layoutPdf", "Printing.convertHtml", "createPdfFile", "case 'create_pdf'"]:
     assert needle in dart, needle
 
-with tempfile.TemporaryDirectory(prefix="qeid-native-wheel-") as td:
+with tempdir(prefix="qeid-native-wheel-") as td:
     # --no-build-isolation means pip uses THIS interpreter's build backend
     # directly; ensure setuptools is importable there first (fresh CI images
     # ship pip without setuptools, which fails with BackendUnavailable).

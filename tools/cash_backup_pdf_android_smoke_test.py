@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core.fsutil import tempdir
 
 ROOT = Path(__file__).resolve().parents[1]
 
 # Core accounting invariant: anonymous sale/purchase is settled in full as cash.
-with tempfile.TemporaryDirectory(prefix="nano-cash-default-") as td:
+with tempdir(prefix="nano-cash-default-") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
 
     sale_id = ctx.invoices.create_invoice(

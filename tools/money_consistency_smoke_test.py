@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +10,7 @@ from nano_offline.app_context import AppContext  # noqa: E402
 from nano_offline.core import money  # noqa: E402
 from nano_offline.core import money_consistency  # noqa: E402
 from nano_offline.services.invoice_service import InvoiceLineInput  # noqa: E402
+from nano_offline.core.fsutil import tempdir
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
     assert float(money.quantize_sum([0.1, 0.2, 0.4])) == 0.7
     assert float(money.quantize("0.0000005")) == 0.000001  # round-half-up
 
-    with tempfile.TemporaryDirectory(prefix="nano-money-consist-") as td:
+    with tempdir(prefix="nano-money-consist-") as td:
         ctx = AppContext.create(Path(td) / "nano.db")
         unit_id = ctx.definitions.create_unit("قطعة", "قط")
         customer_id = ctx.customers.create("عميل تجريبي", "0900000000")

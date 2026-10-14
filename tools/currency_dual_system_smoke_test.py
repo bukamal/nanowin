@@ -8,7 +8,6 @@ Run:  python tools/currency_dual_system_smoke_test.py
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from nano_offline.core import currency as cur
 from nano_offline.core.database import Database
 from nano_offline.repositories.settings_repository import SettingsRepository
+from nano_offline.core.fsutil import tempdir
 
 passed = 0
 
@@ -121,7 +121,7 @@ for typed in ("100000", "1,350,000", "0", "13500.5"):
     check(f"round trip typed={typed!r} -> shown matches (within rounding)", abs(shown_value - expected_syp) < 0.2)
 
 print("10) live exchange-rate change propagates immediately (real DB, no restart)")
-with tempfile.TemporaryDirectory(prefix="qeid-currency-") as td:
+with tempdir(prefix="qeid-currency-") as td:
     db = Database(Path(td) / "x.db")
     db.initialize()
     repo = SettingsRepository(db)
@@ -206,7 +206,7 @@ usd_round_trip = cur.parse_display_input("99.99", usd_full)
 check("USD round trip: typed 99.99 -> format_amount shows 99.99 $ again", cur.format_amount(usd_round_trip, usd_full) == "99.99 $")
 
 print("17) live end-to-end: admin switches display currency in a real DB, everything updates immediately")
-with tempfile.TemporaryDirectory(prefix="qeid-currency-usd-") as td:
+with tempdir(prefix="qeid-currency-usd-") as td:
     db = Database(Path(td) / "y.db")
     db.initialize()
     repo = SettingsRepository(db)

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.core.database import SCHEMA_VERSION
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano_phase5_backup_") as td:
+with tempdir(prefix="nano_phase5_backup_") as td:
     root = Path(td)
     ctx = AppContext.create(root / "data" / "nano.db")
     ctx.auth.create_initial_admin("admin", "المدير", "StrongPass1")
@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix="nano_phase5_backup_") as td:
     validation = ctx.backup.validate_backup(backup)
     assert validation.valid and validation.schema_version == SCHEMA_VERSION
 
-    with tempfile.TemporaryDirectory(prefix="nano_phase5_backup_inspect_") as inspect_dir:
+    with tempdir(prefix="nano_phase5_backup_inspect_") as inspect_dir:
         import sqlite3, zipfile
         out = Path(inspect_dir)
         with zipfile.ZipFile(backup) as zf:

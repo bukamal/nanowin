@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from nano_offline.app_context import AppContext
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="qeid-definitions-mgmt-") as td:
+with tempdir(prefix="qeid-definitions-mgmt-") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
 
     cat_id = ctx.definitions.create_category("مواد غذائية")

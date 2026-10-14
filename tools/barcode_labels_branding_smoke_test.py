@@ -11,8 +11,9 @@ from nano_offline.repositories.settings_repository import SettingsRepository
 from nano_offline.services.invoice_service import InvoiceService
 from nano_offline.services.statement_service import StatementService
 from nano_offline.services.document_service import DocumentService
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix='qeid-barcode-labels-') as td:
+with tempdir(prefix='qeid-barcode-labels-') as td:
     db = Database(Path(td) / 'db.sqlite3')
     db.initialize()
 

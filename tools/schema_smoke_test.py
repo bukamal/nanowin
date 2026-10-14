@@ -4,8 +4,9 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
 from nano_offline.core.database import Database, SCHEMA_VERSION
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix='qeid-schema-') as td:
+with tempdir(prefix='qeid-schema-') as td:
     db=Database(Path(td)/'x.db'); db.initialize()
     with db.connect() as c:
         tables={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}

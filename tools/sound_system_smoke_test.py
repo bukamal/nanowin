@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,8 +8,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from nano_offline.app_context import AppContext
 from nano_offline.core import sound_settings
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano-sound-") as td:
+with tempdir(prefix="nano-sound-") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
     settings = ctx.settings
 

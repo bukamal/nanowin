@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import tempfile
 import urllib.error
 import urllib.request
 from datetime import date
@@ -10,6 +9,7 @@ from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.services.license_service import HAWAA_ACTIVATION_URL, HAWAA_PROTOCOL, LicenseService
+from nano_offline.core.fsutil import tempdir
 
 
 class FakeResponse:
@@ -28,7 +28,7 @@ class FakeResponse:
         return self.payload
 
 
-with tempfile.TemporaryDirectory(prefix="nano_phase6_hawaa_license_") as td:
+with tempdir(prefix="nano_phase6_hawaa_license_") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
     captured = {}
     original = urllib.request.urlopen

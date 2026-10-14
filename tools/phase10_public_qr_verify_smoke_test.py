@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
@@ -8,8 +7,9 @@ from nano_offline.core import public_verify
 from nano_offline.core.invoice_signing import sign_invoice, verify_payload
 from nano_offline.core.qr_gen import qr_svg
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="nano_phase10_pubqr_") as td:
+with tempdir(prefix="nano_phase10_pubqr_") as td:
     root = Path(td)
     ctx = AppContext.create(root / "data" / "nano.db")
     ctx.auth.create_initial_admin("admin", "المدير", "StrongPass1")

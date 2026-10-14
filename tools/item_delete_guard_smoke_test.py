@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,8 +8,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from nano_offline.app_context import AppContext
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core.fsutil import tempdir
 
-with tempfile.TemporaryDirectory(prefix="qeid-item-delete-") as td:
+with tempdir(prefix="qeid-item-delete-") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
     unit_id = ctx.definitions.create_unit("قطعة", "ق")
 

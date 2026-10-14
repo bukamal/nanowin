@@ -12,7 +12,6 @@ central-router refactor. Checks two independent things:
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

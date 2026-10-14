@@ -17,6 +17,7 @@ never mask a real logic error.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import os
 import shutil
@@ -69,4 +70,20 @@ def clean_tmpdir(tmp: tempfile.TemporaryDirectory) -> None:
     _retry_permission_error(_rmtree)
 
 
-__all__ = ["unlink_retry", "replace_retry", "clean_tmpdir"]
+@contextlib.contextmanager
+def tempdir(*args, **kwargs):
+    """Drop-in replacement for ``tempfile.TemporaryDirectory`` as a context
+    manager, with Windows-safe cleanup (see :func:`clean_tmpdir`).
+
+    Use as ``with tempdir(prefix="...") as td:`` wherever a script or test
+    creates throwaway SQLite databases. Yields the directory *path string*
+    exactly like ``TemporaryDirectory`` does.
+    """
+    tmp = tempfile.TemporaryDirectory(*args, **kwargs)
+    try:
+        yield tmp.name
+    finally:
+        clean_tmpdir(tmp)
+
+
+__all__ = ["unlink_retry", "replace_retry", "clean_tmpdir", "tempdir"]
