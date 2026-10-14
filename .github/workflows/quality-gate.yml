@@ -31,26 +31,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: false
-
       - name: Install project
+        # Plain pip into the setup-python interpreter -- deliberately NOT uv:
+        # uv's venv discovery/sync proved nondeterministic across runs (a
+        # missing .venv or missing dev deps fails the gate in seconds with a
+        # misleading error), while this exact pip sequence is what the green
+        # Android workflow uses. Boring and deterministic beats clever here.
         run: |
-          uv sync
-          # uv-created venvs ship without pip (uv manages deps itself); the
-          # packaging smoke test shells out to `python -m pip` to build the
-          # flet-native-files wheel, so seed pip like build_nano_apk.sh does.
-          uv run python -m ensurepip --upgrade
-          uv pip install -e extensions/flet_native_files
-          uv pip install -e .
-          # Explicit dev/test deps (pytest, hypothesis, coverage): `uv sync`
-          # SHOULD include them, but the gate must never depend on that
-          # implicit behavior -- a venv without hypothesis fails pytest
-          # collection in seconds with a misleading error. Same explicit
-          # install the green Android workflow uses.
-          uv pip install -e ".[dev]"
-          uv run python -m pip list 2>/dev/null | grep -Ei "^(pytest|hypothesis|coverage|flet|pyyaml|cryptography) " || true
+          set -euo pipefail
+          pip install --upgrade pip setuptools wheel
+          pip install "flet==0.28.3" pyyaml coverage
+          pip install -e extensions/flet_native_files
+          pip install -e ".[dev]"
+          pip list 2>/dev/null | grep -Ei "^(pytest|hypothesis|coverage|flet|pyyaml|cryptography) " || true
 
       - name: Suite import smoke
         env:
@@ -78,25 +71,13 @@ jobs:
           PYTHONPATH: src
         run: |
           set -euo pipefail
-          # Run in the SAME interpreter uv just provisioned packages into,
-          # without `uv run` (it re-resolves the lockfile and can silently
-          # swap to a different Python than the one deps were installed in).
-          # IMPORTANT: uv/venv put *symlinks* at .venv/bin/python{,3}, so a
-          # `find ... -type f` matches nothing -- match by executability
-          # instead. And never silently fall back to the bare system Python
-          # (no flet, no cryptography): that fails minutes later on the
-          # first non-stdlib import with a misleading error, so fail loudly
-          # here instead with the venv layout attached.
-          VENV_PY=""
-          for cand in .venv/bin/python .venv/bin/python3; do
-            if [ -x "$cand" ]; then VENV_PY="$cand"; break; fi
+          # Deps were just pip-installed into this interpreter above, so run
+          # the gate with plain `python` -- no venv discovery, no silent
+          # fallbacks. Probe each critical import separately and NON-fatally
+          # (|| echo, never a bare call under set -e) so the log always shows
+          # exactly which dependency is missing instead of dying cryptically.
+          python -c "import sys; print(sys.version.replace(chr(10), ' '))"
+          for mod in flet pytest hypothesis cryptography yaml coverage; do
+            python -c "import $mod" 2>/dev/null && echo "dep ok: $mod" || echo "dep MISSING: $mod"
           done
-          if [ -z "$VENV_PY" ]; then
-            echo "ERROR: .venv/bin/python missing after 'uv sync'; refusing to run the suite against the system interpreter" >&2
-            ls -la .venv/bin 2>/dev/null || echo "(no .venv/bin at all)"
-            exit 1
-          fi
-          echo "venv python: $VENV_PY"
-          "$VENV_PY" -c "import sys; print(sys.version.replace(chr(10), ' '))"
-          "$VENV_PY" -c "import flet, pytest, hypothesis, cryptography; print('deps ok: flet', flet.__version__)"
-          PYTHONPATH=src "$VENV_PY" tools/quality_gate.py
+          PYTHONPATH=src python tools/quality_gate.py

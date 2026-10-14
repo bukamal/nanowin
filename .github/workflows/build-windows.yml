@@ -51,6 +51,10 @@ jobs:
           # must already satisfy the pin before `pip install -e .[dev]` resolves.
           pip install -e extensions/flet_native_files
           pip install -e ".[dev]"
+          foreach ($m in @("flet", "pytest", "hypothesis", "cryptography", "yaml", "coverage")) {
+            python -c "import $m" 2>$null
+            if ($LASTEXITCODE -eq 0) { echo "dep ok: $m" } else { echo "dep MISSING: $m" }
+          }
 
       - name: Exclude workspace and temp from Defender scan
         # The gate churns hundreds of fresh SQLite files (one temp DB per
