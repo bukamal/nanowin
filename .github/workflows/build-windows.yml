@@ -17,7 +17,7 @@ jobs:
   build-exe:
     name: Build EXE
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     env:
       FLET_CLI_SKIP_FLUTTER_DOCTOR: "1"
@@ -114,6 +114,17 @@ jobs:
           "build_version=$bv" >> $env:GITHUB_OUTPUT
           "build_number=$bn" >> $env:GITHUB_OUTPUT
           echo "Building Nano $bv (build $bn)"
+
+      - name: Install Visual Studio 2019 Build Tools
+        # flet 0.28.3 drives the windows build through Flutter 3.29, whose
+        # CMake invocation pins the "Visual Studio 16 2019" generator -- a
+        # newer VS alone does NOT satisfy it. The windows-2025-vs2026 runner
+        # image ships no Visual Studio at all, so install the 2019 Build
+        # Tools plus the C++ workload (MSVC v142 + Windows SDK) here, before
+        # flet build needs them.
+        shell: pwsh
+        run: |
+          choco install visualstudio2019buildtools visualstudio2019-workload-vctools -y --no-progress
 
       - name: Build Windows EXE
         shell: pwsh
