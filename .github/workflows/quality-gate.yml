@@ -50,7 +50,9 @@ jobs:
           PYTHONPATH: src
         run: |
           set -euo pipefail
-          uv run python - <<'PY'
+          # Deps were pip-installed into this exact interpreter in the step
+          # above -- plain `python`, no venv discovery of any kind.
+          python - <<'PY'
           # Verify multi-app entry points import without launching UI
           import importlib
           for mod in (
