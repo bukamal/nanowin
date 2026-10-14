@@ -61,29 +61,36 @@ def clean_tmpdir(tmp: tempfile.TemporaryDirectory) -> None:
     reference cycle still locks its database on Windows until the
     collector frees it), then removes the tree tolerating transient
     external locks the same way :func:`unlink_retry` does.
+
+    Goes through ``tmp.cleanup()`` itself (not a raw ``shutil.rmtree``)
+    so the object's finalizer is detached -- otherwise it fires later on
+    garbage collection and raises ``FileNotFoundError`` for the already
+    removed tree.
     """
     gc.collect()
-
-    def _rmtree() -> None:
-        shutil.rmtree(tmp.name, ignore_errors=False)
-
-    _retry_permission_error(_rmtree)
+    _retry_permission_error(tmp.cleanup)
 
 
 @contextlib.contextmanager
 def tempdir(*args, **kwargs):
     """Drop-in replacement for ``tempfile.TemporaryDirectory`` as a context
-    manager, with Windows-safe cleanup (see :func:`clean_tmpdir`).
+    manager, with Windows-safe cleanup.
 
-    Use as ``with tempdir(prefix="...") as td:`` wherever a script or test
-    creates throwaway SQLite databases. Yields the directory *path string*
+    Built on ``mkdtemp`` (not ``TemporaryDirectory``) so no finalizer can
+    ever fire a second removal for the same tree -- the double-cleanup
+    raises ``FileNotFoundError``. Yields the directory *path string*
     exactly like ``TemporaryDirectory`` does.
     """
-    tmp = tempfile.TemporaryDirectory(*args, **kwargs)
+    path = tempfile.mkdtemp(*args, **kwargs)
     try:
-        yield tmp.name
+        yield path
     finally:
-        clean_tmpdir(tmp)
+        gc.collect()
+
+        def _rmtree() -> None:
+            shutil.rmtree(path, ignore_errors=False)
+
+        _retry_permission_error(_rmtree)
 
 
 __all__ = ["unlink_retry", "replace_retry", "clean_tmpdir", "tempdir"]
