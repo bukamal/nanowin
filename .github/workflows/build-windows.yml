@@ -36,11 +36,29 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # Cache pip's HTTP wheel cache between runs (keyed on pyproject):
+          # an unchanged dependency set resolves from cache instead of
+          # re-downloading every wheel on every push.
+          cache: "pip"
+          cache-dependency-path: "pyproject.toml"
 
       - name: Install Flutter
+        # Pin EXACTLY the Flutter flet-cli wants: flet 0.28.3 requires 3.29.x
+        # and otherwise downloads its own 3.29.2 on top of whatever is on
+        # PATH -- previously that meant TWO full SDK downloads per run
+        # (1.8 GB of 3.47.7, then flet's own 3.29.2). With a matching SDK
+        # already present flet skips its install, so enable windows-desktop
+        # explicitly here (flet only runs that config on its own install
+        # path).
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.29.2"
+          cache: true
+
+      - name: Enable Flutter Windows desktop
+        shell: pwsh
+        run: flutter config --enable-windows-desktop
 
       - name: Install project dependencies
         shell: pwsh
