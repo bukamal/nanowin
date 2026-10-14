@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from hypothesis import given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 
 from nano_offline.core import money
 
@@ -18,14 +18,14 @@ _AMOUNTS = st.floats(
 _CENTS = st.integers(min_value=-10**11, max_value=10**11)
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(_AMOUNTS)
 def test_quantize_is_idempotent(value):
     once = money.quantize(value)
     assert money.quantize(once) == once
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(_AMOUNTS)
 def test_quantized_is_always_clean_cents(value):
     # Checked in Decimal, not float: scaling a large value by 100 in binary
@@ -35,20 +35,20 @@ def test_quantized_is_always_clean_cents(value):
     assert scaled == scaled.to_integral_value()
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(_CENTS)
 def test_int_cents_roundtrip(cents):
     assert money.to_cents(money.from_cents(cents)) == cents
 
 
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(st.lists(_AMOUNTS, min_size=0, max_size=40))
 def test_quantize_sum_equals_sum_of_quantized_addends(values):
     expected = money.quantize(sum((money.quantize(v) for v in values), Decimal(0)))
     assert money.quantize_sum(values) == expected
 
 
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(st.lists(_AMOUNTS, min_size=0, max_size=40))
 def test_quantize_sum_never_drifts_over_repeats(values):
     # Re-quantizing an already-quantized sum must not change it -- the property

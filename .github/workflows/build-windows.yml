@@ -69,9 +69,26 @@ jobs:
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:TEMP, $env:RUNNER_TEMP
 
       - name: Run quality gate
+        # Gate output is teed to gate.log (uploaded below, always) and its
+        # tail is echoed on failure, so a red build carries its own
+        # diagnosis instead of requiring a full log download.
         shell: pwsh
         run: |
-          python tools/quality_gate.py
+          python tools/quality_gate.py 2>&1 | Tee-Object -FilePath gate.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "===== gate.log tail (last 60 lines) ====="
+            Get-Content gate.log -Tail 60
+            exit 1
+          }
+
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gate-log
+          path: gate.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Show toolchain versions
         # Printed BEFORE the gate so a broken runner image is diagnosable
