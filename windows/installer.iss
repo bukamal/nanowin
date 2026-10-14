@@ -9,9 +9,19 @@
 ; install in place instead of registering a second "Nano" entry.
 
 #define AppName "Nano | نانو"
+; The three values below are injected per build via ISCC /D defines (see
+; .github/workflows/build-windows.yml). The #ifndef guards keep a manual
+; ISCC run without /D working, while a command-line /D must win: a plain
+; #define here would silently override the /D and ship Nano-Setup-0.0.0.exe.
+#ifndef AppVersion
 #define AppVersion "0.0.0"
+#endif
+#ifndef ExeName
 #define ExeName "nano.exe"
+#endif
+#ifndef SourceDir
 #define SourceDir "."
+#endif
 
 [Setup]
 AppId={{149FA2FB-D177-479B-B010-FD608A765378}

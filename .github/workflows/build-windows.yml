@@ -166,7 +166,11 @@ jobs:
             throw "No exe found in build/windows"
           }
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc /DAppVersion="${{ steps.appver.outputs.build_version }}" "/DExeName=$($exe.Name)" "/DSourceDir=$($exe.DirectoryName)" windows/installer.iss
+          # /O pins the output dir: a relative OutputDir inside the .iss is
+          # resolved against the SCRIPT's folder (windows/...), not the repo
+          # root, so without /O the installer lands in the wrong tree and the
+          # upload step below finds nothing.
+          & $iscc /DAppVersion="${{ steps.appver.outputs.build_version }}" "/DExeName=$($exe.Name)" "/DSourceDir=$($exe.DirectoryName)" /Obuild\windows\installer windows/installer.iss
           Get-ChildItem build/windows/installer/*.exe
 
       - name: Upload build log
