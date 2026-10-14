@@ -149,6 +149,11 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
+          if (-not (Test-Path build/windows)) {
+            Write-Host "===== build/ tree ====="
+            Get-ChildItem build -Recurse -ErrorAction SilentlyContinue | Select-Object -First 40 FullName
+            throw "no build/windows at all -- flet build produced nothing (see flet-build.log artifact)"
+          }
           $release = Get-ChildItem build/windows -Recurse -Directory -Filter Release | Select-Object -First 1
           if (-not $release) { throw "Release folder not found under build/windows" }
           $exe = Get-ChildItem $release.FullName -Filter *.exe | Select-Object -First 1
