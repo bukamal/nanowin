@@ -1,0 +1,40 @@
+# TEMPORARY diagnostic workflow: identifies WHAT locks freshly-closed files
+# on windows runners (product hunts: Defender/indexer vs in-process SQLite
+# WAL semantics). Triggered by push like everything else; DELETE THIS FILE
+# once the locker is identified -- it exists only to answer one question.
+name: Debug Windows locks (temporary)
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Probe file locks
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Defender status before exclusions
+        shell: pwsh
+        run: |
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+          Get-MpComputerStatus | Select-Object -Property RealTimeProtectionEnabled, AntivirusEnabled
+
+      - name: Apply same exclusions as the build workflow
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:TEMP, $env:RUNNER_TEMP
+          echo "--- after ---"
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+
+      - name: Fetch handle.exe (Sysinternals, identifies the locking process)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://live.sysinternals.com/handle64.exe -OutFile "$env:RUNNER_TEMP\handle64.exe"
+          & "$env:RUNNER_TEMP\handle64.exe" -accepteula -nobanner | Select-Object -First 3
+
+      - name: Probe close-then-unlink across file kinds
+        shell: pwsh
+        run: |
+          python tools/ci_lock_probe.py
