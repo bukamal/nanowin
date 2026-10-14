@@ -8,7 +8,7 @@
 ; AppId is stable across releases (generated once): upgrades replace the
 ; install in place instead of registering a second "Nano" entry.
 
-#define AppName "Nano | نانو"
+#define AppName "Nano نانو"
 ; The three values below are injected per build via ISCC /D defines (see
 ; .github/workflows/build-windows.yml). The #ifndef guards keep a manual
 ; ISCC run without /D working, while a command-line /D must win: a plain
