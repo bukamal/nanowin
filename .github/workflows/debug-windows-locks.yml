@@ -35,6 +35,10 @@ jobs:
           & "$env:RUNNER_TEMP\handle64.exe" -accepteula -nobanner | Select-Object -First 3
 
       - name: Probe close-then-unlink across file kinds
+        # Informational only: the probe exits non-zero whenever it observes a
+        # single lock, so letting it fail would paint the repository red for a
+        # diagnostic nobody is acting on right now.
+        continue-on-error: true
         shell: pwsh
         run: |
           python tools/ci_lock_probe.py
