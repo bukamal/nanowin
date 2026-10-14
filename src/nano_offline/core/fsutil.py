@@ -24,7 +24,7 @@ import tempfile
 import time
 from pathlib import Path
 
-_RETRIES = 7
+_RETRIES = 9
 _FIRST_DELAY = 0.05
 
 
