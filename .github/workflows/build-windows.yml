@@ -143,9 +143,14 @@ jobs:
 
       - name: Build Windows installer (Inno Setup)
         # The project ships as a real installer, not a portable exe: Inno
-        # Setup bundles flet's Release folder (exe + flutter DLLs + data)
-        # into Nano-Setup-<version>.exe. windows/installer.iss takes all
-        # release values as /D defines so no version is ever hardcoded.
+        # Setup bundles flet's output folder (exe + flutter DLLs + data)
+        # into Nano-Setup-<version>.exe. NOTE on the layout: `flet build`
+        # copies the flutter Release CONTENTS flat into build/windows/
+        # (there is no nested Release/ folder -- that only exists inside
+        # flet's intermediate build/flutter tree), so the exe is searched
+        # directly in build/windows/.
+        # windows/installer.iss takes all release values as /D defines so no
+        # version is ever hardcoded.
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
@@ -154,12 +159,14 @@ jobs:
             Get-ChildItem build -Recurse -ErrorAction SilentlyContinue | Select-Object -First 40 FullName
             throw "no build/windows at all -- flet build produced nothing (see flet-build.log artifact)"
           }
-          $release = Get-ChildItem build/windows -Recurse -Directory -Filter Release | Select-Object -First 1
-          if (-not $release) { throw "Release folder not found under build/windows" }
-          $exe = Get-ChildItem $release.FullName -Filter *.exe | Select-Object -First 1
-          if (-not $exe) { throw "No exe found in $($release.FullName)" }
+          $exe = Get-ChildItem build/windows -Filter *.exe | Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "===== build/windows tree ====="
+            Get-ChildItem build/windows -Recurse -ErrorAction SilentlyContinue | Select-Object -First 40 FullName
+            throw "No exe found in build/windows"
+          }
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc /DAppVersion="${{ steps.appver.outputs.build_version }}" "/DExeName=$($exe.Name)" "/DSourceDir=$($release.FullName)" windows/installer.iss
+          & $iscc /DAppVersion="${{ steps.appver.outputs.build_version }}" "/DExeName=$($exe.Name)" "/DSourceDir=$($exe.DirectoryName)" windows/installer.iss
           Get-ChildItem build/windows/installer/*.exe
 
       - name: Upload build log
