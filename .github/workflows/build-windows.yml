@@ -163,21 +163,27 @@ jobs:
         # The installed app fails at launch with "No module named main": the
         # flet bootstrap runs runpy.run_module("main") against the extracted
         # app.zip, so either the zip lacks main.py at its root or the bundle
-        # lacks the zip. Print both facts here instead of guessing again.
+        # lacks the zip. CI logs aren't downloadable without admin rights, so
+        # findings are exfiltrated as ::warning annotations (readable via the
+        # Checks API) in addition to the printed log.
         # DELETE THIS STEP once the launch failure is understood.
         shell: pwsh
         run: |
-          Write-Host "===== build/windows top level ====="
-          Get-ChildItem build/windows | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+          $top = (Get-ChildItem build/windows -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ';'
+          Write-Host "::warning::TOP::$top"
           $zipPath = "build/windows/data/flutter_assets/app/app.zip"
-          if (-not (Test-Path $zipPath)) { throw "bundled app.zip missing at $zipPath" }
+          $hasZip = Test-Path $zipPath
+          Write-Host "::warning::HASZIP::$hasZip"
+          if (-not $hasZip) { throw "bundled app.zip missing at $zipPath" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead("$PWD\$($zipPath -replace '/','\'))")
-          Write-Host "===== app.zip root entries (first 30) ====="
-          $zip.Entries.FullName | Where-Object { $_ -notmatch '/' } | Select-Object -First 30
-          Write-Host "===== app.zip total entries ====="
-          ($zip.Entries | Measure-Object).Count
+          $roots = @($zip.Entries.FullName | Where-Object { $_ -notmatch '/' } | Select-Object -First 30) -join ';'
+          Write-Host "::warning::ZIPROOT::$roots"
+          Write-Host "::warning::ZIPCOUNT::$($zip.Entries.Count)"
+          $hasMain = [bool]($zip.Entries.FullName | Where-Object { $_ -eq 'main.py' -or $_ -eq 'main.pyc' })
+          Write-Host "::warning::HASMAIN::$hasMain"
           $zip.Dispose()
+          if (-not $hasMain) { throw "app.zip has no main.py/main.pyc at its root" }
 
       - name: Build Windows installer (Inno Setup)
         # The project ships as a real installer, not a portable exe: Inno
