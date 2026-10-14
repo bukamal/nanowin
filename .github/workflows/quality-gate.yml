@@ -44,6 +44,13 @@ jobs:
           uv run python -m ensurepip --upgrade
           uv pip install -e extensions/flet_native_files
           uv pip install -e .
+          # Explicit dev/test deps (pytest, hypothesis, coverage): `uv sync`
+          # SHOULD include them, but the gate must never depend on that
+          # implicit behavior -- a venv without hypothesis fails pytest
+          # collection in seconds with a misleading error. Same explicit
+          # install the green Android workflow uses.
+          uv pip install -e ".[dev]"
+          uv run python -m pip list 2>/dev/null | grep -Ei "^(pytest|hypothesis|coverage|flet|pyyaml|cryptography) " || true
 
       - name: Suite import smoke
         env:
