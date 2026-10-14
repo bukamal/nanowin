@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import hmac
 import json
@@ -276,6 +277,11 @@ class BackupService:
             if candidate.integrity_check().lower() != "ok":
                 raise RuntimeError("فشل فحص قاعدة الاسترجاع بعد الترحيل")
             candidate.checkpoint()
+            # All candidate connections above are deterministically closed by
+            # ClosingConnection.__exit__; collect once more so a connection
+            # kept alive only by a reference cycle cannot hold the -wal/-shm
+            # files while Windows refuses to unlink open files.
+            gc.collect()
             # Windows-safe removal: the candidate's WAL files were closed
             # microseconds ago; AV/indexer scans can still hold them
             # briefly (WinError 32), so plain unlink() flakes there.

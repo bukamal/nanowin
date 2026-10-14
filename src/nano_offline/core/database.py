@@ -449,6 +449,26 @@ def _nano_chain_hash(action, entity_type, entity_id, details, user_id, username,
     )
 
 
+class ClosingConnection(sqlite3.Connection):
+    """A connection that releases its file handle when its ``with`` block ends.
+
+    ``with sqlite3.connect(...) as conn`` does NOT close -- it only commits --
+    so every ``with db.connect()`` site in this codebase used to keep the
+    database file locked until refcounting happened to reclaim the object.
+    Invisible on Linux (unlink works on open files), fatal on Windows the
+    moment file surgery follows (``WinError 32`` in test teardown and in
+    backup restore). Subclassing keeps ``isinstance``/``backup()``/pragmas
+    identical; the only change is deterministic close on context exit.
+    """
+
+
+    def __exit__(self, *exc: object) -> bool:
+        try:
+            return super().__exit__(*exc)  # type: ignore[arg-type]
+        finally:
+            self.close()
+
+
 class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -461,7 +481,7 @@ class Database:
         self.fts_tokenizer: str | None = None
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=5.0)
+        conn = sqlite3.connect(self.path, timeout=5.0, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
