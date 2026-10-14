@@ -127,9 +127,19 @@ jobs:
           choco install visualstudio2019buildtools visualstudio2019-workload-vctools -y --no-progress
 
       - name: Build Windows EXE
+        # NOTE: the pipe to Tee-Object masks flet's exit code (the step would
+        # stay green on a failed build and only blow up later at Inno Setup
+        # with "Release folder not found"), so check $LASTEXITCODE explicitly
+        # -- PowerShell preserves the native command's code across the pipe --
+        # and dump the build log tail, mirroring the quality-gate step.
         shell: pwsh
         run: |
           flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "===== flet-build.log tail (last 80 lines) ====="
+            Get-Content flet-build.log -Tail 80
+            exit 1
+          }
 
       - name: Build Windows installer (Inno Setup)
         # The project ships as a real installer, not a portable exe: Inno
