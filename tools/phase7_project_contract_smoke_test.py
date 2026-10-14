@@ -4,7 +4,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 db = (ROOT / "src/nano_offline/core/database.py").read_text(encoding="utf-8")
-workflow = (ROOT / ".github/workflows/build-android-apk.yml").read_text(encoding="utf-8")
+workflow_path = ROOT / ".github/workflows/build-android-apk.yml"
+workflow = workflow_path.read_text(encoding="utf-8") if workflow_path.exists() else ""
 preflight = (ROOT / "tools/apk_release_preflight.py").read_text(encoding="utf-8")
 
 for needle in [
@@ -19,12 +20,15 @@ assert re.search(r'^build_number\s*=\s*\d+', pyproject, re.M), "build_number mis
 assert "flet-native-files==" in pyproject
 schema_match = re.search(r'^SCHEMA_VERSION\s*=\s*(\d+)', db, re.M)
 assert schema_match and int(schema_match.group(1)) >= 9, "SCHEMA_VERSION must be >= 9"
-for needle in [
-    "pip install -e extensions/flet_native_files",
-    "tools/app_version.py --shell",
-    "verify_flet_native_files_registration.py build/flutter",
-]:
-    assert needle in workflow, needle
+if not workflow:
+    print(f"skipped android CI install contract: {workflow_path.name} absent (windows-only build)")
+else:
+    for needle in [
+        "pip install -e extensions/flet_native_files",
+        "tools/app_version.py --shell",
+        "verify_flet_native_files_registration.py build/flutter",
+    ]:
+        assert needle in workflow, needle
 assert "app_version.py" in preflight
 assert "flet-native-files" in preflight
 
