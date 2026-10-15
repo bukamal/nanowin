@@ -159,32 +159,24 @@ jobs:
             exit 1
           }
 
-      - name: Diagnose bundle layout (TEMPORARY)
-        # The installed app fails at launch with "No module named main": the
-        # flet bootstrap runs runpy.run_module("main") against the extracted
-        # app.zip, so either the zip lacks main.py at its root or the bundle
-        # lacks the zip. CI logs aren't downloadable without admin rights, so
-        # findings are exfiltrated as ::warning annotations (readable via the
-        # Checks API) in addition to the printed log.
-        # DELETE THIS STEP once the launch failure is understood.
+      - name: Verify bundled app entry point
+        # Permanent 5-second guard: the flet desktop bootstrap runs
+        # runpy.run_module("main") against the extracted app.zip, so a bundle
+        # whose zip lacks main.py at its root can never launch ("No module
+        # named main" on the user's machine). Fail here, loudly, instead.
         shell: pwsh
         run: |
-          $top = (Get-ChildItem build/windows -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ';'
-          Write-Host "::warning::TOP::$top"
           $zipPath = "build/windows/data/flutter_assets/app/app.zip"
-          $hasZip = Test-Path $zipPath
-          Write-Host "::warning::HASZIP::$hasZip"
-          if (-not $hasZip) { throw "bundled app.zip missing at $zipPath" }
+          if (-not (Test-Path $zipPath)) { throw "bundled app.zip missing at $zipPath" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zipFull = Join-Path $PWD ($zipPath -replace '/', '\')
-          $zip = [IO.Compression.ZipFile]::OpenRead($zipFull)
-          $roots = @($zip.Entries.FullName | Where-Object { $_ -notmatch '/' } | Select-Object -First 30) -join ';'
-          Write-Host "::warning::ZIPROOT::$roots"
-          Write-Host "::warning::ZIPCOUNT::$($zip.Entries.Count)"
-          $hasMain = [bool]($zip.Entries.FullName | Where-Object { $_ -eq 'main.py' -or $_ -eq 'main.pyc' })
-          Write-Host "::warning::HASMAIN::$hasMain"
-          $zip.Dispose()
-          if (-not $hasMain) { throw "app.zip has no main.py/main.pyc at its root" }
+          $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $PWD ($zipPath -replace '/', '\')))
+          try {
+            $roots = @($zip.Entries.FullName | Where-Object { $_ -notmatch '/' })
+            if (-not ($roots -contains 'main.py' -or $roots -contains 'main.pyc')) {
+              throw "bundled app.zip has no main.py/main.pyc at its root"
+            }
+            echo "bundled app entry OK ($($zip.Entries.Count) entries)"
+          } finally { $zip.Dispose() }
 
       - name: Build Windows installer (Inno Setup)
         # The project ships as a real installer, not a portable exe: Inno
