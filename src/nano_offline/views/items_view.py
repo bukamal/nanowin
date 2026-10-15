@@ -6,8 +6,9 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, status_pill
+from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, status_pill, DataGrid, GridColumn
 from nano_offline.components.buttons import header_close_button, inline_icon_button
+from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
 from nano_offline.core.theme import Colors, IconSize, LazyPalette, Radius, Shadow
 from nano_offline.core import currency
@@ -20,6 +21,20 @@ from nano_offline.core import item_card_signing
 # constant) -- keeping the values identical means a category shows the same
 # accent color here as it does on the POS catalog grid.
 CATEGORY_PALETTE = LazyPalette("PRIMARY", "PURPLE_LIGHT", "ORANGE", "WARNING_DARK", "SUCCESS_ALT")
+
+# Desktop grid columns. Only name + the two prices are inline-editable:
+# quantity is derived from inventory movements (see ItemRepository.update,
+# which has no quantity parameter) and the rest are display-only.
+ITEM_GRID_COLUMNS = [
+    GridColumn("name", "الاسم", editable=True),
+    GridColumn("category_name", "التصنيف", width=130),
+    GridColumn("unit_name", "الوحدة", width=90),
+    GridColumn("item_type", "النوع", width=90, align="center", kind="badge"),
+    GridColumn("quantity", "الكمية", width=100, align="end", kind="number"),
+    GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
+    GridColumn("selling_price", "سعر البيع", width=120, align="end", kind="money", editable=True),
+    GridColumn("_status", "الحالة", width=110, align="center", kind="badge"),
+]
 
 
 def _confirm_similar(page: ft.Page, *, title: str, message: str, on_confirm) -> None:
@@ -181,13 +196,14 @@ class ItemsCenter:
     Extracted from ``main.py`` (previously the inline ``items_view`` closure).
     """
 
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_stocktake=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_stocktake=None, on_context_actions=None):
         self.page = page
         self.ctx = ctx
         self.content = content
         self.native_files = native_files
         self.on_title_change = on_title_change
         self.on_open_stocktake = on_open_stocktake
+        self.on_context_actions = on_context_actions
 
     def _set_header(self, title: str, subtitle: str = "") -> None:
         if self.on_title_change:
@@ -219,7 +235,9 @@ class ItemsCenter:
         self._set_header("المواد", "إدارة المخزون والخدمات والتصنيفات والوحدات")
         categories = ctx.definitions.list_categories()
         units = ctx.definitions.list_units()
-        search = SelectAllTextField(label="بحث في المواد", hint_text="اسم المادة أو الخدمة", prefix_icon=ft.Icons.SEARCH)
+        # Late-bound: `grid` is created a few lines below; the lambda only
+        # runs once the user focuses search, by which point it exists.
+        search = SelectAllTextField(label="بحث في المواد", hint_text="اسم المادة أو الخدمة", prefix_icon=ft.Icons.SEARCH, on_focus=lambda e: grid.disarm())
         rows = ft.Column(spacing=9)
         summary_row = ft.ResponsiveRow(spacing=8, run_spacing=8)
         filter_state = {"mode": "all"}
@@ -234,6 +252,71 @@ class ItemsCenter:
         filter_boxes: dict[str, ft.Container] = {}
         sort_state = {"key": "name"}
         LOW_STOCK = 5.0
+
+        # ---- desktop grid (pilot) --------------------------------------
+        def _status_tuple(row: dict):
+            if row.get("item_type") != "مخزون":
+                return ("خدمة", Colors.PURPLE, Colors.PURPLE_BG)
+            q = float(row.get("quantity") or 0)
+            if q <= 0:
+                return ("نفد", Colors.DANGER_DARK, Colors.DANGER_BG)
+            if q < LOW_STOCK:
+                return ("منخفض", Colors.WARNING_DARK, Colors.WARNING_BG_ALT)
+            return ("متوفر", Colors.SUCCESS, Colors.SUCCESS_BG)
+
+        def _grid_formatter(col, value, row):
+            if col.key == "_status":
+                return _status_tuple(row)
+            if col.key == "item_type":
+                return ("مخزون", Colors.PRIMARY, Colors.PRIMARY_BG) if row.get("item_type") == "مخزون" else ("خدمة", Colors.PURPLE, Colors.PURPLE_BG)
+            if col.key == "category_name":
+                return str(value or "بلا تصنيف")
+            if col.key == "unit_name":
+                return str(value or "بلا وحدة")
+            if col.key == "quantity":
+                return qty_fmt(value) if row.get("item_type") == "مخزون" else "—"
+            if col.kind == "money":
+                return money(value)
+            return None  # text columns: default rendering
+
+        def _grid_commit(row_index: int, key: str, value) -> None:
+            # update() rewrites every field, so read the current row first and
+            # change only the edited key -- otherwise a price edit would blank
+            # the category/unit/barcode.
+            row = grid.row_at(row_index) or {}
+            item_id = int(row.get("id") or 0)
+            try:
+                fresh = ctx.items.get(item_id)
+                if fresh is None:
+                    raise ValueError("المادة غير موجودة")
+                units = [
+                    {"unit_id": u["id"], "conversion_factor": u.get("conversion_factor", 1),
+                     "selling_price": u.get("selling_price"), "purchase_price": u.get("purchase_price")}
+                    for u in ctx.items.units(item_id)
+                ]
+                kwargs = dict(
+                    name=fresh["name"], category_id=fresh.get("category_id"),
+                    item_type=fresh.get("item_type") or "مخزون",
+                    purchase_price=fresh.get("purchase_price") or 0,
+                    selling_price=fresh.get("selling_price") or 0,
+                    base_unit_id=fresh.get("base_unit_id"), barcode=fresh.get("barcode"),
+                    item_units=units,
+                )
+                kwargs[key] = value
+                ctx.items.update(item_id, **kwargs)
+            except Exception as exc:
+                notify(str(exc), kind="error")
+                raise  # let the grid revert the optimistic cell value
+
+        grid = DataGrid(
+            columns=ITEM_GRID_COLUMNS,
+            rows=[],
+            page=page,
+            on_cell_commit=_grid_commit,
+            on_row_activate=lambda row: show_item_detail(row),
+            formatter=_grid_formatter,
+        )
+        grid_more = ft.Container(visible=False)
 
         def filter_box(key: str, label: str, icon):
             box = ft.Container(
@@ -2295,6 +2378,26 @@ class ItemsCenter:
                 ft.Container(kpi_card("مخزون منخفض", str(low_count), ft.Icons.WARNING_AMBER_ROUNDED, Colors.DANGER, on_tap=lambda _: set_filter("low")), col={"xs": 6, "md": 3}),
                 ft.Container(kpi_card("الخدمات", str(service_count), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")), col={"xs": 6, "md": 3}),
             ]
+            # Desktop: spreadsheet grid instead of the card list. Kept in the
+            # same refresh() so search/filters/sort drive both layouts.
+            desktop = bool(page.width and page.width >= 900)
+            if desktop:
+                shown = filtered[: render_limit["n"]]
+                grid.set_rows(shown)
+                remaining = len(filtered) - len(shown)
+                if remaining > 0:
+                    grid_more.content = ft.Row(
+                        [ft.OutlinedButton(f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                                           on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()))],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    )
+                    grid_more.visible = True
+                else:
+                    grid_more.visible = False
+                list_switch.content = desktop_list
+                update_filter_styles(); page.update()
+                return
+            list_switch.content = mobile_list
             rows.controls = []
             if low_count and mode != "low":
                 rows.controls.append(ft.Container(ft.Row([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=Colors.DANGER_DARKER), ft.Text(f"يوجد {low_count} مواد منخفضة المخزون", expand=True, size=11, weight=ft.FontWeight.W_600), ft.Text("عرضها", size=10, color=Colors.DANGER_DARKER)]), padding=11, bgcolor=Colors.DANGER_BG, border=ft.border.all(1, Colors.DANGER_BORDER), border_radius=14, on_click=lambda _: set_filter("low"), ink=True))
@@ -2485,16 +2588,27 @@ class ItemsCenter:
             on_click=toggle_stats, ink=True, border_radius=8,
         )
 
-        scroll_body = ft.Column(
+        # The stats block is mounted once (a control must not have two
+        # parents); only `list_switch` swaps between the mobile card list and
+        # the desktop grid, each a self-contained subtree.
+        mobile_list = ft.Column(
             [
-                stats_header,
-                stats_body,
                 rows,
                 # Breathing room so the last card never sits directly under
                 # the floating action button.
                 ft.Container(height=84),
             ],
             spacing=8, scroll=ft.ScrollMode.AUTO, expand=True,
+        )
+        desktop_list = ft.Column(
+            [ft.Container(grid, expand=True), grid_more],
+            spacing=8, expand=True,
+        )
+        list_switch = ft.Container(content=mobile_list, expand=True)
+        list_area = ft.Container(
+            ft.Column([stats_header, stats_body, list_switch], spacing=8, expand=True),
+            padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
+            expand=True,
         )
 
         # Floating "مادة جديدة" action instead of a fixed bottom bar --
@@ -2583,7 +2697,7 @@ class ItemsCenter:
                 ft.Column(
                     [
                         sticky_top,
-                        ft.Container(scroll_body, padding=ft.padding.only(left=18, right=18, top=14, bottom=10), expand=True),
+                        list_area,
                     ],
                     spacing=0, expand=True,
                 ),
@@ -2593,6 +2707,17 @@ class ItemsCenter:
             expand=True,
         )
         refresh()
+        # Publish this section's contextual ribbon actions (desktop). The
+        # shell resets them to its own defaults on the next navigation, so
+        # these closures are only ever invoked while items is on screen.
+        if self.on_context_actions is not None:
+            self.on_context_actions([
+                RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: open_item_editor()),
+                RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
+                RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
+                RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),
+                RibbonAction("import_card", "استيراد بطاقة", ft.Icons.QR_CODE_SCANNER, on_click=lambda _=None: open_import_card_sheet()),
+            ])
         if prefill_barcode:
             open_item_editor(None, prefill_barcode)
 

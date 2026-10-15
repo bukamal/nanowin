@@ -28,6 +28,8 @@ from nano_offline.views.reports_view import ReportsCenter
 from nano_offline.views.security_view import SecurityCenter
 from nano_offline.views.splash_view import SplashGate
 from nano_offline.views.stocktake_view import StocktakeCenter
+from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonTab
+from nano_offline.components import SelectAllTextField
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core.theme import Colors, Shadow
@@ -205,9 +207,20 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         on_open_payment=lambda supplier_id=None, amount=None: open_supplier_payment(supplier_id, amount),
         on_open_statement=open_statement,
     )
+    # Lets the active view publish its own contextual ribbon actions (e.g.
+    # items offers "مادة جديدة" backed by its internal editor). Guarded
+    # because the command bar widget itself is built later in this function;
+    # an early call just no-ops rather than crashing on the unbound name.
+    def set_context_actions(actions):
+        try:
+            command_bar.set_actions(actions)
+        except NameError:
+            pass
+
     items_center = ItemsCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_open_stocktake=lambda: navigate("stocktake"),
+        on_context_actions=set_context_actions,
     )
     stocktake_center = StocktakeCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
@@ -353,6 +366,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             label.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
             label.weight = ft.FontWeight.BOLD if active else ft.FontWeight.W_500
             box.bgcolor = Colors.PRIMARY_BG if active else None
+        try:
+            command_bar.set_active(current)
+            command_bar.set_actions(_section_actions(current))
+        except NameError:
+            # command_bar / _section_actions are defined later in build_shell;
+            # this method is only ever *called* after they exist, but guard the
+            # definition-order edge just in case.
+            pass
 
     # NOTE: adapt_navigation / _pos_fullscreen are defined further below,
     # next to the voice-session block they depend on. They are only *called*
@@ -362,6 +383,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     def render_route(key: str, kwargs: dict) -> None:
         route = router.get(key)
         selected_key["value"] = key
+        # Each route starts with the shell's global shortcuts active; a view
+        # that wants raw keyboard input (the items DataGrid) installs its own
+        # handler during render() below, and this reset keeps it from leaking
+        # onto the next screen.
+        page.on_keyboard_event = _shell_key
         if route is not None and route.label:
             set_header(route.label, route.subtitle)
         refresh_navigation_state()
@@ -484,6 +510,42 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     def open_items_for_new(barcode_code: str) -> None:
         navigate("items", prefill_barcode=barcode_code)
 
+    # ---------------- desktop ribbon (replaces the old sidebar) ----------------
+    def _section_actions(key: str) -> list[RibbonAction]:
+        """Default contextual ribbon actions per section.
+
+        A view may override these by calling ``set_context_actions`` while it
+        renders (the items screen does, to expose its own editor). These are
+        the shell-level fallbacks for every other section.
+        """
+        invoice_actions = [
+            RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
+            RibbonAction("sale", "فاتورة بيع", ft.Icons.SHOPPING_CART_CHECKOUT, on_click=lambda _=None: open_sale()),
+            RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_purchase()),
+        ]
+        if key in ("dashboard", "items", "invoices"):
+            return invoice_actions
+        if key == "finance":
+            return [
+                RibbonAction("receipt", "سند قبض", ft.Icons.PAYMENTS_OUTLINED, on_click=lambda _=None: open_receipt()),
+                RibbonAction("payment", "سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, on_click=lambda _=None: open_supplier_payment()),
+            ]
+        if key == "admin":
+            return [RibbonAction("backup", "النسخ الاحتياطي", ft.Icons.BACKUP_OUTLINED, on_click=lambda _=None: open_admin_section("backup"))]
+        return []
+
+    session_for_bar = session
+    command_bar = CommandBar(
+        page=page,
+        tabs=[RibbonTab(k, label_map[k], icon_map[k]) for k in allowed_keys],
+        on_tab=lambda k: navigate(k),
+        user_name=session_for_bar.full_name or session_for_bar.username,
+        user_sub=session_for_bar.username,
+        on_logout=lambda: on_logout(),
+        on_search=None,
+    )
+    command_bar.visible = False
+
     # Android hardware back button. `page.window.prevent_close` keeps the
     # OS from killing the app on the first press; the handler then pops the
     # Router's real back-stack (sale editor -> invoices list, POS -> where
@@ -570,7 +632,10 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         visible=False,
     )
 
-    body = ft.Column([top_bar, content], spacing=0, expand=True)
+    # The desktop ribbon sits above the section header; the old branded
+    # sidebar is kept constructed (its buttons are still registered above)
+    # but is never shown again -- mobile keeps its own bottom bar.
+    body = ft.Column([command_bar, top_bar, content], spacing=0, expand=True)
 
     def mobile_item(key: str, label: str, icon_data, on_click):
         icon = ft.Icon(icon_data, size=23, color=Colors.TEXT_FAINT)
@@ -830,7 +895,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             # clears this flag first.
             return
         desktop = bool(page.width and page.width >= 900)
-        sidebar.visible = desktop
+        # The ribbon always replaces the sidebar on desktop now.
+        sidebar.visible = False
+        command_bar.visible = desktop
         mobile_bar.visible = not desktop
         content.padding = ft.padding.only(left=24 if desktop else 16, right=24 if desktop else 16, top=18 if desktop else 12, bottom=24 if desktop else 16)
         page.update()
@@ -845,6 +912,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         _pos_fullscreen["value"] = True
         top_bar.visible = False
         sidebar.visible = False
+        command_bar.visible = False
         mobile_bar.visible = False
         content.padding = ft.padding.all(0)
         # Keep call banner; hide FAB so it does not cover POS pay bar
@@ -864,6 +932,69 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             router.back()
         else:
             navigate("dashboard")
+
+    # ---------------- Ctrl+K command palette + global shortcuts ----------------
+    def open_command_palette(_=None) -> None:
+        """A tiny quick-switcher: filter the allowed sections by name and jump.
+
+        Rebuilt fresh on every open (like the app's other dialogs) so the
+        search field always starts empty and autofocused.
+        """
+        entries = [(k, label_map[k], icon_map[k]) for k in allowed_keys]
+        results = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=320)
+        holder: dict[str, ft.Control] = {}
+        field = SelectAllTextField(
+            label="ابحث عن قسم…",
+            autofocus=True,
+            on_change=lambda e: render_results(holder["field"].value),
+        )
+        holder["field"] = field
+        dialog = ft.AlertDialog(modal=True, title=ft.Text("بحث سريع"))
+
+        def go(key: str) -> None:
+            page.close(dialog)
+            navigate(key)
+
+        def render_results(query: str = "") -> None:
+            q = (query or "").strip().casefold()
+            results.controls = []
+            for key, label, icon in entries:
+                if q and q not in label.casefold() and q not in key.casefold():
+                    continue
+                results.controls.append(
+                    ft.Container(
+                        ft.Row([ft.Icon(icon, size=18, color=Colors.PRIMARY), ft.Text(label, size=13, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY)], spacing=12),
+                        padding=ft.padding.symmetric(horizontal=12, vertical=11),
+                        border_radius=12,
+                        ink=True,
+                        on_click=lambda _, k=key: go(k),
+                    )
+                )
+            if not results.controls:
+                results.controls.append(ft.Text("لا نتائج مطابقة", size=12, color=Colors.TEXT_SECONDARY))
+            try:
+                results.update()
+            except Exception:
+                pass
+
+        render_results("")
+        dialog.content = ft.Container(ft.Column([field, results], spacing=12, tight=True), width=440)
+        page.open(dialog)
+
+    def _shell_key(e: ft.KeyboardEvent) -> None:
+        norm = (e.key or "").strip().lower().replace(" ", "")
+        if getattr(e, "ctrl", False) and norm == "k":
+            open_command_palette()
+
+    # Expose the palette to the DataGrid (it reads this off the page so its
+    # own key handler can honour Ctrl+K without importing the shell).
+    try:
+        page._nano_open_command_palette = open_command_palette
+    except Exception:
+        pass
+
+    command_bar.on_search = open_command_palette
+    page.on_keyboard_event = _shell_key
 
     page.on_resize = adapt_navigation
     navigate("dashboard")
