@@ -133,6 +133,9 @@ android_permissions = [
 path = "."
 module = "main"
 
+[tool.flet.flutter]
+no_pub_get = true
+
 [tool.flet.splash]
 color = "#0F766E"
 dark_color = "#115E59"
