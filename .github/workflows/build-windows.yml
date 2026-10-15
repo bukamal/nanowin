@@ -157,6 +157,15 @@ jobs:
           Copy-Item -Recurse -Force src/nano_offline .
           Copy-Item -Recurse -Force src/assets .
           
+          # Ensure main.py can find the bundled nano_offline module in the zip
+          $mainContent = Get-Content main.py -Raw
+          $sysPathFix = "import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))`n"
+          if ($mainContent -notlike "*sys.path.insert(0, os.path.dirname*") {
+            $newContent = $sysPathFix + $mainContent
+            Set-Content -Path main.py -Value $newContent -NoNewline
+            Write-Host "Injected sys.path fix into main.py"
+          }
+          
           flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== flet-build.log tail (last 80 lines) ====="
