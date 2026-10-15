@@ -130,7 +130,12 @@ android_permissions = [
 ]
 
 [tool.flet.app]
-path = "."
+# `main.py` lives in src/ together with the `assets/` tree it resolves via
+# `Path(__file__).parent / "assets"` (see src/main.py)._FONTS_DIR. The Flet
+# desktop bootstrap extracts app.zip and runs `runpy.run_module("main")` with
+# the app dir as the working/sys.path dir, so app.zip must be built from src/
+# (main.py + assets/ + nano_offline/ at the archive root), NOT the repo root.
+path = "src"
 module = "main"
 
 [tool.flet.flutter]

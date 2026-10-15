@@ -150,9 +150,21 @@ jobs:
         # with "Release folder not found"), so check $LASTEXITCODE explicitly
         # -- PowerShell preserves the native command's code across the pipe --
         # and dump the build log tail, mirroring the quality-gate step.
+        #
+        # --product "Nano" (ASCII) is REQUIRED on Windows, not cosmetic:
+        # path_provider_windows derives the per-app support directory from the
+        # exe's version-info CompanyName\ProductName, i.e.
+        # %APPDATA%\Nano\{ProductName}. flet extracts app.zip there, and the
+        # serious_python Windows plugin then puts that dir on PYTHONPATH via
+        # narrow (_putenv_s) strings. A non-ASCII ProductName
+        # ("Nano | نانو" -> "Nano _ نانو") gets mangled by the ANSI conversion,
+        # so PYTHONPATH points nowhere and the bootstrap dies with
+        # "ImportError: No module named main" -- no matter what app.zip holds.
+        # The Arabic title is preserved at runtime by page.title in
+        # src/main.py; only the exe metadata/window-title-before-load are ASCII.
         shell: pwsh
         run: |
-          flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
+          flet build windows --product "Nano" --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== flet-build.log tail (last 80 lines) ====="
             Get-Content flet-build.log -Tail 80
