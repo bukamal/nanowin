@@ -176,7 +176,8 @@ jobs:
           Write-Host "::warning::HASZIP::$hasZip"
           if (-not $hasZip) { throw "bundled app.zip missing at $zipPath" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [IO.Compression.ZipFile]::OpenRead("$PWD\$($zipPath -replace '/','\'))")
+          $zipFull = Join-Path $PWD ($zipPath -replace '/', '\')
+          $zip = [IO.Compression.ZipFile]::OpenRead($zipFull)
           $roots = @($zip.Entries.FullName | Where-Object { $_ -notmatch '/' } | Select-Object -First 30) -join ';'
           Write-Host "::warning::ZIPROOT::$roots"
           Write-Host "::warning::ZIPCOUNT::$($zip.Entries.Count)"
