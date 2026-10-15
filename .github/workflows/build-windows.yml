@@ -152,9 +152,22 @@ jobs:
         # and dump the build log tail, mirroring the quality-gate step.
         shell: pwsh
         run: |
-          # Build pointing to src/ as the Flet app directory, with --module-name
-          # to specify main as the entry point module.
-          flet build windows src --module-name main --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
+          # Copy the root level files of src/ directly to the project root.
+          Get-ChildItem -Path src -File | Copy-Item -Destination . -Force
+          if (Test-Path "src\nano_offline") {
+            Copy-Item -Path "src\nano_offline" -Destination . -Recurse -Force
+          }
+          if (Test-Path "src\assets") {
+            Copy-Item -Path "src\assets" -Destination . -Recurse -Force
+          }
+
+          # Verify main.py is present at root before building
+          if (-not (Test-Path "main.py")) {
+            throw "src/main.py not found after copy"
+          }
+
+          # Now execute the build
+          flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== flet-build.log tail (last 80 lines) ====="
             Get-Content flet-build.log -Tail 80
