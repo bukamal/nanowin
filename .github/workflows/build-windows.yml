@@ -152,9 +152,9 @@ jobs:
         # and dump the build log tail, mirroring the quality-gate step.
         shell: pwsh
         run: |
-          # Build directly pointing to the main.py inside src/
-          # flet build requires the app file path
-          flet build windows src/main.py --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
+          # Build pointing to src/ as the Flet app directory, with --module-name
+          # to specify main as the entry point module.
+          flet build windows src --module-name main --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== flet-build.log tail (last 80 lines) ====="
             Get-Content flet-build.log -Tail 80
