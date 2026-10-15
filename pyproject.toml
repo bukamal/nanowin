@@ -130,7 +130,7 @@ android_permissions = [
 ]
 
 [tool.flet.app]
-path = "src"
+path = "."
 module = "main"
 
 [tool.flet.splash]
