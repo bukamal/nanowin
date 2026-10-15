@@ -152,7 +152,8 @@ jobs:
         # and dump the build log tail, mirroring the quality-gate step.
         shell: pwsh
         run: |
-          flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
+          # Explicitly point flet to the app entry point in src/ to guarantee main.py is bundled
+          flet build windows --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor --module main --target src/main.py 2>&1 | Tee-Object -FilePath flet-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== flet-build.log tail (last 80 lines) ====="
             Get-Content flet-build.log -Tail 80
