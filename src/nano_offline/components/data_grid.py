@@ -381,6 +381,11 @@ class DataGrid(ft.Column):
         self._edit_field = field
         self._safe_update(box)
         try:
+            v = field.value or ""
+            try:
+                field.selection = ft.TextSelection(base_offset=0, extent_offset=len(v))
+            except Exception:
+                pass
             field.focus()
         except Exception:
             pass
