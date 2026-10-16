@@ -23,7 +23,7 @@ from nano_offline.views.items_view import ItemsCenter
 from nano_offline.views.login_view import LoginGate
 from nano_offline.views.notifications_view import NotificationCenter
 from nano_offline.views.parties_view import PartyCenter
-from nano_offline.views.pos_view import POSCenter
+from nano_offline.views.pos_view import POSCenter, POS_RAIL_BREAKPOINT
 from nano_offline.views.reports_view import ReportsCenter
 from nano_offline.views.security_view import SecurityCenter
 from nano_offline.views.splash_view import SplashGate
@@ -893,8 +893,19 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             # sidebar/tab bar back over the sale screen -- leaving POS is
             # the Router's on_leave path (pos_chrome_restore below), which
             # clears this flag first.
+            #
+            # But the resize must not be swallowed either: hand it to POS
+            # (via the hook POSCenter._build installs) so a rotation / window
+            # snap across the desktop breakpoint can still reflow the sale
+            # screen instead of leaving it stuck in the old layout.
+            hook = getattr(page, "_nano_pos_relayout", None)
+            if callable(hook):
+                try:
+                    hook()
+                except Exception:
+                    pass
             return
-        desktop = bool(page.width and page.width >= 900)
+        desktop = bool(page.width and page.width >= POS_RAIL_BREAKPOINT)
         # The ribbon always replaces the sidebar on desktop now.
         sidebar.visible = False
         command_bar.visible = desktop
