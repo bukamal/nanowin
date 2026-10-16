@@ -70,6 +70,7 @@ class DataGrid(ft.Column):
         page: ft.Page | None = None,
         on_cell_commit: Callable[[int, str, object], None] | None = None,
         on_row_activate: Callable[[dict], None] | None = None,
+        on_pick: Callable[[int, GridColumn], None] | None = None,
         formatter: Callable[[GridColumn, object, dict], object] | None = None,
         parser: Callable[[GridColumn, str], object] | None = None,
         activate_icon: str = ft.Icons.OPEN_IN_NEW_ROUNDED,
@@ -83,6 +84,7 @@ class DataGrid(ft.Column):
         self._page = page
         self._on_cell_commit = on_cell_commit
         self._on_row_activate = on_row_activate
+        self._on_pick = on_pick
         self._formatter = formatter
         self._parser = parser
         self._activate_icon = activate_icon
@@ -354,6 +356,27 @@ class DataGrid(ft.Column):
         """Enable keyboard navigation without requiring an initial click."""
         self._armed = True
 
+    def set_cell(self, index: int, key: str, value, *, notify: bool = True) -> None:
+        """Write ``value`` into one cell and repaint its row.
+
+        Used by picker cells (see ``on_pick``), where the value comes from a
+        dialog rather than a typed TextField.
+        """
+        if not (0 <= index < len(self._rows)):
+            return
+        row = self._rows[index]
+        old = row.get(key)
+        if value == old:
+            return
+        row[key] = value
+        if notify and self._on_cell_commit is not None:
+            try:
+                self._on_cell_commit(index, key, value)
+            except Exception:
+                row[key] = old
+        self._render_row(index)
+        self._safe_update(self._body)
+
     # ------------------------------------------------------------- selection
     def _on_cell_click(self, r: int, c: int) -> None:
         was_armed = self._armed
@@ -402,6 +425,12 @@ class DataGrid(ft.Column):
         col = self._columns[c] if 0 <= c < len(self._columns) else None
         box = self._cell_boxes.get((r, c))
         if col is None or box is None or not col.editable:
+            return
+        if col.kind == "picker":
+            # A picker cell has no free-text editor: hand control to the view,
+            # which opens a chooser and writes back via set_cell().
+            if self._on_pick is not None:
+                self._on_pick(r, col)
             return
         self.nav.begin_edit()
         current = self._rows[r].get(col.key)

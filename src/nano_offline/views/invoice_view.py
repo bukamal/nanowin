@@ -20,10 +20,12 @@ from nano_offline.components import (
     new_form_sheet,
     render_form_sheet,
     status_pill,
+    DataGrid,
+    GridColumn,
 )
 
 from nano_offline.services.invoice_service import InvoiceLineInput
-from nano_offline.components.buttons import stepper_icon_button
+from nano_offline.components.buttons import stepper_icon_button, header_close_button
 from nano_offline.components.money_text import money_row
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
@@ -1701,6 +1703,213 @@ class InvoiceCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
 
+        def open_bulk_lines_sheet(_=None) -> None:
+            """Table-style quick entry for invoice lines.
+
+            Reuses the editable DataGrid (same keys as every other table)
+            with a *picker* column: activating the item cell opens an
+            in-sheet chooser instead of a free-text box, so an item is
+            never guessed by name. Chosen rows are applied through the
+            exact ``add_line`` path the manual editor uses, so units,
+            prices and the stock/price badges stay consistent.
+            """
+            previous_key_handler = getattr(self.page, "on_keyboard_event", None)
+            rate = currency.get_effective_rate(self.ctx.settings)
+            price_key = "selling_price" if (type_dd.value or self.invoice_type) == "sale" else "purchase_price"
+            picking_row = {"index": None}
+
+            def default_display_price(item_row: dict) -> float:
+                price_usd = float(item_row.get(price_key) or 0)
+                return round(currency.to_display(price_usd, rate), 2)
+
+            def row_formatter(col, value, row):
+                if col.key == "item":
+                    if not value:
+                        return "— اختر مادة —"
+                    item_row = item_map.get(int(value))
+                    return item_row["name"] if item_row else "—"
+                if col.key == "price":
+                    return currency.format_plain(value) if value else ""
+                return None
+
+            bulk_grid = DataGrid(
+                columns=[
+                    GridColumn("item", "المادة", editable=True, kind="picker"),
+                    GridColumn("qty", "الكمية", editable=True, kind="number", width=110, align="end"),
+                    GridColumn("price", "السعر", editable=True, kind="money", width=150, align="end"),
+                ],
+                rows=[], page=self.page,
+                on_pick=lambda r, col: open_chooser(r),
+                formatter=row_formatter,
+                empty_text="اضغط «سطر جديد» لإضافة بنود",
+            )
+            for _ in range(3):
+                bulk_grid.add_row({"qty": 1})
+
+            chooser_search = SelectAllTextField(
+                label="ابحث عن مادة", hint_text="الاسم أو الباركود",
+                prefix_icon=ft.Icons.SEARCH, dense=True,
+            )
+            chooser_results = ft.Column(spacing=4)
+
+            def render_chooser(term: str = "") -> None:
+                term = (term or "").strip().lower()
+                cards: list[ft.Control] = []
+                for item_row in items:
+                    haystack = f"{item_row.get('name', '')} {item_row.get('barcode', '')}".lower()
+                    if term and term not in haystack:
+                        continue
+                    cards.append(
+                        ft.Container(
+                            ft.Row(
+                                [
+                                    ft.Column(
+                                        [
+                                            ft.Text(item_row["name"], size=13, weight=ft.FontWeight.W_600),
+                                            ft.Text(item_row.get("barcode") or "بلا باركود", size=9, color=Colors.TEXT_SECONDARY),
+                                        ],
+                                        spacing=1, expand=True,
+                                    ),
+                                    ft.Text(currency.format_plain(default_display_price(item_row)), size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            padding=9, border=ft.border.all(1, Colors.BORDER), border_radius=10,
+                            bgcolor=Colors.WHITE, ink=True,
+                            on_click=lambda _, i=item_row: choose_item(i),
+                        )
+                    )
+                    if len(cards) >= 40:
+                        break
+                if not cards:
+                    cards = [ft.Text("لا توجد نتائج", size=11, color=Colors.TEXT_SECONDARY)]
+                chooser_results.controls = cards
+                _safe_update(chooser_results)
+
+            chooser_search.on_change = lambda e: render_chooser(e.control.value)
+            chooser_panel = ft.Container(
+                ft.Column(
+                    [chooser_search, ft.Container(chooser_results, height=300)],
+                    spacing=8,
+                ),
+                visible=False,
+            )
+
+            def hide_chooser(_=None) -> None:
+                picking_row["index"] = None
+                chooser_panel.visible = False
+                _safe_update(chooser_panel)
+
+            def choose_item(item_row: dict) -> None:
+                index = picking_row["index"]
+                if index is None:
+                    return
+                bulk_grid.set_cell(index, "item", int(item_row["id"]))
+                if not bulk_grid.row_at(index).get("price"):
+                    bulk_grid.set_cell(index, "price", default_display_price(item_row))
+                hide_chooser()
+
+            def open_chooser(index: int) -> None:
+                picking_row["index"] = index
+                chooser_search.value = ""
+                render_chooser("")
+                chooser_panel.visible = True
+                # While the chooser's search box has focus it owns the keys.
+                bulk_grid.disarm()
+                _safe_update(chooser_panel)
+                try:
+                    chooser_search.focus()
+                except Exception:
+                    pass
+
+            def add_blank(_=None) -> None:
+                bulk_grid.add_row({"qty": 1})
+
+            def apply_lines(_=None) -> None:
+                added = 0
+                for row in bulk_grid.rows:
+                    item_id = row.get("item")
+                    if not item_id:
+                        continue
+                    try:
+                        qty = float(row.get("qty") or 0)
+                    except (TypeError, ValueError):
+                        qty = 0.0
+                    if qty <= 0:
+                        continue
+                    display_price = row.get("price") or 0
+                    try:
+                        unit_price_usd = currency.parse_display_input(str(display_price), self.ctx.settings) if display_price else 0.0
+                    except Exception:
+                        unit_price_usd = 0.0
+                    add_line({"item_id": int(item_id), "quantity": qty, "unit_price": unit_price_usd})
+                    added += 1
+                if not added:
+                    self.notify("أدخل مادة وكمية على الأقل", kind="error")
+                    return
+                close()
+                self.notify(f"أُضيف {added} بند", kind="success")
+                # add_line() appended cards to the editor behind the sheet;
+                # repaint once the dismiss animation has been requested.
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+
+            sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+            sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
+
+            def close(_=None) -> None:
+                self.page.close(sheet)
+                # The grid took over the page's keyboard handler when built;
+                # hand it back so the app's shortcuts keep working.
+                self.page.on_keyboard_event = previous_key_handler
+
+            sheet.content = ft.Container(
+                ft.Column(
+                    [
+                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        ft.Row(
+                            [
+                                ft.Container(ft.Icon(ft.Icons.VIEW_LIST_OUTLINED, color=Colors.PRIMARY, size=20), width=40, height=40, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=12),
+                                ft.Column(
+                                    [
+                                        ft.Text("إدخال سريع (جدول)", size=17, weight=ft.FontWeight.BOLD),
+                                        ft.Text("اختر المادة لكل سطر ثم أدخل الكمية والسعر", size=11, color=Colors.TEXT_SECONDARY),
+                                    ],
+                                    spacing=1, expand=True,
+                                ),
+                                header_close_button(close),
+                            ],
+                            spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        chooser_panel,
+                        ft.Row(
+                            [
+                                ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
+                                ft.Text("افتح خلية المادة لاختيارها • Tab للتنقل", size=10, color=Colors.TEXT_SECONDARY, expand=True),
+                            ],
+                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Container(bulk_grid, height=260, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
+                        ft.Row(
+                            [
+                                ft.Container(expand=True),
+                                ft.FilledButton("إضافة للفاتورة", icon=ft.Icons.PLAYLIST_ADD, on_click=apply_lines),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                    ],
+                    spacing=12, tight=True, scroll=ft.ScrollMode.AUTO,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                ),
+                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
+                bgcolor=Colors.WHITE,
+                border_radius=ft.border_radius.only(top_left=28, top_right=28),
+                shadow=Shadow.LG,
+            )
+            self.page.open(sheet)
+
         # Body scrolls; totals + save stay pinned in a sticky footer below it
         # so they're always visible even on a long line-item list, instead
         # of disappearing off the bottom of one long scrollable column.
@@ -1745,6 +1954,7 @@ class InvoiceCenter:
                     [
                         ft.Text("بنود الفاتورة", size=18, weight=ft.FontWeight.BOLD, expand=True),
                         ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_to_add_line),
+                        ft.OutlinedButton("إدخال سريع (جدول)", icon=ft.Icons.VIEW_LIST_OUTLINED, on_click=open_bulk_lines_sheet),
                         ft.OutlinedButton("إضافة بند", icon=ft.Icons.ADD, on_click=lambda _: add_line()),
                     ]
                 ),

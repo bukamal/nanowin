@@ -160,3 +160,37 @@ def test_remove_row_drops_and_rerenders():
     assert g.row_at(0)["name"] == "ورق"
     g.remove_row(99)  # out of range: no-op
     assert len(g._rows) == len(ROWS) - 1
+
+
+PICK_COLS = [
+    GridColumn("item", "المادة", editable=True, kind="picker"),
+    GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
+]
+
+
+def test_picker_cell_delegates_to_on_pick_without_opening_an_editor():
+    calls = []
+    g = DataGrid(columns=PICK_COLS, rows=[{"item": None, "qty": 1}], page=None,
+                 on_pick=lambda r, col: calls.append((r, col.key)))
+    g.arm()
+    g._handle_key(FakeKey("Enter"))
+    assert calls == [(0, "item")]
+    assert g._edit_field is None  # picker never materialises a TextField
+
+
+def test_set_cell_writes_and_notifies_then_reverts_on_failure():
+    calls = []
+
+    def boom(index, key, value):
+        raise ValueError("nope")
+
+    ok = DataGrid(columns=PICK_COLS, rows=[{"item": None, "qty": 1}], page=None,
+                  on_cell_commit=lambda i, k, v: calls.append((i, k, v)))
+    ok.set_cell(0, "item", 7)
+    assert ok.row_at(0)["item"] == 7
+    assert calls == [(0, "item", 7)]
+
+    bad = DataGrid(columns=PICK_COLS, rows=[{"item": None, "qty": 1}], page=None,
+                   on_cell_commit=boom)
+    bad.set_cell(0, "item", 9)
+    assert bad.row_at(0)["item"] is None  # rolled back
