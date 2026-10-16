@@ -92,7 +92,7 @@ def _build_real_pos(width: int) -> POSCenter:
 
 def _body_of(pos: POSCenter):
     # content.content = Stack([main_column, last_scan_overlay, success_overlay])
-    # main_column = Column([pos_header, body, bottom_pay_bar])
+    # main_column = Column([pos_header, body])
     stack = pos.content.content
     main_column = stack.controls[0]
     return main_column.controls[1]
@@ -107,3 +107,28 @@ def test_body_is_side_by_side_cart_rail_at_every_width():
         # The rail must expand to the full body height.
         assert pos._cart_wrap.content.expand is True
         assert callable(getattr(pos.page, "_nano_pos_relayout", None)), "resize hook installed"
+
+
+def test_body_has_vertical_rail_catalog_and_cart():
+    pos = _build_real_pos(1400)
+    body = _body_of(pos)
+    # [vertical categories/best-sellers rail, catalog, cart rail]
+    assert isinstance(body, ft.Row)
+    assert len(body.controls) == 3
+    rail, _catalog, cart = body.controls
+    assert rail.width == 210, "categories/best-sellers live in a fixed vertical rail"
+    # The running total + pay action are pinned as the cart's own footer
+    # (header row, held row, scrolling lines, footer) instead of a
+    # full-width bar under the whole screen.
+    cart_pane_column = cart.content.content
+    assert len(cart_pane_column.controls) == 4
+
+
+def test_pos_header_has_no_voice_or_mode_toggle():
+    pos = _build_real_pos(1200)
+    pos_header = pos.content.content.controls[0].controls[0]
+    # exit button + title/summary column -- the mic and the flow/full toggle
+    # are gone, so POS is voice-free and always shows the full toolset.
+    assert len(pos_header.content.controls) == 2
+    assert not hasattr(pos, "apply_voice_command")
+    assert not hasattr(pos, "voice_add_by_name")

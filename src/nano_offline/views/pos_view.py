@@ -89,7 +89,6 @@ class POSCenter:
         self.cart: dict[int, dict] = {}
         self.cart_order: list[int] = []  # insertion order, for undo + display
         self.held: list[dict] = []  # [{"label": str, "cart": dict, "order": list, "customer_id": int|None}]
-        self.pos_mode = "flow"  # flow = minimal cashier; full = all tools
         self.customer_id: int | None = None
         self.received_digits: str = ""
         self.auto_print: bool = False
@@ -132,8 +131,6 @@ class POSCenter:
             self.on_fullscreen_enter()
         try:
             self._build()
-            self._register_voice_hook()
-            self._consume_pending_voice()
         except Exception as exc:
             self._show_center_error(exc)
 
@@ -279,24 +276,49 @@ class POSCenter:
         def scan_button_handler(_):
             self.page.run_task(self._scan_with_camera)
 
-        # ---- category chips ---------------------------------------------
-        chips_row = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO, wrap=False)
+        # ---- vertical category rail --------------------------------------
+        # Categories are a stacked vertical list (not a horizontal chip
+        # strip) so the whole taxonomy stays visible at a glance and a long
+        # product grid never drags the categories out of reach.
+        cat_list = ft.Column(spacing=4)
+        best_list = ft.Column(spacing=4)
 
         def set_category(cat_id: int | None):
             state["category_id"] = cat_id
-            render_chips()
+            render_categories()
             render_grid()
             self.page.update()
 
-        def render_chips():
-            controls = []
-            all_active = state["category_id"] is None
-            controls.append(self._chip("الكل", all_active, Colors.TEXT_MUTED_DARK, lambda _: set_category(None)))
+        def render_categories():
+            controls = [
+                self._rail_category(
+                    "الكل", state["category_id"] is None,
+                    Colors.TEXT_MUTED_DARK, ft.Icons.APPS, lambda _: set_category(None),
+                )
+            ]
             for idx, cat in enumerate(categories):
                 active = state["category_id"] == int(cat["id"])
                 color = CHIP_PALETTE[idx % len(CHIP_PALETTE)]
-                controls.append(self._chip(cat["name"], active, color, lambda _, c=int(cat["id"]): set_category(c)))
-            chips_row.controls = controls
+                controls.append(
+                    self._rail_category(
+                        cat["name"], active, color, ft.Icons.LABEL_OUTLINE,
+                        lambda _, c=int(cat["id"]): set_category(c),
+                    )
+                )
+            cat_list.controls = controls
+
+        # "Best sellers" live in the rail as a vertical quick-add list rather
+        # than an inline labelled section inside the grid. pos_catalog()
+        # already returns best-sellers-first; keep only real sellers and cap
+        # the strip short so it stays a quick pick, not a second catalog.
+        best_sellers = sorted(
+            (it for it in items if float(it.get("sold_qty") or 0) > 0),
+            key=lambda it: float(it.get("sold_qty") or 0),
+            reverse=True,
+        )[:8]
+
+        def render_bestsellers():
+            best_list.controls = [self._rail_product(it) for it in best_sellers]
 
         # ---- item grid ------------------------------------------------
         # ResponsiveRow (not GridView) so tiles reflow by column count and
@@ -315,30 +337,12 @@ class POSCenter:
                     continue
                 matched.append(item)
 
-            tiles = []
-            # Only worth separating "best sellers" out as their own labelled
-            # section when the catalog isn't already filtered down (a search
-            # or category pick is itself a stronger signal than the global
-            # sales ranking) -- `items` already comes back best-sellers-first
-            # from pos_catalog(), so this just makes that ordering visible.
-            unfiltered = cat_id is None and not q
-            if unfiltered:
-                best = [it for it in matched if float(it.get("sold_qty") or 0) > 0]
-                rest = [it for it in matched if float(it.get("sold_qty") or 0) <= 0]
-                if best:
-                    tiles.append(self._section_label("⭐ الأكثر مبيعًا"))
-                    tiles.extend(self._item_tile(it) for it in best)
-                    if rest:
-                        tiles.append(self._section_label("كل المواد"))
-                    tiles.extend(self._item_tile(it) for it in rest)
-                else:
-                    tiles.extend(self._item_tile(it) for it in matched)
-            else:
-                tiles.extend(self._item_tile(it) for it in matched)
-
-            grid.controls = tiles
-            grid.visible = bool(tiles)
-            empty_box.visible = not tiles
+            # Best sellers are shown in the vertical rail now, so the grid is
+            # a single flat result set (pos_catalog() still returns
+            # best-sellers-first, so the ordering stays familiar).
+            grid.controls = [self._item_tile(it) for it in matched]
+            grid.visible = bool(matched)
+            empty_box.visible = not matched
 
         empty_box = empty_state(
             "لا توجد نتائج",
@@ -945,7 +949,8 @@ class POSCenter:
         customer_dd.on_change = customer_changed
 
         # ---- assemble layout ------------------------------------------
-        render_chips()
+        render_categories()
+        render_bestsellers()
         render_grid()
         refresh_cart()
 
@@ -954,7 +959,6 @@ class POSCenter:
                 ft.Row([search_field], spacing=10),
                 ft.Row([barcode_field, ft.IconButton(icon=ft.Icons.CAMERA_ALT_OUTLINED, tooltip="مسح بالكاميرا", on_click=scan_button_handler, icon_color=Colors.PRIMARY)], spacing=10),
                 recent_row,
-                chips_row,
                 grid,
                 empty_box,
             ],
@@ -967,6 +971,32 @@ class POSCenter:
         # this column stays short even with several lines in the cart.
         hold_btn = ft.IconButton(icon=ft.Icons.PAUSE_CIRCLE_OUTLINED, tooltip="تعليق الفاتورة", on_click=hold_cart, icon_size=IconSize.HEADER)
         undo_btn = ft.IconButton(icon=ft.Icons.UNDO, tooltip="تراجع عن آخر إضافة", on_click=undo_last, icon_size=IconSize.HEADER)
+
+        # Running total + pay action now live in a pinned footer *inside* the
+        # cart (glued to the receipt they belong to) instead of a full-width
+        # bar under the whole screen. The catalog regains that height and the
+        # cashier's eye never leaves the basket to pay.
+        cart_footer = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("الإجمالي", size=12, color=Colors.TEXT_SECONDARY),
+                            ft.Container(expand=True),
+                            bottom_count_text,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    total_text,
+                    ft.Row([checkout_btn], spacing=0),
+                ],
+                spacing=6,
+            ),
+            padding=ft.padding.only(top=10),
+            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
+        )
+        checkout_btn.expand = True
+
         cart_pane = ft.Container(
             ft.Column(
                 [
@@ -981,8 +1011,10 @@ class POSCenter:
                     ),
                     held_row,
                     cart_column,
+                    cart_footer,
                 ],
-                spacing=10,
+                spacing=8,
+                expand=True,
             ),
             padding=14,
             bgcolor=Colors.WHITE,
@@ -991,141 +1023,37 @@ class POSCenter:
             shadow=Shadow.MD,
         )
 
+        # Vertical side rail: categories stacked on top, then the best-seller
+        # quick-add list. Fixed width so the product grid keeps the flexible
+        # middle and scrolling a long grid never drags the categories away.
+        catalog_rail = ft.Container(
+            ft.Column(
+                [
+                    ft.Text("التصنيفات", size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    cat_list,
+                    ft.Text(
+                        "الأكثر مبيعًا", size=12, weight=ft.FontWeight.BOLD,
+                        color=Colors.TEXT_SECONDARY, visible=bool(best_sellers),
+                    ),
+                    best_list,
+                ],
+                spacing=6,
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
+            ),
+            width=210,
+            padding=ft.padding.symmetric(horizontal=10, vertical=12),
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.LG,
+            shadow=Shadow.SM,
+        )
+
         # Compact fullscreen header: replaces the app's own top bar (hidden
         # via on_fullscreen_enter) with an exit button + title + the "how's
-        # today going" glance, all in one dense row instead of three stacked
-        # ones -- reclaims vertical space for the kiosk-style sale screen.
-        mode_btn = ft.Container(
-            ft.Text("تدفق", size=11, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
-            padding=ft.padding.symmetric(horizontal=12, vertical=7),
-            bgcolor=Colors.PRIMARY,
-            border_radius=16,
-            ink=True,
-            tooltip="التبديل بين وضع التدفق والوضع الكامل",
-        )
-
-        def apply_pos_mode():
-            flow = self.pos_mode == "flow"
-            mode_btn.content.value = "تدفق" if flow else "كامل"
-            mode_btn.bgcolor = Colors.PRIMARY if flow else Colors.PURPLE
-            # In flow: hide name search, show barcode only; hide category chips row if exists
-            try:
-                search_field.visible = not flow
-            except Exception:
-                pass
-            try:
-                hold_btn.visible = not flow
-                undo_btn.visible = not flow
-            except Exception:
-                pass
-            try:
-                today_summary_text.visible = not flow
-            except Exception:
-                pass
-            try:
-                # category chips live in chips_row if defined
-                chips_row.visible = not flow
-            except Exception:
-                pass
-            # The cart rail always expands to fill the body height, so
-            # flow/full must not force a fixed height onto it (that would
-            # leave it short with dead space below).
-            try:
-                self.page.update()
-            except Exception:
-                pass
-
-        def toggle_pos_mode(_=None):
-            self.pos_mode = "full" if self.pos_mode == "flow" else "flow"
-            apply_pos_mode()
-
-        mode_btn.on_click = toggle_pos_mode
-
-
-        # ---- Voice commands (add by name / pay / clear) -----------------
-        from nano_offline.core import voice_command as voice_cmd
-        pos_mic_icon = ft.Icon(ft.Icons.MIC_NONE_ROUNDED, size=20, color=Colors.WHITE)
-        pos_mic = ft.Container(
-            pos_mic_icon, width=40, height=40, alignment=ft.alignment.center,
-            bgcolor=Colors.PRIMARY, border_radius=12, ink=True,
-            tooltip="أمر صوتي: أضف سكر، أضف 3 رز، ادفع، أفرغ السلة",
-        )
-        pos_listening = {"on": False}
-
-        def _pos_set_listening(active: bool):
-            pos_listening["on"] = active
-            pos_mic_icon.name = ft.Icons.MIC_ROUNDED if active else ft.Icons.MIC_NONE_ROUNDED
-            pos_mic.bgcolor = Colors.DANGER if active else Colors.PRIMARY
-            try:
-                self.page.update()
-            except Exception:
-                pass
-
-        def _pos_on_final(text: str):
-            _pos_set_listening(False)
-            text = (text or "").strip()
-            if not text:
-                return
-            try:
-                result = self.ctx.quick_commands.parse(text)
-            except Exception as exc:
-                try:
-                    from nano_offline.core.toast import toast
-                    toast(self.page, str(exc), kind="error")
-                except Exception:
-                    pass
-                return
-            if result.action in ("pos_add", "pos_pay", "pos_clear"):
-                self.apply_voice_command(result)
-            elif result.action == "navigate" and result.target and result.target != "pos":
-                # Leave POS for other sections if shell exit is wired
-                if self.on_fullscreen_exit:
-                    self.on_fullscreen_exit()
-                # Shell may still need navigate — best-effort via page data
-                nav = getattr(self, "_shell_navigate", None)
-                if callable(nav):
-                    nav(result.target)
-            else:
-                try:
-                    from nano_offline.core.toast import toast
-                    toast(self.page, result.message or text, kind="info")
-                except Exception:
-                    pass
-
-        def _pos_on_error(msg: str):
-            _pos_set_listening(False)
-            try:
-                from nano_offline.core.toast import toast
-                toast(self.page, msg, kind="warning")
-            except Exception:
-                pass
-
-        def _pos_toggle_mic(_=None):
-            if pos_listening["on"]:
-                voice_cmd.cancel()
-                _pos_set_listening(False)
-                return
-            _pos_set_listening(True)
-            # Auto-register the Android native STT engine (the POS mic used
-            # to run on the stub engine that never captured audio).
-            try:
-                from nano_offline.core.voice_command import AndroidNativeVoiceEngine, get_engine
-                if self.native_files is not None and not isinstance(get_engine(), AndroidNativeVoiceEngine):
-                    voice_cmd.set_engine(AndroidNativeVoiceEngine(self.native_files, page=self.page))
-            except Exception:
-                pass
-            try:
-                voice_cmd.listen_once(
-                    language="ar-SY",
-                    on_final=_pos_on_final,
-                    on_error=_pos_on_error,
-                    timeout_sec=8.0,
-                )
-            except Exception as exc:
-                _pos_on_error(str(exc))
-
-        pos_mic.on_click = _pos_toggle_mic
-
+        # today going" glance, in one dense row. POS is voice-free and has no
+        # flow/full toggle any more (always the full toolset), so the header
+        # is just exit + identity -- nothing else competes for the space.
         pos_header = ft.Container(
             ft.Row(
                 [
@@ -1134,8 +1062,6 @@ class POSCenter:
                         [ft.Text("نقطة البيع", size=15, weight=ft.FontWeight.BOLD), today_summary_text],
                         spacing=0, expand=True,
                     ),
-                    pos_mic,
-                    mode_btn,
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=6,
             ),
@@ -1143,33 +1069,6 @@ class POSCenter:
             bgcolor=Colors.WHITE,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
-
-        # Sticky pay bar: pinned outside the scrolling body below (not one
-        # more item at the end of a long column) so "الإجمالي + دفع" stays
-        # reachable in one tap no matter how many lines are in the cart or
-        # how far the catalog grid has been scrolled.
-        bottom_pay_bar = ft.Container(
-            ft.Row(
-                [
-                    ft.Column(
-                        [
-                            ft.Text("الإجمالي", size=11, color=Colors.TEXT_SECONDARY),
-                            total_text,
-                            bottom_count_text,
-                        ],
-                        spacing=1,
-                    ),
-                    ft.Container(checkout_btn, expand=True, padding=ft.padding.only(left=12)),
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.only(left=16, right=16, top=12, bottom=14),
-            bgcolor=Colors.WHITE,
-            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
-            shadow=Shadow.MD,
-        )
-        checkout_btn.width = 160
 
         # Wrapped so it can be hidden as a unit (see collapse_cart_for_search
         # below) without touching cart_pane's own children/state.
@@ -1211,14 +1110,16 @@ class POSCenter:
             expand=True,
         )
 
-        # Catalog and cart side by side, each stretching to the full body
-        # height and scrolling on its own. The body itself never scrolls, so
-        # neither pane can push the other out of view.
+        # Three columns, each stretching to the full body height and scrolling
+        # on its own: the vertical category/best-seller rail, the product
+        # catalog, then the cart rail. The body itself never scrolls, so no
+        # pane can push another out of view.
         body = ft.Row(
             [
+                catalog_rail,
                 ft.Container(
                     scroll_body,
-                    padding=ft.padding.only(left=24, right=24, top=14, bottom=10),
+                    padding=ft.padding.only(left=16, right=16, top=14, bottom=10),
                     expand=True,
                 ),
                 cart_wrap,
@@ -1232,7 +1133,6 @@ class POSCenter:
             [
                 pos_header,
                 body,
-                bottom_pay_bar,
             ],
             spacing=0,
             expand=True,
@@ -1283,7 +1183,6 @@ class POSCenter:
             self.page._nano_pos_relayout = self._pos_handle_resize
         except Exception:
             pass
-        apply_pos_mode()
         self.page.update()
         try:
             self._prev_on_keyboard = getattr(self.page, "on_keyboard_event", None)
@@ -1299,6 +1198,9 @@ class POSCenter:
                     return
                 if k == "f2":
                     checkout_btn.on_click(None)
+                    return
+                if k == "f3":
+                    search_field.focus()
                     return
                 if k == "f4":
                     hold_cart(None)
@@ -1326,24 +1228,67 @@ class POSCenter:
     # Small UI helpers
     # ------------------------------------------------------------------ #
 
-    def _chip(self, label: str, active: bool, color: str, on_click):
+    def _rail_category(self, label: str, active: bool, color: str, icon: str, on_click) -> ft.Container:
+        """A single row in the vertical category rail.
+
+        Active state fills the whole row in the category colour (icon tile +
+        text) so the current filter reads at a glance without a separate
+        highlight bar.
+        """
         return ft.Container(
-            ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=Colors.WHITE if active else color),
-            padding=ft.padding.symmetric(horizontal=14, vertical=8),
+            ft.Row(
+                [
+                    ft.Container(
+                        ft.Icon(icon, size=16, color=Colors.WHITE if active else color),
+                        width=30, height=30, alignment=ft.alignment.center,
+                        bgcolor=Colors.WHITE if active else Colors.BACKGROUND_ALT,
+                        border_radius=9,
+                    ),
+                    ft.Text(
+                        label, size=12, weight=ft.FontWeight.W_600,
+                        color=Colors.WHITE if active else Colors.TEXT_DARK,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                    ),
+                ],
+                spacing=8, tight=True,
+            ),
+            padding=ft.padding.symmetric(horizontal=8, vertical=6),
             bgcolor=color if active else Colors.WHITE,
             border=ft.border.all(1, color if active else Colors.BORDER),
-            border_radius=20,
+            border_radius=Radius.SM,
             on_click=on_click,
             ink=True,
         )
 
-    def _section_label(self, text: str) -> ft.Container:
-        """Full-width label dropped inline into the tile ResponsiveRow to
-        mark a section (e.g. best sellers) without needing a second grid."""
+    def _rail_product(self, item: dict) -> ft.Container:
+        """A quick-add row in the rail's best-seller list: name + price on
+        the left, a subtle add affordance on the right -- one tap drops it
+        straight into the cart."""
+        item_id = int(item["id"])
+        is_service = item["item_type"] == "خدمة"
         return ft.Container(
-            ft.Text(text, size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
-            col={"xs": 12},
-            padding=ft.padding.only(top=4, bottom=2),
+            ft.Row(
+                [
+                    ft.Icon(
+                        ft.Icons.DESIGN_SERVICES_OUTLINED if is_service else ft.Icons.INVENTORY_2_OUTLINED,
+                        size=15, color=Colors.PRIMARY,
+                    ),
+                    ft.Column(
+                        [
+                            ft.Text(item["name"], size=11.5, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                            ft.Text(self.money(item["selling_price"]), size=11, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                        ],
+                        spacing=0, expand=True, alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                    ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=18, color=Colors.PRIMARY),
+                ],
+                spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=8, vertical=6),
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=9,
+            on_click=lambda _, i=int(item["id"]): self._add_item(i),
+            ink=True,
         )
 
     def _item_tile(self, item: dict) -> ft.Container:
@@ -1611,216 +1556,6 @@ class POSCenter:
         self._refresh_cart()
         self._show_last_scan_card(item, new_qty, unit_price=unit_price, is_repeat=is_repeat)
         self.page.update()
-
-    def _consume_pending_voice(self) -> None:
-        """Apply a voice command queued before POS opened (from dashboard mic)."""
-        pending = getattr(self.ctx, "_pending_voice_command", None)
-        if not pending:
-            return
-        try:
-            setattr(self.ctx, "_pending_voice_command", None)
-        except Exception:
-            pass
-        self.apply_voice_command(pending)
-
-
-    def _register_voice_hook(self) -> None:
-        try:
-            setattr(self.ctx, "_pos_apply_voice", self.apply_voice_command)
-            setattr(self.ctx, "_pos_cart_snapshot", self.voice_cart_snapshot)
-        except Exception:
-            pass
-
-    def apply_voice_command(self, result) -> None:
-        """Execute a QuickCommandService result while POS is open."""
-        action = getattr(result, "action", None)
-        if action == "pos_add":
-            data = getattr(result, "data", None) or {}
-            name = (data.get("name") or "").strip()
-            qty = float(data.get("qty") or 1)
-            item_id = data.get("item_id")
-            if item_id:
-                try:
-                    iid = int(item_id)
-                    if iid not in self.item_map:
-                        row = self.ctx.items.get(iid) if hasattr(self.ctx.items, "get") else None
-                        if row:
-                            self.item_map[iid] = row
-                    if iid in self.item_map:
-                        self._add_item(iid, qty_delta=qty)
-                        return
-                except Exception:
-                    pass
-            self.voice_add_by_name(name, qty)
-        elif action == "pos_add_many":
-            data = getattr(result, "data", None) or {}
-            items = data.get("items") or []
-            for it in items:
-                nm = (it.get("name") or "").strip()
-                q = float(it.get("qty") or 1)
-                iid = it.get("item_id")
-                if iid:
-                    try:
-                        iid = int(iid)
-                        if iid not in self.item_map:
-                            row = self.ctx.items.get(iid) if hasattr(self.ctx.items, "get") else None
-                            if row:
-                                self.item_map[iid] = row
-                        if iid in self.item_map:
-                            self._add_item(iid, qty_delta=q)
-                            continue
-                    except Exception:
-                        pass
-                if nm:
-                    self.voice_add_by_name(nm, q)
-        elif action == "pos_clear":
-            self.cart.clear()
-            self.cart_order.clear()
-            try:
-                self._refresh_cart()
-            except Exception:
-                pass
-            self.page.update()
-        elif action == "pos_remove_last":
-            if not self.cart_order:
-                return
-            last_id = self.cart_order[-1]
-            self.cart.pop(last_id, None)
-            self.cart_order.pop()
-            try:
-                self._refresh_cart()
-            except Exception:
-                pass
-            self.page.update()
-        elif action == "pos_set_qty":
-            data = getattr(result, "data", None) or {}
-            msg = self.voice_set_qty(float(data.get("qty") or 1), name=(data.get("name") or None))
-            try:
-                from nano_offline.core.toast import toast
-                toast(self.page, msg, kind="info")
-            except Exception:
-                pass
-        elif action == "pos_cart_summary":
-            # summary is computed by voice layer; refresh only
-            try:
-                self._refresh_cart()
-            except Exception:
-                pass
-            self.page.update()
-        elif action == "pos_pay":
-            try:
-                btn = getattr(self, "_checkout_btn", None)
-                if btn is not None and getattr(btn, "on_click", None):
-                    btn.on_click(None)
-            except Exception as exc:
-                try:
-                    from nano_offline.core.toast import toast
-                    toast(self.page, str(exc), kind="error")
-                except Exception:
-                    pass
-
-    def voice_set_qty(self, qty: float, *, name: str | None = None) -> str:
-        """Set absolute quantity on last line or matching name. Returns status message."""
-        qty = float(qty or 0)
-        if qty <= 0:
-            return "الكمية يجب أن تكون أكبر من صفر"
-        target_id = None
-        if name:
-            from nano_offline.core.voice_intelligence import _norm
-            needle = _norm(name)
-            for iid in reversed(self.cart_order):
-                row = self.cart.get(iid)
-                if not row:
-                    continue
-                iname = _norm(str(row["item"].get("name") or ""))
-                if needle in iname or iname in needle:
-                    target_id = iid
-                    break
-            if target_id is None:
-                return f"ما لقيت «{name}» بالسلة"
-        elif self.cart_order:
-            target_id = self.cart_order[-1]
-        else:
-            return "السلة فارغة"
-        row = self.cart.get(target_id)
-        if not row:
-            return "البند غير موجود"
-        row["qty"] = qty
-        try:
-            self._refresh_cart()
-        except Exception:
-            pass
-        self.page.update()
-        return f"كمية {row['item'].get('name')} = {qty:g}"
-
-    def voice_cart_snapshot(self) -> dict:
-        """Totals for voice summary (USD stored amounts)."""
-        lines = []
-        total = 0.0
-        for item_id in self.cart_order:
-            row = self.cart.get(item_id)
-            if not row:
-                continue
-            item = row["item"]
-            qty = float(row.get("qty") or 0)
-            unit = row.get("unit_price")
-            if unit is None:
-                unit = float(item.get("selling_price") or 0)
-            else:
-                unit = float(unit)
-            line_total = unit * qty
-            total += line_total
-            lines.append({"name": item.get("name"), "qty": qty, "line_total": line_total})
-        return {"count": len(lines), "total": total, "lines": lines}
-
-    def voice_add_by_name(self, name: str, qty: float = 1.0) -> bool:
-        """Resolve item by Arabic name and add to cart. Returns True on success."""
-        name = (name or "").strip()
-        if not name:
-            return False
-        qty = float(qty or 1) or 1.0
-        # Prefer in-memory catalog; fall back to DB search
-        matches = []
-        from nano_offline.core.voice_nlu import normalize_ar
-        needle = normalize_ar(name)
-        needle_noart = needle[2:] if needle.startswith("ال") and len(needle) > 3 else needle
-        needle_art = ("ال" + needle) if not needle.startswith("ال") else needle
-        for item in self.item_map.values():
-            iname = normalize_ar(str(item.get("name") or ""))
-            if not iname:
-                continue
-            if (needle and (needle in iname or iname in needle)) or \
-               (needle_noart and (needle_noart in iname or iname in needle_noart)) or \
-               (needle_art in iname or iname in needle_art):
-                matches.append(item)
-        if not matches:
-            try:
-                rows = self.ctx.items.list(search=name) if hasattr(self.ctx.items, "list") else []
-                for r in rows or []:
-                    if int(r["id"]) not in self.item_map:
-                        self.item_map[int(r["id"])] = r
-                    matches.append(r)
-            except Exception:
-                pass
-        if not matches:
-            try:
-                from nano_offline.core.toast import toast
-                toast(self.page, f"لا توجد مادة تطابق «{name}»", kind="warning")
-            except Exception:
-                pass
-            return False
-        # Prefer exact-ish match
-        exact = [m for m in matches if str(m.get("name") or "").strip() == name]
-        item = exact[0] if exact else matches[0]
-        item_id = int(item["id"])
-        self.item_map[item_id] = item
-        self._add_item(item_id, qty_delta=qty)
-        try:
-            from nano_offline.core.toast import toast
-            toast(self.page, f"أُضيف: {item.get('name')} × {qty:g}", kind="success", sound_kind="scan")
-        except Exception:
-            pass
-        return True
 
     def _show_last_scan_card(self, item: dict, qty: float, unit_price: float | None = None, is_repeat: bool = False) -> None:
         """Phase B: floating «آخر مسح» card — appears ~1.5s then fades away."""
