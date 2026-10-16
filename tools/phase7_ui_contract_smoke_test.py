@@ -10,10 +10,12 @@ docs = (ROOT / "src/nano_offline/services/document_service.py").read_text(encodi
 for needle in [
     "NativeFiles()",
     "page.overlay.append(native_files)",
-    "mobile_bar",
-    "sale_fab",
-    'ft.Text("المزيد"',
-    'ft.Icons.MORE_HORIZ',
+    # Desktop-only shell: the ribbon (CommandBar) is the one navigation
+    # surface; the mobile bottom bar / FAB / "المزيد" sheet are gone.
+    "CommandBar",
+    "command_bar",
+    "RibbonTab",
+    "on_context_actions",
 ]:
     assert needle in main, needle
 for needle in ['طباعة', 'PDF', 'print_html', 'share_pdf']:

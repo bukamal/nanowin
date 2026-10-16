@@ -6,21 +6,15 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, status_pill, DataGrid, GridColumn, metric_controls, metric_row
+from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row
 from nano_offline.components.buttons import header_close_button, inline_icon_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
-from nano_offline.core.theme import Colors, IconSize, LazyPalette, Radius, Shadow
+from nano_offline.core.theme import Colors, IconSize, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import barcode_quality
 from nano_offline.core import barcode_settings
 from nano_offline.core import item_card_signing
-
-# Same cycled-by-index palette as pos_view.CHIP_PALETTE (not imported from
-# there to avoid coupling two independent view modules over a single
-# constant) -- keeping the values identical means a category shows the same
-# accent color here as it does on the POS catalog grid.
-CATEGORY_PALETTE = LazyPalette("PRIMARY", "PURPLE_LIGHT", "ORANGE", "WARNING_DARK", "SUCCESS_ALT")
 
 # Desktop grid columns. Only name + the two prices are inline-editable:
 # quantity is derived from inventory movements (see ItemRepository.update,
@@ -238,7 +232,6 @@ class ItemsCenter:
         # Late-bound: `grid` is created a few lines below; the lambda only
         # runs once the user focuses search, by which point it exists.
         search = SelectAllTextField(label="بحث في المواد", hint_text="اسم المادة أو الخدمة", prefix_icon=ft.Icons.SEARCH, on_focus=lambda e: grid.disarm())
-        rows = ft.Column(spacing=9)
         summary_row = ft.ResponsiveRow(spacing=8, run_spacing=8)
         filter_state = {"mode": "all"}
         # Render only a page of rows at a time instead of building a widget
@@ -2331,6 +2324,16 @@ class ItemsCenter:
                 move_cards = [ft.Text("لا توجد حركات مخزون بعد", size=11, color=Colors.TEXT_SECONDARY)]
             units_text = "، ".join(f"{u['name']} × {float(u.get('conversion_factor') or 1):g}" for u in item_units) or "بلا وحدة"
 
+            # Deletion is only allowed while the item has no history -- the
+            # repository would reject it anyway (see confirm_delete_item).
+            # Derive the flag here because ctx.items.get() (used for `data`
+            # below) does not carry the list query's has_activity column.
+            can_delete = not (
+                bool(item.get("has_activity"))
+                or any(float(stats.get(k) or 0) for k in ("sold_qty", "purchased_qty", "sale_count", "purchase_count"))
+                or bool(movements)
+            )
+
             # Bottom sheet instead of a centered AlertDialog: this is a
             # read-mostly detail view (no destructive/confirm action), so a
             # sheet the user can drag/dismiss reads more natural on a phone
@@ -2353,6 +2356,15 @@ class ItemsCenter:
                 close()
                 await asyncio.sleep(0.1)
                 open_item_editor(data)
+
+            async def delete_it(_=None):
+                # The desktop grid has no swipe-to-delete, so deletion lives
+                # here. Same close-then-act yield as edit(): the confirm
+                # dialog must not open while the sheet's dismiss animation is
+                # still running (its pop route would swallow the new overlay).
+                close()
+                await asyncio.sleep(0.1)
+                confirm_delete_item(data)
 
             # Same fix as the item editor and barcode-print sheets above:
             # give the OUTER sheet Container an explicit height computed
@@ -2416,7 +2428,10 @@ class ItemsCenter:
                                         [
                                             ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
                                             ft.FilledButton("إغلاق", on_click=close, expand=True),
-                                        ],
+                                        ] + (
+                                            [ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=delete_it)]
+                                            if can_delete else []
+                                        ),
                                         spacing=10,
                                     ),
                                 ],
@@ -2543,99 +2558,20 @@ class ItemsCenter:
                 kpi_card("مخزون منخفض", str(low_count), ft.Icons.WARNING_AMBER_ROUNDED, Colors.DANGER, on_tap=lambda _: set_filter("low")),
                 kpi_card("الخدمات", str(service_count), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")),
             ])
-            # Desktop: spreadsheet grid instead of the card list. Kept in the
-            # same refresh() so search/filters/sort drive both layouts.
-            desktop = bool(page.width and page.width >= 900)
-            if desktop:
-                shown = filtered[: render_limit["n"]]
-                grid.set_rows(shown)
-                remaining = len(filtered) - len(shown)
-                if remaining > 0:
-                    grid_more.content = ft.Row(
-                        [ft.OutlinedButton(f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                                           on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()))],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    )
-                    grid_more.visible = True
-                else:
-                    grid_more.visible = False
-                list_switch.content = desktop_list
-                update_filter_styles(); page.update()
-                return
-            list_switch.content = mobile_list
-            rows.controls = []
-            if low_count and mode != "low":
-                rows.controls.append(ft.Container(ft.Row([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=Colors.DANGER_DARKER), ft.Text(f"يوجد {low_count} مواد منخفضة المخزون", expand=True, size=11, weight=ft.FontWeight.W_600), ft.Text("عرضها", size=10, color=Colors.DANGER_DARKER)]), padding=11, bgcolor=Colors.DANGER_BG, border=ft.border.all(1, Colors.DANGER_BORDER), border_radius=14, on_click=lambda _: set_filter("low"), ink=True))
-            for item in filtered[: render_limit["n"]]:
-                qty = float(item.get("quantity") or 0)
-                stock = item.get("item_type") == "مخزون"
-                status = "خدمة" if not stock else "نفد" if qty <= 0 else "منخفض" if qty < LOW_STOCK else "متوفر"
-                status_fg = Colors.PURPLE if not stock else Colors.DANGER_DARK if qty <= 0 else Colors.WARNING_DARK if qty < LOW_STOCK else Colors.SUCCESS
-                status_bg = Colors.PURPLE_BG if not stock else Colors.DANGER_BG if qty <= 0 else Colors.WARNING_BG_ALT if qty < LOW_STOCK else Colors.SUCCESS_BG
-                cat_idx = int(item["category_id"]) if item.get("category_id") else 0
-                accent = CATEGORY_PALETTE[cat_idx % len(CATEGORY_PALETTE)]
-                row_card = ft.Container(
-                    ft.Row([
-                        ft.Container(ft.Icon(ft.Icons.HANDYMAN_OUTLINED if not stock else ft.Icons.INVENTORY_2_OUTLINED, color=accent, size=20), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND_ALT, border_radius=14),
-                        ft.Column([ft.Text(item["name"], weight=ft.FontWeight.BOLD, size=13), ft.Text(f"{item.get('category_name') or 'بلا تصنيف'} • {item.get('unit_name') or 'بلا وحدة'}", size=9, color=Colors.TEXT_SECONDARY)], expand=True, spacing=2),
-                        ft.Column([ft.Text("—" if not stock else f"{qty:g}", size=13, weight=ft.FontWeight.BOLD), status_pill(status, status_fg, status_bg)], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                        ft.Column([ft.Text(money(item.get("selling_price")), size=12, weight=ft.FontWeight.BOLD), ft.Text("سعر البيع", size=8, color=Colors.TEXT_SECONDARY)], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
-                        ft.Icon(ft.Icons.CHEVRON_LEFT, color=Colors.TEXT_FAINT, size=18),
-                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=11, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM, on_click=lambda _, i=dict(item): show_item_detail(i), ink=True,
+            # Desktop spreadsheet grid, driven by search/filters/sort.
+            shown = filtered[: render_limit["n"]]
+            grid.set_rows(shown)
+            remaining = len(filtered) - len(shown)
+            if remaining > 0:
+                grid_more.content = ft.Row(
+                    [ft.OutlinedButton(f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                                       on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()))],
+                    alignment=ft.MainAxisAlignment.CENTER,
                 )
-                if item.get("has_activity"):
-                    # No delete affordance for a material that's already
-                    # been sold/purchased/adjusted — the DB would reject it
-                    # anyway (see ItemRepository.delete), so the UI never
-                    # offers a swipe gesture guaranteed to fail.
-                    rows.controls.append(row_card)
-                else:
-                    rows.controls.append(
-                        ft.Dismissible(
-                            key=f"item-{item['id']}",
-                            content=row_card,
-                            dismiss_direction=ft.DismissDirection.HORIZONTAL,
-                            background=ft.Container(
-                                content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE, color=Colors.WHITE, size=22), ft.Text("حذف", color=Colors.WHITE, size=12, weight=ft.FontWeight.W_600)], spacing=6, alignment=ft.MainAxisAlignment.START),
-                                bgcolor=Colors.DANGER_DARK, border_radius=16, padding=ft.padding.symmetric(horizontal=20), alignment=ft.alignment.center_left,
-                            ),
-                            secondary_background=ft.Container(
-                                content=ft.Row([ft.Text("حذف", color=Colors.WHITE, size=12, weight=ft.FontWeight.W_600), ft.Icon(ft.Icons.DELETE_OUTLINE, color=Colors.WHITE, size=22)], spacing=6, alignment=ft.MainAxisAlignment.END),
-                                bgcolor=Colors.DANGER_DARK, border_radius=16, padding=ft.padding.symmetric(horizontal=20), alignment=ft.alignment.center_right,
-                            ),
-                            on_dismiss=lambda _, i=dict(item): confirm_delete_item(i),
-                        )
-                    )
-            if not filtered:
-                if all_items:
-                    rows.controls.append(empty_state(
-                        "لا توجد مواد مطابقة",
-                        icon=ft.Icons.INVENTORY_2_OUTLINED,
-                        hint="جرّب تغيير البحث أو التصفية",
-                    ))
-                else:
-                    rows.controls.append(empty_state(
-                        "لا توجد مواد أو خدمات بعد",
-                        icon=ft.Icons.INVENTORY_2_OUTLINED,
-                        hint="ابدأ بإضافة أول مادة أو خدمة",
-                        action_label="مادة جديدة",
-                        on_action=lambda _: open_item_editor(),
-                    ))
-            elif len(filtered) > render_limit["n"]:
-                remaining = len(filtered) - render_limit["n"]
-
-                def load_more(_=None):
-                    render_limit["n"] += 60
-                    refresh()
-
-                rows.controls.append(
-                    ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})",
-                        icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=load_more,
-                    )
-                )
+                grid_more.visible = True
+            else:
+                grid_more.visible = False
+            list_switch.content = desktop_list
             update_filter_styles(); page.update()
 
         def refresh_from_search(e=None):
@@ -2666,57 +2602,6 @@ class ItemsCenter:
             [ft.Container(filters, expand=True), sort_dd],
             vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8,
         )
-
-        # "المزيد" bottom sheet for the secondary actions -- same icon-card
-        # grid pattern as main.py's app-level "المزيد" sheet, so grouping
-        # التصنيفات/الباركود/التعديل الجماعي behind one entry point here
-        # reads consistently with how the rest of the app already handles
-        # "more actions". Keeps only the single most-used action (مادة
-        # جديدة) directly on the sticky bottom bar instead of four
-        # same-weight buttons competing for space above the search field.
-        more_sheet = ft.BottomSheet(content=ft.Container())
-
-        def show_more_actions(_=None):
-            entries = [
-                ("إضافة سريعة (جدول)", ft.Icons.VIEW_LIST_OUTLINED, open_bulk_add_sheet),
-                ("التصنيفات والوحدات", ft.Icons.TUNE, open_definitions_sheet),
-                ("طباعة الباركودات", ft.Icons.QR_CODE_2, open_bulk_barcode_sheet),
-                ("تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, open_bulk_edit_sheet),
-                ("استيراد بطاقة مادة", ft.Icons.QR_CODE_SCANNER, open_import_card_sheet),
-            ]
-            if self.on_open_stocktake is not None:
-                entries.append(("جرد بالمسح المستمر", ft.Icons.FACT_CHECK_OUTLINED, self.on_open_stocktake))
-            cards = []
-            for label, icon_data, action in entries:
-                cards.append(
-                    ft.Container(
-                        ft.Column(
-                            [
-                                ft.Container(ft.Icon(icon_data, color=Colors.PRIMARY, size=24), width=48, height=48, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=16),
-                                ft.Text(label, size=12, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
-                            ],
-                            spacing=7, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        col={"xs": 4}, padding=9, border_radius=18,
-                        on_click=lambda _, a=action: (page.close(more_sheet), a()),
-                        ink=True,
-                    )
-                )
-            more_sheet.content = ft.Container(
-                ft.Column(
-                    [
-                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
-                        ft.Text("المزيد", size=18, weight=ft.FontWeight.BOLD),
-                        ft.ResponsiveRow(cards, spacing=8, run_spacing=8),
-                    ],
-                    spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=24),
-                bgcolor=Colors.WHITE,
-                border_radius=ft.border_radius.only(top_left=28, top_right=28),
-                shadow=Shadow.LG,
-            )
-            page.open(more_sheet)
 
         # Sticky header: only search + filters, always reachable while
         # scrolling a long item list -- everything else (stats, list) moves
@@ -2755,123 +2640,24 @@ class ItemsCenter:
         )
 
         # The stats block is mounted once (a control must not have two
-        # parents); only `list_switch` swaps between the mobile card list and
-        # the desktop grid, each a self-contained subtree.
-        mobile_list = ft.Column(
-            [
-                rows,
-                # Breathing room so the last card never sits directly under
-                # the floating action button.
-                ft.Container(height=84),
-            ],
-            spacing=8, scroll=ft.ScrollMode.AUTO, expand=True,
-        )
+        # parents); `list_switch` holds the desktop grid.
         desktop_list = ft.Column(
             [ft.Container(grid, expand=True), grid_more],
             spacing=8, expand=True,
         )
-        list_switch = ft.Container(content=mobile_list, expand=True)
+        list_switch = ft.Container(content=desktop_list, expand=True)
         list_area = ft.Container(
             ft.Column([stats_header, stats_body, list_switch], spacing=8, expand=True),
             padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
             expand=True,
         )
 
-        # Floating "مادة جديدة" action instead of a fixed bottom bar --
-        # frees the bottom of the screen for the list, and matches the FAB
-        # speed-dial pattern already used on the vouchers and invoices
-        # screens. "المزيد" (categories/barcodes/bulk edit) sits behind the
-        # same expand gesture as a secondary, neutral-colored mini-action.
-        fab_state = {"open": False}
-
-        def close_fab(_=None):
-            if fab_state["open"]:
-                fab_state["open"] = False
-                render_fab()
-                page.update()
-
-        def open_new_item(_=None):
-            close_fab()
-            open_item_editor()
-
-        def open_more_from_fab(_=None):
-            close_fab()
-            show_more_actions()
-
-        def toggle_fab(_):
-            fab_state["open"] = not fab_state["open"]
-            render_fab()
-            page.update()
-
-        def mini_action(label: str, icon, bg: str, on_click) -> ft.Row:
-            return ft.Row(
-                [
-                    ft.Container(
-                        ft.Text(label, size=12, color=Colors.WHITE, weight=ft.FontWeight.W_600),
-                        padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                        bgcolor=Colors.TEXT_PRIMARY,
-                        border_radius=10,
-                    ),
-                    ft.Container(
-                        ft.Icon(icon, color=Colors.WHITE, size=20),
-                        width=46, height=46, border_radius=23,
-                        bgcolor=bg, alignment=ft.alignment.center,
-                        shadow=Shadow.MD, ink=True, on_click=on_click,
-                    ),
-                ],
-                spacing=8,
-                alignment=ft.MainAxisAlignment.END,
-                animate_opacity=160,
-            )
-
-        scrim = ft.Container(
-            expand=True,
-            bgcolor=ft.Colors.with_opacity(0.001, Colors.TEXT_PRIMARY),
-            visible=False,
-            on_click=close_fab,
-            left=0, right=0, top=0, bottom=0,
-        )
-
-        mini_more = mini_action("المزيد", ft.Icons.MORE_HORIZ, Colors.TEXT_MUTED_DARK, open_more_from_fab)
-        mini_bulk_add = mini_action("إضافة سريعة", ft.Icons.VIEW_LIST_OUTLINED, Colors.TEXT_MUTED_DARK, open_bulk_add_sheet)
-        mini_new_item = mini_action("مادة جديدة", ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY, open_new_item)
-        main_fab = ft.Container(
-            ft.Icon(ft.Icons.ADD_ROUNDED, color=Colors.WHITE, size=26),
-            width=56, height=56, border_radius=28,
-            bgcolor=Colors.PRIMARY, alignment=ft.alignment.center,
-            shadow=Shadow.LG, ink=True, on_click=toggle_fab,
-            rotate=ft.Rotate(0), animate_rotation=160,
-        )
-        fab_column = ft.Column(
-            [mini_more, mini_bulk_add, mini_new_item, main_fab],
-            spacing=12,
-            horizontal_alignment=ft.CrossAxisAlignment.END,
-        )
-        fab_container = ft.Container(fab_column, right=16, bottom=16, animate_opacity=160)
-
-        def render_fab() -> None:
-            is_open = fab_state["open"]
-            for mini in (mini_more, mini_bulk_add, mini_new_item):
-                mini.visible = is_open
-                mini.opacity = 1 if is_open else 0
-            main_fab.rotate = ft.Rotate(0.125 * 6.283) if is_open else ft.Rotate(0)  # 45°
-            scrim.visible = is_open
-
-        render_fab()
-
-        content.content = ft.Stack(
+        content.content = ft.Column(
             [
-                ft.Column(
-                    [
-                        sticky_top,
-                        list_area,
-                    ],
-                    spacing=0, expand=True,
-                ),
-                scrim,
-                fab_container,
+                sticky_top,
+                list_area,
             ],
-            expand=True,
+            spacing=0, expand=True,
         )
         refresh()
         # Publish this section's contextual ribbon actions (desktop). The

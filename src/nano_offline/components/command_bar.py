@@ -1,12 +1,10 @@
-"""Top ribbon: icon tabs + contextual action groups (desktop layout).
+"""Top ribbon: the app's single navigation surface.
 
 Replaces the old 280px desktop sidebar. Row one is the brand + the primary
 section tabs (icon **and** label, so it reads at a glance); row two is the
 *contextual* action strip -- the buttons relevant to whatever section is
 open (e.g. items: "مادة جديدة", "تصنيفات ووحدات ▾"). Groups with children
 render as a popup ("submenu"), matching the familiar ribbon behaviour.
-
-The mobile bottom bar is untouched; the shell only shows this on desktop.
 """
 
 from __future__ import annotations

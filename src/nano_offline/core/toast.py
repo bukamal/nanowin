@@ -1,17 +1,11 @@
-"""A modern, app-aware toast notification -- replacement for ``ft.SnackBar``.
+"""A modern floating toast notification -- replacement for ``ft.SnackBar``.
 
-Flet's built-in ``SnackBar`` is rendered at the true bottom edge of the
-viewport, with no awareness of the app's own bottom tab bar (``mobile_bar``
-in ``main.py``, a plain 78px ``Container`` that lives in the page's normal
-control tree, not in a slot Flet's Scaffold knows about). The result was a
-default gray bar covering the tabs on every phone screen.
-
-:func:`toast` fixes that by floating its own pill in ``page.overlay`` and
-placing it *above* whichever bottom chrome is currently visible -- above the
-mobile tab bar on phones, or just off the page edge on desktop where that
-bar is hidden (see ``adapt_navigation`` in ``main.py``). A single reusable
-overlay slot lives on the page object itself, so calling this twice in
-quick succession slides the old toast out instead of stacking duplicates.
+Flet's built-in ``SnackBar`` sits flush against the bottom edge and is hard
+to style consistently. :func:`toast` instead floats its own pill in
+``page.overlay``, hugging the bottom edge with a small margin (the app is
+desktop-only, so there is no bottom nav bar to clear). A single reusable
+overlay slot lives on the page object itself, so calling this twice in quick
+succession slides the old toast out instead of stacking duplicates.
 
 Usage (drop-in replacement for every existing ``notify``/``_notify`` helper):
 
@@ -41,7 +35,6 @@ _STYLE: dict[ToastKind, tuple[str, str, str]] = {
 }
 
 _HIDDEN_BOTTOM = -120.0
-_MOBILE_BAR_HEIGHT = 78
 _EDGE_MARGIN = 18
 _ANIM = ft.Animation(260, ft.AnimationCurve.EASE_OUT)
 
@@ -67,24 +60,20 @@ def _infer_kind(text: str) -> ToastKind:
 
 
 def _visible_bottom(page: ft.Page) -> float:
-    """Sit above the mobile tab bar on phones; hug the page edge on desktop
-    (the tab bar is hidden there in favor of the sidebar -- see
-    ``adapt_navigation`` in ``main.py``)."""
-    is_desktop = bool(page.width and page.width >= 900)
-    return _EDGE_MARGIN if is_desktop else _MOBILE_BAR_HEIGHT + _EDGE_MARGIN
+    """Hug the bottom edge of the window (desktop-only app -- no bottom bar
+    to clear)."""
+    return _EDGE_MARGIN
 
 
 def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int = 2600, sound_kind: str | None = None) -> None:
-    """Show a floating toast that never covers the app's own navigation.
+    """Show a floating toast pill at the bottom of the window.
 
     ``kind`` controls the accent color/icon (success/error/warning/info);
     when omitted it's inferred from the message text. ``sound_kind`` lets a
     call site play a more specific tone (e.g. "scan", "save" -- see
     core/sound.py) than the four visual kinds cover, without needing a
-    matching new pill color/icon for it; the toast still *looks* like
-    whichever of the four visual kinds fits (usually "success"). Slides up
-    with a fade-in, then slides back down and removes itself after
-    ``duration``ms.
+    matching new pill color/icon for it. Slides up with a fade-in, then
+    slides back down and removes itself after ``duration``ms.
     """
     resolved_kind: ToastKind = kind or _infer_kind(text)
     icon_name, accent, tint = _STYLE[resolved_kind]

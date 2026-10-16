@@ -28,9 +28,9 @@ class SecurityCenter:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
     # -- shared bottom-sheet shell -----------------------------------------
-    # Matches the modal bottom sheet already established in main.py
-    # (``more_sheet``): drag handle, rounded top corners, white surface,
-    # LG shadow. Centralized here so pin/pattern/clear all look identical.
+    # The app's established modal bottom sheet: drag handle, rounded top
+    # corners, white surface, LG shadow. Centralized here so pin/pattern/clear
+    # all look identical.
 
     @staticmethod
     def _icon_bubble(icon: str, *, color: str = Colors.PRIMARY, bgcolor: str = Colors.PRIMARY_BG) -> ft.Container:

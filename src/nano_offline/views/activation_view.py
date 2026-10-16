@@ -20,9 +20,8 @@ class ActivationGate:
         self.on_success = on_success
 
         # -- responsive sizing, mirrored from LoginGate: the card caps at
-        # 420 on wide/desktop windows but shrinks on narrow phones, and
-        # every fixed-width child below derives from the same value so
-        # nothing can end up wider than the card and clip off-screen. --
+        # 420 but shrinks if the window is narrower, and every fixed-width
+        # child below derives from the same value so nothing overflows. --
         self._card_width = min(420, page.width - 32) if page.width else 420
         self._content_width = max(240, self._card_width - 52)
 
@@ -68,8 +67,8 @@ class ActivationGate:
         )
 
         # -- CTA: a gradient "button" container (FilledButton can't carry a
-        # gradient fill), matching the gradient language already used for the
-        # primary action elsewhere in the app (see sale_fab in main.py). --
+        # gradient fill), matching the gradient language used by the brand
+        # panel in components/auth_layout.py. --
         self._activate_icon = ft.Icon(ft.Icons.VERIFIED_USER_ROUNDED, color=Colors.WHITE, size=20)
         self._activate_label = ft.Text("تفعيل الآن", color=Colors.WHITE, weight=ft.FontWeight.BOLD, size=15)
         self.activate_button = ft.Container(

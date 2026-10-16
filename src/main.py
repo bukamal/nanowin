@@ -23,7 +23,7 @@ from nano_offline.views.items_view import ItemsCenter
 from nano_offline.views.login_view import LoginGate
 from nano_offline.views.notifications_view import NotificationCenter
 from nano_offline.views.parties_view import PartyCenter
-from nano_offline.views.pos_view import POSCenter, POS_RAIL_BREAKPOINT
+from nano_offline.views.pos_view import POSCenter
 from nano_offline.views.reports_view import ReportsCenter
 from nano_offline.views.security_view import SecurityCenter
 from nano_offline.views.splash_view import SplashGate
@@ -184,7 +184,10 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         on_fullscreen_enter=lambda: pos_fullscreen_enter(),
         on_fullscreen_exit=lambda: pos_fullscreen_exit(),
     )
-    finance_center = FinanceCenter(page, ctx, content, native_files=native_files, on_title_change=set_header, on_open_invoice=invoice_center.show_invoice_detail)
+    # set_context_actions is defined a little further below -- wrap it in a
+    # late-bound lambda so the name resolves when finance publishes its
+    # ribbon actions (at render time), not here.
+    finance_center = FinanceCenter(page, ctx, content, native_files=native_files, on_title_change=set_header, on_open_invoice=invoice_center.show_invoice_detail, on_context_actions=lambda actions: set_context_actions(actions))
 
     def open_statement(party_type: str, party_id: int | None = None) -> None:
         # Land on the Finance shell, then open the matching party
@@ -333,7 +336,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     allowed_keys = [k for k in actions if session.can(k)]
     selected_key = {"value": "dashboard"}
     sidebar_buttons: dict[str, ft.Container] = {}
-    mobile_buttons: dict[str, tuple[ft.Container, ft.Icon, ft.Text]] = {}
 
     # ---------------- central Router (v0.18: real back-stack) ----------------
     # The old shell re-rendered sections from a hand-rolled navigate()
@@ -360,12 +362,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
                         ctrl.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
                     elif isinstance(ctrl, ft.Text):
                         ctrl.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
-        for key, (box, icon, label) in mobile_buttons.items():
-            active = key == current
-            icon.color = Colors.PRIMARY if active else Colors.TEXT_FAINT
-            label.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
-            label.weight = ft.FontWeight.BOLD if active else ft.FontWeight.W_500
-            box.bgcolor = Colors.PRIMARY_BG if active else None
         try:
             command_bar.set_active(current)
             command_bar.set_actions(_section_actions(current))
@@ -495,9 +491,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         router.go(target, reset=target in actions, **kwargs)
 
     # Thin wrappers kept for the existing call-sites (sidebar buttons, the
-    # mobile "بيع سريع" FAB, the "المزيد" sheet, dashboard quick actions).
-    # All of them now delegate to the Router instead of re-implementing the
-    # opacity/header dance individually.
+    # ribbon actions, dashboard quick actions). All of them delegate to the
+    # Router instead of re-implementing the opacity/header dance themselves.
     def open_pos(_=None) -> None:
         navigate("pos")
 
@@ -522,6 +517,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
             RibbonAction("sale", "فاتورة بيع", ft.Icons.SHOPPING_CART_CHECKOUT, on_click=lambda _=None: open_sale()),
             RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_purchase()),
+            RibbonAction("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: open_verify_invoice()),
         ]
         if key in ("dashboard", "items", "invoices"):
             return invoice_actions
@@ -546,30 +542,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     )
     command_bar.visible = False
 
-    # Android hardware back button. `page.window.prevent_close` keeps the
-    # OS from killing the app on the first press; the handler then pops the
-    # Router's real back-stack (sale editor -> invoices list, POS -> where
-    # POS was opened from, ...). Only once the stack is empty *and* we're
-    # home does a press actually exit. os._exit() is used there because
-    # page.window.close() is a no-op on Android (no platform window behind
-    # the Activity) -- same as before, but now back finally behaves like a
-    # back button instead of always jumping to the dashboard.
-    page.window.prevent_close = True
-
-    def handle_window_event(e: ft.WindowEvent) -> None:
-        if e.type != ft.WindowEventType.CLOSE:
-            return
-        if router.can_go_back():
-            router.back()
-            return
-        if router.current != "dashboard":
-            navigate("dashboard")
-            return
-        import os
-
-        os._exit(0)
-
-    page.window.on_event = handle_window_event
+    # The window's close (X) button closes the app normally -- the Android
+    # hardware-back interception (prevent_close + os._exit) is gone with the
+    # mobile shell. In-app navigation uses the Router directly.
 
     def nav_button(key: str, label: str, icon, on_click):
         icon_ctrl = ft.Icon(icon, size=21, color=Colors.TEXT_SECONDARY)
@@ -633,39 +608,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     )
 
     # The desktop ribbon sits above the section header; the old branded
-    # sidebar is kept constructed (its buttons are still registered above)
-    # but is never shown again -- mobile keeps its own bottom bar.
+    # sidebar is no longer used -- the ribbon is the one navigation surface.
     body = ft.Column([command_bar, top_bar, content], spacing=0, expand=True)
-
-    def mobile_item(key: str, label: str, icon_data, on_click):
-        icon = ft.Icon(icon_data, size=23, color=Colors.TEXT_FAINT)
-        label_ctrl = ft.Text(label, size=10, color=Colors.TEXT_SECONDARY, text_align=ft.TextAlign.CENTER)
-        box = ft.Container(
-            ft.Column([icon, label_ctrl], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER),
-            width=62, height=58, alignment=ft.alignment.center, border_radius=15, on_click=on_click, ink=True,
-        )
-        mobile_buttons[key] = (box, icon, label_ctrl)
-        return box
-
-    sale_fab = ft.Container(
-        ft.Column(
-            [
-                ft.Container(
-                    ft.Icon(ft.Icons.SHOPPING_CART_CHECKOUT, color=Colors.WHITE, size=25),
-                    width=58, height=58, alignment=ft.alignment.center,
-                    gradient=ft.LinearGradient(colors=[Colors.PRIMARY, Colors.PURPLE_LIGHT], begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
-                    border_radius=30,
-                    border=ft.border.all(4, Colors.BACKGROUND),
-                    shadow=ft.BoxShadow(blur_radius=20, spread_radius=1, color=Colors.PRIMARY_BORDER, offset=ft.Offset(0, 7)),
-                ),
-                ft.Text("بيع سريع", size=10, color=Colors.PRIMARY, weight=ft.FontWeight.BOLD),
-            ],
-            spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        width=72, height=78, margin=ft.margin.only(top=-25), on_click=open_pos, ink=True, border_radius=30,
-    )
-
-    more_sheet = ft.BottomSheet(content=ft.Container())
 
     def _show_verify_result(is_valid: bool, reason: str) -> None:
         # Same dismiss-it-yourself AlertDialog pattern used elsewhere in the
@@ -689,16 +633,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         page.open(result_dialog)
 
     async def _verify_invoice_scan() -> None:
-        # "تحقق من فاتورة" is the only "المزيد" entry that hands off to a
-        # native Android camera activity right after closing more_sheet --
-        # every other entry (فاتورة تفصيلية/شراء/navigate) stays inside
-        # Flet/Flutter, so there's nothing racing the sheet's own close
-        # animation. Here, the tap fires page.close(more_sheet) then
-        # immediately launches the native scanner intent; if the sheet's
-        # close update hasn't finished reaching the client before the
-        # native activity steals focus, that update can get dropped, so
-        # the sheet still looks open on return and the tap has to be
-        # repeated. A brief pause lets the close animation land first.
+        # Hands off to the native camera scanner right after the verify sheet
+        # is closed. A brief pause lets the sheet's close animation land
+        # before the native scanner activity steals focus; otherwise the
+        # close update can be dropped and the sheet still looks open on
+        # return, forcing the user to tap again.
         await asyncio.sleep(0.25)
         try:
             payload = await native_files.scan_barcode()
@@ -793,71 +732,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         )
         page.open(verify_sheet)
 
-    def show_more(_=None):
-        entries: list[tuple[str, str, object, object]] = []
-        if session.can("invoices"):
-            entries.append(("sale", "فاتورة تفصيلية", ft.Icons.RECEIPT_LONG_OUTLINED, lambda _: (page.close(more_sheet), open_sale())))
-            entries.append(("purchase", "شراء", ft.Icons.ADD_SHOPPING_CART, lambda _: (page.close(more_sheet), open_purchase())))
-            entries.append(("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda _: (page.close(more_sheet), open_verify_invoice())))
-        for key in ["customers", "suppliers", "finance", "reports", "security", "admin"]:
-            if key in allowed_keys:
-                entries.append((key, label_map[key], icon_map[key], lambda _, k=key: (page.close(more_sheet), navigate(k))))
-
-        cards = []
-        for key, label, icon_data, action in entries:
-            cards.append(
-                ft.Container(
-                    ft.Column(
-                        [
-                            ft.Container(ft.Icon(icon_data, color=Colors.PRIMARY, size=24), width=48, height=48, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=16),
-                            ft.Text(label, size=12, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
-                        ],
-                        spacing=7, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    col={"xs": 4}, padding=9, border_radius=18, on_click=action, ink=True,
-                )
-            )
-        more_sheet.content = ft.Container(
-            ft.Column(
-                [
-                    ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
-                    ft.Text("المزيد", size=20, weight=ft.FontWeight.BOLD),
-                    ft.Text("الوصول السريع إلى بقية أقسام Nano", size=11, color=Colors.TEXT_SECONDARY),
-                    ft.ResponsiveRow(cards, spacing=8, run_spacing=8),
-                    ft.OutlinedButton("تسجيل الخروج", icon=ft.Icons.LOGOUT, on_click=lambda _: (page.close(more_sheet), on_logout()), width=260),
-                ],
-                spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.only(left=18, right=18, top=12, bottom=24),
-            bgcolor=Colors.WHITE,
-            border_radius=ft.border_radius.only(top_left=28, top_right=28),
-            shadow=Shadow.LG,
-        )
-        page.open(more_sheet)
-
-    mobile_bar = ft.Container(
-        ft.Row(
-            [
-                mobile_item("dashboard", "الرئيسية", ft.Icons.HOME_OUTLINED, lambda _: navigate("dashboard")),
-                mobile_item("items", "المواد", ft.Icons.INVENTORY_2_OUTLINED, lambda _: navigate("items")),
-                sale_fab,
-                mobile_item("invoices", "الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda _: navigate("invoices")),
-                mobile_item("more", "المزيد", ft.Icons.MORE_HORIZ, show_more),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_AROUND,
-            vertical_alignment=ft.CrossAxisAlignment.END,
-        ),
-        height=78,
-        padding=ft.padding.only(left=5, right=5, top=7, bottom=5),
-        bgcolor=Colors.WHITE,
-        border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
-        shadow=ft.BoxShadow(blur_radius=20, color=Colors.BORDER, offset=ft.Offset(0, -5)),
-    )
-
-    # The v0.8 shell intentionally replaces the old NavigationRail / NavigationBar
-    # with a branded desktop sidebar and a five-action mobile bottom bar.
-    main_row = ft.Row([sidebar, body], expand=True, spacing=0)
-    root = ft.Column([main_row, mobile_bar], expand=True, spacing=0)
+    # The shell is desktop-only now: one ribbon navigation surface (CommandBar)
+    # above the section header -- no bottom bar / floating sale button.
+    root = ft.Row([sidebar, body], expand=True, spacing=0)
     page.add(ft.SafeArea(root, expand=True))
 
     # In-app voice «call» session — survives section switches, not a true
@@ -875,8 +752,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
         )
         # Floating draggable bubble (positioned by VoiceSessionController)
         page.overlay.append(voice_session.banner)
-        # Call control lives in the top bar so it never covers bottom tabs
-        # (الرئيسية / المزيد / نقطة البيع).
+        # Call control lives in the top bar so it never covers the content.
         voice_header_slot.content = voice_session.header_btn
         voice_header_slot.visible = True
         page.floating_action_button = None
@@ -889,15 +765,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
 
     def adapt_navigation(_=None):
         if _pos_fullscreen["value"]:
-            # A resize (e.g. tablet rotation) mid-sale must not pop the
-            # sidebar/tab bar back over the sale screen -- leaving POS is
-            # the Router's on_leave path (pos_chrome_restore below), which
-            # clears this flag first.
-            #
-            # But the resize must not be swallowed either: hand it to POS
-            # (via the hook POSCenter._build installs) so a rotation / window
-            # snap across the desktop breakpoint can still reflow the sale
-            # screen instead of leaving it stuck in the old layout.
+            # A window resize mid-sale must not pop the ribbon back over the
+            # sale screen -- leaving POS is the Router's on_leave path
+            # (pos_chrome_restore below), which clears this flag first. Hand
+            # the resize to POS (via the hook POSCenter._build installs) so
+            # the sale screen can still reflow instead of staying stuck.
             hook = getattr(page, "_nano_pos_relayout", None)
             if callable(hook):
                 try:
@@ -905,28 +777,24 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
                 except Exception:
                     pass
             return
-        desktop = bool(page.width and page.width >= POS_RAIL_BREAKPOINT)
-        # The ribbon always replaces the sidebar on desktop now.
+        # Desktop-only: the ribbon is always the navigation surface.
         sidebar.visible = False
-        command_bar.visible = desktop
-        mobile_bar.visible = not desktop
-        content.padding = ft.padding.only(left=24 if desktop else 16, right=24 if desktop else 16, top=18 if desktop else 12, bottom=24 if desktop else 16)
+        command_bar.visible = True
+        content.padding = ft.padding.only(left=24, right=24, top=18, bottom=24)
         page.update()
 
-    # POS fullscreen: hides *every* piece of the app's own chrome (top
-    # header, desktop sidebar, mobile tab bar) so the sale screen owns the
-    # whole viewport edge-to-edge, kiosk-style. adapt_navigation() already
-    # knows how to correctly re-derive sidebar/mobile_bar/padding for the
-    # current width, so exiting just re-runs it instead of duplicating that
-    # logic here.
+    # POS fullscreen: hides *every* piece of the app's own chrome (top header,
+    # ribbon) so the sale screen owns the whole viewport edge-to-edge,
+    # kiosk-style. adapt_navigation() re-derives the chrome, so exiting just
+    # re-runs it instead of duplicating that logic here.
     def pos_fullscreen_enter():
         _pos_fullscreen["value"] = True
         top_bar.visible = False
         sidebar.visible = False
         command_bar.visible = False
-        mobile_bar.visible = False
         content.padding = ft.padding.all(0)
-        # Keep call banner; hide FAB so it does not cover POS pay bar
+        # Keep the call banner; hide the header control so it does not cover
+        # the POS pay bar.
         try:
             voice_header_slot.visible = False
         except Exception:
@@ -1174,13 +1042,6 @@ def main(page: ft.Page):
         pass
 
     def logout():
-        # Undo the shell's back-button interception (see build_shell's
-        # handle_window_event) before tearing it down -- otherwise
-        # page.window.on_event would keep pointing at a handler closed
-        # over this session's now-discarded navigate()/selected_key,
-        # and back-press on the login screen would silently do nothing
-        # instead of its normal "exit app" behavior.
-        page.window.prevent_close = False
         ctx.auth.logout()
         show_auth()
 

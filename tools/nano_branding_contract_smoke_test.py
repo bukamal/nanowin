@@ -20,11 +20,10 @@ for name in [
 ]:
     assert (assets / name).is_file(), name
 
-# Navigation contract: materials are next to home and sale is the central mobile action.
-assert 'mobile_item("dashboard", "الرئيسية"' in main
-assert 'mobile_item("items", "المواد"' in main
-assert 'sale_fab' in main
-assert 'mobile_item("invoices", "الفواتير"' in main
-assert 'mobile_item("more", "المزيد"' in main
+# Navigation contract: the desktop ribbon (CommandBar) is the navigation
+# surface; the mobile bottom bar / FAB / "المزيد" sheet are gone.
+assert 'CommandBar' in main
+assert 'RibbonTab' in main
+assert 'command_bar' in main
 
 print("nano_branding_contract_smoke_test passed")

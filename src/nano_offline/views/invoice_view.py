@@ -752,105 +752,16 @@ class InvoiceCenter:
                         visible=bool(overdue_invoices),
                     ),
                     cards,
-                    # Breathing room so the last card never sits directly
-                    # under the floating action button.
-                    ft.Container(height=84),
                 ],
                 spacing=12,
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
             )
 
-            # --- Floating "new invoice" action: a single FAB that expands
-            # into sale/purchase choices instead of two full-width buttons
-            # competing with the list for space at the top. ---
-            fab_state = {"open": False}
-
-            def close_fab(_=None):
-                if fab_state["open"]:
-                    fab_state["open"] = False
-                    render_fab()
-                    self.page.update()
-
-            def pick(kind: str):
-                def handler(_):
-                    close_fab()
-                    self.show_editor(None, kind)
-                return handler
-
-            def toggle_fab(_):
-                fab_state["open"] = not fab_state["open"]
-                render_fab()
-                self.page.update()
-
-            def mini_action(label: str, icon, bg: str, on_click) -> ft.Row:
-                return ft.Row(
-                    [
-                        ft.Container(
-                            ft.Text(label, size=12, color=Colors.WHITE, weight=ft.FontWeight.W_600),
-                            padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                            bgcolor=Colors.TEXT_PRIMARY,
-                            border_radius=10,
-                        ),
-                        ft.Container(
-                            ft.Icon(icon, color=Colors.WHITE, size=20),
-                            width=46, height=46, border_radius=23,
-                            bgcolor=bg, alignment=ft.alignment.center,
-                            shadow=Shadow.MD, ink=True, on_click=on_click,
-                        ),
-                    ],
-                    spacing=8,
-                    alignment=ft.MainAxisAlignment.END,
-                    animate_opacity=160,
-                )
-
-            scrim = ft.Container(
-                expand=True,
-                bgcolor=ft.Colors.with_opacity(0.001, Colors.TEXT_PRIMARY),
-                visible=False,
-                on_click=close_fab,
-                left=0, right=0, top=0, bottom=0,
-            )
-
-            mini_purchase = mini_action("شراء جديد", ft.Icons.ADD_SHOPPING_CART, Colors.PURPLE, pick("purchase"))
-            mini_sale = mini_action("بيع جديد", ft.Icons.SHOPPING_CART_CHECKOUT, Colors.SUCCESS, pick("sale"))
-            main_fab = ft.Container(
-                ft.Icon(ft.Icons.ADD_ROUNDED, color=Colors.WHITE, size=26),
-                width=56, height=56, border_radius=28,
-                bgcolor=Colors.PRIMARY, alignment=ft.alignment.center,
-                shadow=Shadow.LG, ink=True, on_click=toggle_fab,
-                rotate=ft.Rotate(0), animate_rotation=160,
-            )
-            fab_column = ft.Column(
-                [mini_purchase, mini_sale, main_fab],
-                spacing=12,
-                horizontal_alignment=ft.CrossAxisAlignment.END,
-            )
-            fab_container = ft.Container(
-                fab_column,
-                right=16, bottom=16,
-                animate_opacity=160,
-            )
-
-            def render_fab() -> None:
-                is_open = fab_state["open"]
-                mini_purchase.visible = is_open
-                mini_sale.visible = is_open
-                mini_purchase.opacity = 1 if is_open else 0
-                mini_sale.opacity = 1 if is_open else 0
-                main_fab.rotate = ft.Rotate(0.125 * 6.283) if is_open else ft.Rotate(0)  # 45°
-                scrim.visible = is_open
-
-            render_fab()
-
-            self.content.content = ft.Stack(
-                [
-                    ft.Column([sticky_header, scroll_body], spacing=0, expand=True),
-                    scrim,
-                    fab_container,
-                ],
-                expand=True,
-            )
+            # New sale/purchase invoices are created from the shell's ribbon
+            # (فاتورة بيع / فاتورة شراء); the old floating speed-dial was
+            # mobile chrome.
+            self.content.content = ft.Column([sticky_header, scroll_body], spacing=0, expand=True)
             self.page.update()
         except Exception as exc:
             self._show_center_error(exc)

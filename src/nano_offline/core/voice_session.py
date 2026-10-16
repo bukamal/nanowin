@@ -81,7 +81,7 @@ class VoiceSessionController:
         self._bubble_tip = ft.Text("", size=9, color=Colors.WHITE, text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, visible=False)
 
         self._pos_left = 16.0
-        self._pos_bottom = 96.0  # above mobile bottom bar
+        self._pos_bottom = 18.0  # hugging the bottom edge of the window
 
         def _on_pan(e: ft.DragUpdateEvent):
             # Drag in screen space; clamp lightly
@@ -137,16 +137,6 @@ class VoiceSessionController:
         self._section_chip = ft.Text("")
         self._wave = self._bubble_icon
         self._chip_row = ft.Row(visible=False, controls=[])
-
-        self.fab = ft.FloatingActionButton(
-            icon=ft.Icons.AUTO_AWESOME,
-            bgcolor=Colors.PRIMARY,
-            foreground_color=Colors.WHITE,
-            tooltip="مكالمة أوامر ذكية",
-            on_click=self.toggle,
-            visible=False,
-            mini=True,
-        )
 
         self._header_icon = ft.Icon(ft.Icons.AUTO_AWESOME, color=Colors.PRIMARY, size=20)
         self.header_btn = ft.Container(
@@ -204,9 +194,6 @@ class VoiceSessionController:
         self.memory = VoiceMemory()
         self.memory.last_section = self.get_section() or "dashboard"
         greet = reply_for("greet", section=(self.get_section() or "dashboard"))
-        self.fab.icon = ft.Icons.CALL_END_ROUNDED
-        self.fab.bgcolor = Colors.DANGER
-        self.fab.tooltip = "إنهاء المكالمة"
         try:
             self._header_icon.name = ft.Icons.CALL_END_ROUNDED
             self._header_icon.color = Colors.WHITE
@@ -266,9 +253,6 @@ class VoiceSessionController:
             pass
         self._cancel_tts()
         self.banner.visible = False
-        self.fab.icon = ft.Icons.AUTO_AWESOME
-        self.fab.bgcolor = Colors.PRIMARY
-        self.fab.tooltip = "مكالمة أوامر ذكية"
         try:
             self._header_icon.name = ft.Icons.AUTO_AWESOME
             self._header_icon.color = Colors.PRIMARY

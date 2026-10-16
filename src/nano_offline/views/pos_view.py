@@ -42,13 +42,6 @@ WEIGHT_UNIT_HINTS = {
     "l", "liter", "litre", "ml",
 }
 
-# Desktop breakpoint for the POS body: at/above this window width the cart
-# becomes a full-height side rail beside the catalog instead of a short
-# panel stacked under it, so the whole receipt and the running total are
-# visible at once the way a modern counter POS works. Deliberately the same
-# 900px threshold the shell uses for the top ribbon (see adapt_navigation in
-# main.py), so both halves of the app switch modes together.
-POS_RAIL_BREAKPOINT = 900
 # Comfortable receipt-rail width on desktop: narrow enough to leave the
 # catalog most of the screen, wide enough for name + qty stepper + line total.
 CART_RAIL_WIDTH = 380
@@ -157,29 +150,14 @@ class POSCenter:
             pass
 
     def _pos_handle_resize(self) -> None:
-        """Relayout POS when the window crosses the desktop breakpoint.
+        """No-op on desktop: the POS rail layout is width-independent.
 
-        Only a breakpoint crossing (a tablet rotating between portrait and
-        landscape, or a desktop window being snapped across 900px) triggers
-        a rebuild -- never a pixel-level resize. The screen is rebuilt from
-        scratch rather than rearranged in place so no pane is ever reparented
-        (Flet does not like a live control being moved between parents), and
-        because the cart, the picked customer and the held tickets all live
-        on ``self`` rather than in the widget tree, the in-progress sale is
-        fully preserved across the rebuild.
-
-        Wired in ``_build`` through ``page._nano_pos_relayout``; the shell's
-        ``adapt_navigation`` delegates resize events here while POS is
-        fullscreen -- it otherwise returns early mid-sale and would leave a
-        rotated tablet stuck in the old layout.
+        Kept because the shell's ``adapt_navigation`` still calls it through
+        ``page._nano_pos_relayout`` while POS is fullscreen (it delegates
+        resize events there instead of restoring chrome). A window resize no
+        longer changes the sale layout, so there is nothing to rebuild.
         """
-        wide = bool(self.page.width and self.page.width >= POS_RAIL_BREAKPOINT)
-        if wide == getattr(self, "_pos_wide", None):
-            return
-        try:
-            self._build()
-        except Exception:
-            pass
+        return
 
     def _show_center_error(self, exc: Exception) -> None:
         if self.on_title_change:
@@ -382,9 +360,8 @@ class POSCenter:
             if code:
                 self._add_by_barcode(code)
             # barcode_field no longer collapses the cart on focus (see
-            # collapse_cart_for_search() above), so this is just a safety
-            # net -- forces the cart visible after every scan regardless of
-            # what else may have hidden it.
+            # so this is just a safety net -- forces the cart visible after
+            # every scan regardless of what else may have hidden it.
             cart_wrap.visible = True
             barcode_field.focus()
             self.page.update()
@@ -396,12 +373,7 @@ class POSCenter:
         # (with the bottom pay bar) instead of scrolling away with the
         # catalog, so a long cart needs to scroll internally rather than
         # growing without limit.
-        # CART_FULL_HEIGHT is the normal height; CART_HALF_HEIGHT is used
-        # while the name-search field is focused (see
-        # collapse_cart_for_search below) so the cart shrinks instead of
-        # disappearing entirely once the on-screen keyboard opens.
         CART_FULL_HEIGHT = 220
-        CART_HALF_HEIGHT = CART_FULL_HEIGHT // 2
         cart_column = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=CART_FULL_HEIGHT)
         total_text = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK)
         # A separate instance for the payment sheet -- total_text above is
@@ -1022,8 +994,7 @@ class POSCenter:
         # Compact fullscreen header: replaces the app's own top bar (hidden
         # via on_fullscreen_enter) with an exit button + title + the "how's
         # today going" glance, all in one dense row instead of three stacked
-        # ones -- reclaims vertical space specifically for the mobile
-        # fullscreen layout.
+        # ones -- reclaims vertical space for the kiosk-style sale screen.
         mode_btn = ft.Container(
             ft.Text("تدفق", size=11, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
             padding=ft.padding.symmetric(horizontal=12, vertical=7),
@@ -1056,12 +1027,9 @@ class POSCenter:
                 chips_row.visible = not flow
             except Exception:
                 pass
-            # On the desktop rail the cart expands to fill the body height,
-            # so flow/full must not force a fixed height onto it (that would
-            # leave it short with dead space below). Mobile keeps the old
-            # compact heights.
-            if not self._pos_wide:
-                cart_column.height = 160 if flow else CART_FULL_HEIGHT
+            # The cart rail always expands to fill the body height, so
+            # flow/full must not force a fixed height onto it (that would
+            # leave it short with dead space below).
             try:
                 self.page.update()
             except Exception:
@@ -1211,12 +1179,12 @@ class POSCenter:
         # focus/blur -- see the comment at the top of refresh_cart().
         self._cart_wrap = cart_wrap
 
-        # ---- desktop layout decision -------------------------------------
-        # Desktop (>= POS_RAIL_BREAKPOINT): cart becomes a full-height side
-        # rail next to an independently-scrolling catalog, so the cashier
-        # sees the whole receipt + running total without scrolling. Mobile:
-        # unchanged short panel stacked under the catalog.
-        self._pos_wide = bool(self.page.width and self.page.width >= POS_RAIL_BREAKPOINT)
+        # ---- desktop layout ----------------------------------------------
+        # The cart is a full-height side rail next to an independently-
+        # scrolling catalog, so the cashier sees the whole receipt + running
+        # total without scrolling. (The app is desktop-only -- there is no
+        # stacked mobile layout any more.)
+        self._pos_wide = True
         if self._pos_wide:
             # Rail sizing: no fixed height and no collapse-on-search (there
             # is no on-screen keyboard to dodge on desktop); the rail just
@@ -1228,85 +1196,37 @@ class POSCenter:
             cart_column.expand = True
             cart_column.height = None
 
-        # Shrink the cart to half height while the name-search field is
-        # focused: on phones, the on-screen keyboard that focus opens
-        # shrinks the visible viewport enough that the fixed cart_pane
-        # pinned below the scrolling catalog can end up overlapping the
-        # search field/results instead of sitting cleanly beneath them.
-        # Halving cart_column's height for the moment search is actually
-        # being typed reclaims that space without hiding the cart outright
-        # (its total is still visible in bottom_pay_bar the whole time, and
-        # the shortened list still scrolls), and it returns to full height
-        # the instant the field loses focus.
-        #
-        # Deliberately NOT wired to barcode_field: a hardware/USB "wedge"
-        # scanner keeps that field focused for the whole session (see the
-        # comment in barcode_submit() below), so shrinking on its focus
-        # used to leave the cart stuck small with no blur event to restore
-        # it.
-        def collapse_cart_for_search(_=None):
-            # Desktop rail never shrinks: focusing search there should just
-            # refine the catalog, not collapse the receipt the cashier is
-            # reading.
-            if self._pos_wide:
-                return
-            cart_column.height = CART_HALF_HEIGHT
-            self.page.update()
-
-        def restore_cart_after_search(_=None):
-            if self._pos_wide:
-                return
-            cart_column.height = CART_FULL_HEIGHT
-            self.page.update()
-
-        search_field.on_focus = collapse_cart_for_search
-        search_field.on_blur = restore_cart_after_search
+        # The cart rail never shrinks on search focus -- focusing search just
+        # refines the catalog, it does not collapse the receipt the cashier
+        # is reading.
 
         # Only the catalog scrolls now. The cart pane used to sit inside
-        # this same scrolling body (side-by-side on desktop via
-        # ResponsiveRow, stacked below the catalog on mobile), which meant
-        # scrolling through the catalog grid could scroll the cart out of
-        # view too. The cart is pulled out below and pinned fixed together
-        # with the sticky pay bar instead, so it (and the total/checkout
-        # button) stay reachable no matter how far the catalog is scrolled.
+        # this same scrolling body, which meant scrolling through the catalog
+        # grid could scroll the cart out of view too. The cart is pulled out
+        # as a fixed side rail instead, so it (and the total/checkout button)
+        # stays reachable no matter how far the catalog is scrolled.
         scroll_body = ft.Column(
             [catalog_pane],
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
 
-        if self._pos_wide:
-            # Desktop body: catalog and cart side by side, each stretching to
-            # the full body height and scrolling on its own. The body itself
-            # never scrolls, so neither pane can push the other out of view
-            # -- the exact failure the old stacked ResponsiveRow layout had.
-            body = ft.Row(
-                [
-                    ft.Container(
-                        scroll_body,
-                        padding=ft.padding.only(left=24, right=24, top=14, bottom=10),
-                        expand=True,
-                    ),
-                    cart_wrap,
-                ],
-                spacing=14,
-                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
-                expand=True,
-            )
-        else:
-            # Mobile body: catalog above, short cart panel below (unchanged).
-            body = ft.Column(
-                [
-                    ft.Container(
-                        scroll_body,
-                        padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
-                        expand=True,
-                    ),
-                    cart_wrap,
-                ],
-                spacing=0,
-                expand=True,
-            )
+        # Catalog and cart side by side, each stretching to the full body
+        # height and scrolling on its own. The body itself never scrolls, so
+        # neither pane can push the other out of view.
+        body = ft.Row(
+            [
+                ft.Container(
+                    scroll_body,
+                    padding=ft.padding.only(left=24, right=24, top=14, bottom=10),
+                    expand=True,
+                ),
+                cart_wrap,
+            ],
+            spacing=14,
+            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+            expand=True,
+        )
 
         main_column = ft.Column(
             [
@@ -1357,8 +1277,8 @@ class POSCenter:
 
         # Let the shell route resize events here while POS is fullscreen:
         # adapt_navigation() delegates through this hook instead of restoring
-        # chrome, so a tablet rotation / window snap across the breakpoint
-        # still reflows the layout (see _pos_handle_resize).
+        # chrome. The hook is a no-op on desktop (the rail layout is fixed),
+        # but stays wired so the shell always has a valid callable.
         try:
             self.page._nano_pos_relayout = self._pos_handle_resize
         except Exception:

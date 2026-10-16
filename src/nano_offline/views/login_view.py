@@ -32,12 +32,10 @@ class LoginGate:
         self._quick_kind: str | None = None
         self._card: ft.Container | None = None
 
-        # -- responsive sizing: the card caps at 420 on wide/desktop windows
-        # but shrinks to fit narrow phone screens (page.width is already
-        # used the same way for the desktop-shell check in main.py), and
-        # every fixed-width child inside the card is derived from it so
-        # nothing (fields, buttons, the status pill) can end up wider than
-        # the card itself and clip off-screen. --
+        # -- responsive sizing: the card caps at 420 but shrinks if the
+        # window is narrower, and every fixed-width child inside the card is
+        # derived from it so nothing (fields, buttons, the status pill) can
+        # end up wider than the card and clip off-screen. --
         self._card_width = min(420, page.width - 32) if page.width else 420
         self._content_width = max(240, self._card_width - 52)
 

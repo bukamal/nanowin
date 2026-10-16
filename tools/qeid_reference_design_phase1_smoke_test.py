@@ -6,13 +6,12 @@ invoice = (ROOT / "src/nano_offline/views/invoice_view.py").read_text(encoding="
 dashboard = (ROOT / "src/nano_offline/views/dashboard_view.py").read_text(encoding="utf-8")
 
 for token in [
-    "sale_fab",
-    'mobile_item("dashboard", "الرئيسية"',
-    'mobile_item("items", "المواد"',
-    'mobile_item("invoices", "الفواتير"',
-    'mobile_item("more", "المزيد"',
+    # Desktop-only shell: ribbon navigation replaces the mobile bottom bar.
+    "CommandBar",
+    "RibbonTab",
+    "_section_actions",
+    "command_bar",
     'ft.Text("نظام المحاسبة الذكي"',
-    'def show_more',
 ]:
     assert token in main, token
 
@@ -32,7 +31,7 @@ for token in [
     'chip("مبيعات"',
     'chip("مشتريات"',
     'action_label="بيع جديد"',
-    'mini_action("شراء جديد"',
+    "def show_editor",
 ]:
     assert token in invoice, token
 

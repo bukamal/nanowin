@@ -7,6 +7,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, status_pill, metric_row, metric_controls
+from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -17,7 +18,7 @@ from nano_offline.core.home_widget import refresh_home_widget
 # Compatibility terminology: «سند دفع» هو نفسه «سند صرف» في الإصدارات السابقة.
 
 class FinanceCenter:
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, on_changed=None, native_files=None, on_title_change=None, on_open_invoice=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, on_changed=None, native_files=None, on_title_change=None, on_open_invoice=None, on_context_actions=None):
         self.page = page
         self.ctx = ctx
         self.content = content
@@ -28,6 +29,9 @@ class FinanceCenter:
         # wired in main.py to the invoice center (same pattern as
         # parties_view's on_open_receipt/on_open_payment callbacks).
         self.on_open_invoice = on_open_invoice
+        # Publishes this section's contextual ribbon actions while finance is
+        # on screen (سند قبض / سند دفع / سند مصروف).
+        self.on_context_actions = on_context_actions
 
     def money(self, value) -> str:
         return currency.format_amount(value, self.ctx.settings)
@@ -213,92 +217,6 @@ class FinanceCenter:
 
         search.on_change = refresh_from_search
 
-        # Floating "new voucher" action: one FAB that expands into the three
-        # voucher types (قبض / دفع / مصروف) instead of a three-button row
-        # competing with the summary cards and filters for space at the top
-        # -- same speed-dial pattern already used for "فاتورة جديدة" in
-        # invoice_view.py. Each mini-action is colored to match that type's
-        # accent in the list below (السطر أدناه بنفس لون السند في القائمة)
-        # so the three voucher types stay visually distinct end-to-end.
-        fab_state = {"open": False}
-
-        def close_fab(_=None):
-            if fab_state["open"]:
-                fab_state["open"] = False
-                render_fab()
-                self.page.update()
-
-        def open_voucher(kind: str):
-            def handler(_=None):
-                close_fab()
-                self.show_voucher_dialog(None, kind)
-            return handler
-
-        def open_expense_from_fab(_=None):
-            close_fab()
-            self.show_expense_dialog()
-
-        def toggle_fab(_):
-            fab_state["open"] = not fab_state["open"]
-            render_fab()
-            self.page.update()
-
-        def mini_action(label: str, icon, bg: str, on_click) -> ft.Row:
-            return ft.Row(
-                [
-                    ft.Container(
-                        ft.Text(label, size=12, color=Colors.WHITE, weight=ft.FontWeight.W_600),
-                        padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                        bgcolor=Colors.TEXT_PRIMARY,
-                        border_radius=10,
-                    ),
-                    ft.Container(
-                        ft.Icon(icon, color=Colors.WHITE, size=20),
-                        width=46, height=46, border_radius=23,
-                        bgcolor=bg, alignment=ft.alignment.center,
-                        shadow=Shadow.MD, ink=True, on_click=on_click,
-                    ),
-                ],
-                spacing=8,
-                alignment=ft.MainAxisAlignment.END,
-                animate_opacity=160,
-            )
-
-        scrim = ft.Container(
-            expand=True,
-            bgcolor=ft.Colors.with_opacity(0.001, Colors.TEXT_PRIMARY),
-            visible=False,
-            on_click=close_fab,
-            left=0, right=0, top=0, bottom=0,
-        )
-
-        mini_expense = mini_action("سند مصروف", ft.Icons.RECEIPT_OUTLINED, Colors.ORANGE, open_expense_from_fab)
-        mini_payment = mini_action("سند دفع", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER_DARK, open_voucher("payment"))
-        mini_receipt = mini_action("سند قبض", ft.Icons.ADD_CARD, Colors.SUCCESS, open_voucher("receipt"))
-        main_fab = ft.Container(
-            ft.Icon(ft.Icons.ADD_ROUNDED, color=Colors.WHITE, size=26),
-            width=56, height=56, border_radius=28,
-            bgcolor=Colors.PRIMARY, alignment=ft.alignment.center,
-            shadow=Shadow.LG, ink=True, on_click=toggle_fab,
-            rotate=ft.Rotate(0), animate_rotation=160,
-        )
-        fab_column = ft.Column(
-            [mini_expense, mini_payment, mini_receipt, main_fab],
-            spacing=12,
-            horizontal_alignment=ft.CrossAxisAlignment.END,
-        )
-        fab_container = ft.Container(fab_column, right=16, bottom=16, animate_opacity=160)
-
-        def render_fab() -> None:
-            is_open = fab_state["open"]
-            for mini in (mini_expense, mini_payment, mini_receipt):
-                mini.visible = is_open
-                mini.opacity = 1 if is_open else 0
-            main_fab.rotate = ft.Rotate(0.125 * 6.283) if is_open else ft.Rotate(0)  # 45°
-            scrim.visible = is_open
-
-        render_fab()
-
         # Same sticky-header / scrolling-body split as invoice_view and
         # items_view: the section tabs, search, and type filters live in a
         # bordered white bar that stays put, while the KPI cards and the
@@ -322,9 +240,6 @@ class FinanceCenter:
                 [
                     summary,
                     rows,
-                    # Breathing room so the last card never sits directly under
-                    # the floating action button.
-                    ft.Container(height=84),
                 ],
                 spacing=12,
                 scroll=ft.ScrollMode.AUTO,
@@ -334,7 +249,16 @@ class FinanceCenter:
             padding=ft.padding.only(top=12, left=16, right=16),
         )
         body = ft.Column([sticky_header, scroll_body], spacing=0, expand=True)
-        self.content.content = ft.Stack([body, scrim, fab_container], expand=True)
+        self.content.content = body
+        # Creation actions live in the shell's contextual ribbon now (the old
+        # floating speed-dial was mobile chrome): one button per voucher type
+        # so قبض / دفع / مصروف stay one click away from any finance tab.
+        if self.on_context_actions is not None:
+            self.on_context_actions([
+                RibbonAction("new_receipt", "سند قبض", ft.Icons.ADD_CARD, accent=True, on_click=lambda _=None: self.show_voucher_dialog(None, "receipt")),
+                RibbonAction("new_payment", "سند دفع", ft.Icons.PAYMENTS_OUTLINED, on_click=lambda _=None: self.show_voucher_dialog(None, "payment")),
+                RibbonAction("new_expense", "سند مصروف", ft.Icons.RECEIPT_OUTLINED, on_click=lambda _=None: self.show_expense_dialog()),
+            ])
         refresh()
 
     def _voucher_html(self, voucher: dict) -> str:

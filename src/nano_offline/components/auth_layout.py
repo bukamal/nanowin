@@ -1,10 +1,9 @@
-"""Responsive scaffold shared by the pre-login gates (activation + login).
+"""Scaffold shared by the pre-login gates (activation + login).
 
-On a phone both gates stay a single centred card. On a wide/desktop window
-that vertical stack looked stretched and empty, so it switches to a
-horizontal split: a gradient brand panel beside the form. Using one scaffold
-for both gates keeps them visually identical, as a single continuous
-first-run experience.
+Both gates render as a horizontal split: a gradient brand panel beside the
+form. Using one scaffold for both keeps them visually identical, as a single
+continuous first-run experience. (The app is desktop-only, so there is no
+stacked phone layout any more.)
 """
 
 from __future__ import annotations
@@ -13,8 +12,6 @@ import flet as ft
 
 from nano_offline.core.theme import Colors
 from nano_offline.version import APP_VERSION
-
-AUTH_BREAKPOINT = 900
 
 _FEATURES = [
     (ft.Icons.WIFI_OFF_ROUNDED, "يعمل بدون إنترنت", "محاسبة ومخزون محلي بالكامل"),
@@ -83,33 +80,20 @@ def _feature_row(icon, title: str, subtitle: str) -> ft.Row:
 
 
 def auth_scaffold(page: ft.Page, card: ft.Control) -> ft.Control:
-    """Wrap an auth ``card`` in the phone (stacked) or desktop (split) shell."""
-    wide = bool(page.width and page.width >= AUTH_BREAKPOINT)
-    if wide:
-        form_pane = ft.Container(
-            ft.Column([card], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            expand=True,
-            alignment=ft.alignment.center,
-            padding=32,
-            bgcolor=Colors.BACKGROUND,
-        )
-        return ft.Row(
-            [_brand_panel(), form_pane],
-            spacing=0,
-            expand=True,
-            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
-        )
-    return ft.Container(
+    """Wrap an auth ``card`` in the split (brand panel + form) shell."""
+    form_pane = ft.Container(
         ft.Column([card], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         expand=True,
-        padding=16,
         alignment=ft.alignment.center,
-        gradient=ft.LinearGradient(
-            colors=[Colors.PRIMARY_BG, Colors.BACKGROUND, Colors.BACKGROUND],
-            begin=ft.alignment.top_center,
-            end=ft.alignment.bottom_center,
-        ),
+        padding=32,
+        bgcolor=Colors.BACKGROUND,
+    )
+    return ft.Row(
+        [_brand_panel(), form_pane],
+        spacing=0,
+        expand=True,
+        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
     )
 
 
-__all__ = ["auth_scaffold", "AUTH_BREAKPOINT"]
+__all__ = ["auth_scaffold"]
