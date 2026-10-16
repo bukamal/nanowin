@@ -6,7 +6,7 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, status_pill
+from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, status_pill, metric_row, metric_controls
 from nano_offline.components.money_text import money_row
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -128,11 +128,11 @@ class FinanceCenter:
             receipts = sum(float(v.get("amount") or 0) for v in vouchers if v.get("voucher_type") == "receipt")
             payments = sum(float(v.get("amount") or 0) for v in vouchers if v.get("voucher_type") == "payment")
             unallocated_total = sum(float(v.get("unallocated_amount") or 0) for v in vouchers)
-            summary.controls = [
-                ft.Container(kpi_card("إجمالي القبض", "", ft.Icons.ADD_CARD, Colors.SUCCESS, on_tap=lambda _: set_filter("receipt"), amount_usd=receipts, settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                ft.Container(kpi_card("إجمالي الدفع", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER, on_tap=lambda _: set_filter("payment"), amount_usd=payments, settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                ft.Container(kpi_card("رصيد غير موزع", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=unallocated_total, settings=self.ctx.settings), col={"xs": 12, "md": 4}),
-            ]
+            summary.controls = metric_controls([
+                kpi_card("إجمالي القبض", "", ft.Icons.ADD_CARD, Colors.SUCCESS, on_tap=lambda _: set_filter("receipt"), amount_usd=receipts, settings=self.ctx.settings),
+                kpi_card("إجمالي الدفع", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER, on_tap=lambda _: set_filter("payment"), amount_usd=payments, settings=self.ctx.settings),
+                kpi_card("رصيد غير موزع", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=unallocated_total, settings=self.ctx.settings),
+            ])
             q = (search.value or "").strip().casefold()
             filtered = []
             for v in vouchers:
@@ -685,11 +685,11 @@ class FinanceCenter:
             total = sum(float(e.get("amount") or 0) for e in expenses)
             categories = {str(e.get("category_name") or "بلا تصنيف") for e in expenses}
             month_total = sum(float(e.get("amount") or 0) for e in expenses if str(e.get("expense_date") or "").startswith(current_month))
-            summary.controls = [
-                ft.Container(kpi_card("إجمالي المصروفات", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER_DARK, amount_usd=total, settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                ft.Container(kpi_card("هذا الشهر", "", ft.Icons.CALENDAR_MONTH_OUTLINED, Colors.ORANGE, on_tap=lambda _: toggle_month(), amount_usd=month_total, settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                ft.Container(kpi_card("التصنيفات", str(len(categories)), ft.Icons.CATEGORY_OUTLINED, Colors.PURPLE), col={"xs": 12, "md": 4}),
-            ]
+            summary.controls = metric_controls([
+                kpi_card("إجمالي المصروفات", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER_DARK, amount_usd=total, settings=self.ctx.settings),
+                kpi_card("هذا الشهر", "", ft.Icons.CALENDAR_MONTH_OUTLINED, Colors.ORANGE, on_tap=lambda _: toggle_month(), amount_usd=month_total, settings=self.ctx.settings),
+                kpi_card("التصنيفات", str(len(categories)), ft.Icons.CATEGORY_OUTLINED, Colors.PURPLE),
+            ])
             rows.controls = []
             for exp in filtered[: render_limit["n"]]:
                 rows.controls.append(ft.Container(
@@ -1010,14 +1010,11 @@ class FinanceCenter:
                 balance = float(data["current_balance"])
                 balance_label = "رصيد مستحق" if balance >= 0 else "رصيد دائن للطرف"
                 result.controls.append(
-                    ft.ResponsiveRow(
-                        [
-                            ft.Container(kpi_card("الرصيد الحالي", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY if balance >= 0 else Colors.SUCCESS, amount_usd=abs(balance), settings=self.ctx.settings, suffix=balance_label), col={"xs": 12, "md": 4}),
-                            ft.Container(kpi_card("الرصيد الافتتاحي للفترة", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                            ft.Container(kpi_card("فواتير مفتوحة", str(len(data["open_invoices"])), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.ORANGE), col={"xs": 6, "md": 4}),
-                        ],
-                        spacing=8, run_spacing=8,
-                    )
+                    metric_row([
+                        kpi_card("الرصيد الحالي", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY if balance >= 0 else Colors.SUCCESS, amount_usd=abs(balance), settings=self.ctx.settings, suffix=balance_label),
+                        kpi_card("الرصيد الافتتاحي للفترة", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings),
+                        kpi_card("فواتير مفتوحة", str(len(data["open_invoices"])), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.ORANGE),
+                    ])
                 )
                 # Same icon-badge card language as the vouchers/invoices
                 # list rows -- an inflow is styled like a "قبض" row, an
@@ -1177,14 +1174,11 @@ class FinanceCenter:
                 ft.Text("ميزان المراجعة", size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
             )
             result.controls.append(
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(kpi_card("إجمالي مدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=tb["total_debit"], settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                        ft.Container(kpi_card("إجمالي دائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=tb["total_credit"], settings=self.ctx.settings), col={"xs": 6, "md": 4}),
-                        ft.Container(kpi_card("حالة التوازن", "", ft.Icons.CHECK_CIRCLE_OUTLINE if balanced else ft.Icons.WARNING_AMBER_ROUNDED, Colors.SUCCESS if balanced else Colors.DANGER_DARK, amount_usd=abs(tb["difference"]), settings=self.ctx.settings, suffix="متوازن" if balanced else "فرق غير مرحل"), col={"xs": 12, "md": 4}),
-                    ],
-                    spacing=8, run_spacing=8,
-                )
+                metric_row([
+                    kpi_card("إجمالي مدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=tb["total_debit"], settings=self.ctx.settings),
+                    kpi_card("إجمالي دائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=tb["total_credit"], settings=self.ctx.settings),
+                    kpi_card("حالة التوازن", "", ft.Icons.CHECK_CIRCLE_OUTLINE if balanced else ft.Icons.WARNING_AMBER_ROUNDED, Colors.SUCCESS if balanced else Colors.DANGER_DARK, amount_usd=abs(tb["difference"]), settings=self.ctx.settings, suffix="متوازن" if balanced else "فرق غير مرحل"),
+                ], spacing=8)
             )
 
             def pick(code: str):
@@ -1244,15 +1238,12 @@ class FinanceCenter:
                 ft.Text(f"كشف حساب: {data['label']}", size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
             )
             result.controls.append(
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(kpi_card("الرصيد الافتتاحي", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings), col={"xs": 6, "md": 3}),
-                        ft.Container(kpi_card("إجمالي مدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=data["debit_total"], settings=self.ctx.settings), col={"xs": 6, "md": 3}),
-                        ft.Container(kpi_card("إجمالي دائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=data["credit_total"], settings=self.ctx.settings), col={"xs": 6, "md": 3}),
-                        ft.Container(kpi_card("الرصيد الختامي", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS, amount_usd=data["closing_balance"], settings=self.ctx.settings), col={"xs": 6, "md": 3}),
-                    ],
-                    spacing=8, run_spacing=8,
-                )
+                metric_row([
+                    kpi_card("الرصيد الافتتاحي", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings),
+                    kpi_card("إجمالي مدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=data["debit_total"], settings=self.ctx.settings),
+                    kpi_card("إجمالي دائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=data["credit_total"], settings=self.ctx.settings),
+                    kpi_card("الرصيد الختامي", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS, amount_usd=data["closing_balance"], settings=self.ctx.settings),
+                ], spacing=8)
             )
             for row in data["rows"][: render_limit["n"]]:
                 movement = float(row["movement"])

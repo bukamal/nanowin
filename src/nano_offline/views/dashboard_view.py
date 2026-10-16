@@ -8,7 +8,7 @@ import flet as ft
 from nano_offline.core.theme import Colors, Radius, SEVERITY_STYLE, Shadow
 from nano_offline.core import currency
 from nano_offline.core.toast import toast
-from nano_offline.components import SelectAllTextField, new_form_sheet, render_form_sheet
+from nano_offline.components import SelectAllTextField, new_form_sheet, render_form_sheet, metric_row
 
 # Arabic weekday/month names for the header's live date line -- kept local
 # (rather than relying on locale-dependent strftime) so it renders correctly
@@ -1021,41 +1021,25 @@ class DashboardCenter:
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.ResponsiveRow(
-                        [
-                            ft.Container(
-                                ft.Column([
-                                    ft.Text("المبيعات", size=10, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(self.money(data.get("sales")), size=14, weight=ft.FontWeight.BOLD),
-                                    ft.Text(change_text, size=10, color=change_color),
-                                ], spacing=2),
-                                col={"xs": 6, "md": 3},
-                            ),
-                            ft.Container(
-                                ft.Column([
-                                    ft.Text("ربح تقريبي", size=10, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(self.money(data.get("approx_profit")), size=14, weight=ft.FontWeight.BOLD),
-                                ], spacing=2),
-                                col={"xs": 6, "md": 3},
-                            ),
-                            ft.Container(
-                                ft.Column([
-                                    ft.Text("ذمم العملاء", size=10, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(self.money(data.get("receivables")), size=14, weight=ft.FontWeight.BOLD),
-                                ], spacing=2),
-                                col={"xs": 6, "md": 3},
-                            ),
-                            ft.Container(
-                                ft.Column([
-                                    ft.Text("مخزون منخفض", size=10, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(str(int(data.get("low_stock_count") or 0)), size=14, weight=ft.FontWeight.BOLD),
-                                ], spacing=2),
-                                col={"xs": 6, "md": 3},
-                            ),
-                        ],
-                        spacing=8,
-                        run_spacing=8,
-                    ),
+                    metric_row([
+                        ft.Column([
+                            ft.Text("المبيعات", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Text(self.money(data.get("sales")), size=14, weight=ft.FontWeight.BOLD),
+                            ft.Text(change_text, size=10, color=change_color),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("ربح تقريبي", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Text(self.money(data.get("approx_profit")), size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("ذمم العملاء", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Text(self.money(data.get("receivables")), size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("مخزون منخفض", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Text(str(int(data.get("low_stock_count") or 0)), size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=2),
+                    ], spacing=8),
                 ],
                 spacing=10,
             ),
@@ -1451,14 +1435,12 @@ class DashboardCenter:
                 ft.Column(self._decisions_list(decisions), spacing=6) if decisions and len(decisions) > 1 else ft.Container(),
                 self._weekly_owner_card(weekly) if weekly else ft.Container(),
                 self._smart_insight(alerts=smart_alerts, best_sellers=best_sellers, profit_change=profit_change, net_profit=current_stmt["net_profit"]),
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(self._metric("صافي الربح", self.money(summary["net_profit"]), icon=ft.Icons.QUERY_STATS, accent=Colors.SUCCESS, note="بعد تكلفة المبيعات والمصروفات"), col={"xs": 6, "md": 3}),
-                        ft.Container(self._metric("رصيد الصندوق", self.money(summary["cash"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY, note="الرصيد النقدي الحالي"), col={"xs": 6, "md": 3}),
-                        ft.Container(self._metric("ذمم العملاء", self.money(summary["receivables"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING, note="مبالغ مستحقة التحصيل"), col={"xs": 6, "md": 3}),
-                        ft.Container(self._metric("ذمم الموردين", self.money(summary["payables"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER, note="مبالغ مستحقة الدفع"), col={"xs": 6, "md": 3}),
-                    ], spacing=10, run_spacing=10,
-                ),
+                metric_row([
+                    self._metric("صافي الربح", self.money(summary["net_profit"]), icon=ft.Icons.QUERY_STATS, accent=Colors.SUCCESS, note="بعد تكلفة المبيعات والمصروفات"),
+                    self._metric("رصيد الصندوق", self.money(summary["cash"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY, note="الرصيد النقدي الحالي"),
+                    self._metric("ذمم العملاء", self.money(summary["receivables"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING, note="مبالغ مستحقة التحصيل"),
+                    self._metric("ذمم الموردين", self.money(summary["payables"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER, note="مبالغ مستحقة الدفع"),
+                ], spacing=10),
                 ft.Container(
                     ft.Column(
                         [
@@ -1482,13 +1464,11 @@ class DashboardCenter:
                     ft.Column(
                         [
                             ft.Row([ft.Text("أداء الفترة", size=16, weight=ft.FontWeight.BOLD, expand=True), self._period_selector()]),
-                            ft.ResponsiveRow(
-                                [
-                                    ft.Container(self._period_stat("المبيعات", current_stmt["sales"], sales_change), col={"xs": 4}),
-                                    ft.Container(self._period_stat("المشتريات", current_stmt["purchases"], purchases_change, invert=True), col={"xs": 4}),
-                                    ft.Container(self._period_stat("صافي الربح", current_stmt["net_profit"], profit_change), col={"xs": 4}),
-                                ],
-                            ),
+                            metric_row([
+                                self._period_stat("المبيعات", current_stmt["sales"], sales_change),
+                                self._period_stat("المشتريات", current_stmt["purchases"], purchases_change, invert=True),
+                                self._period_stat("صافي الربح", current_stmt["net_profit"], profit_change),
+                            ]),
                             ft.Text("اتجاه المبيعات آخر ١٤ يومًا", size=10, color=Colors.TEXT_FAINT),
                             self._sparkline(sparkline),
                         ], spacing=12,

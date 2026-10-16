@@ -11,6 +11,8 @@ from .form_sheet import render_form_sheet, new_form_sheet
 from .status_pill import status_pill
 from .text_field import SelectAllTextField
 from .owner_pulse_card import build_owner_pulse_card
+from .metric_row import metric_row, metric_controls
+from .auth_layout import auth_scaffold
 
 __all__ = [
     "SearchSelect", "PatternPad", "empty_state", "SegmentedToggle", "SegmentOption",
@@ -18,4 +20,5 @@ __all__ = [
     "SmartAmountField", "SmartDateField", "kpi_card", "status_pill",
     "build_owner_pulse_card",
     "DataGrid", "GridColumn", "GridNavigator",
+    "metric_row", "metric_controls", "auth_scaffold",
 ]

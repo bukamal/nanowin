@@ -78,6 +78,7 @@ class DataGrid(ft.Column):
         row_height: int = 46,
         header_height: int = 40,
         empty_text: str = "لا توجد بيانات",
+        striped: bool = True,
     ):
         self._columns = list(columns)
         self._rows: list[dict] = [dict(r) for r in (rows or [])]
@@ -92,6 +93,11 @@ class DataGrid(ft.Column):
         self._row_height = row_height
         self._header_height = header_height
         self._empty_text = empty_text
+        self._striped = bool(striped)
+        # Remembers each row's resting background so hover can restore it
+        # (with zebra striping there is no single "row colour" anymore).
+        self._row_bg: list[str] = []
+        self._footer_values: dict[str, str] | None = None
 
         self.nav = GridNavigator(self._columns, len(self._rows))
         self._cell_boxes: dict[tuple[int, int], ft.Container] = {}
@@ -267,11 +273,41 @@ class DataGrid(ft.Column):
         box = ft.Container(
             ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
-            bgcolor=Colors.WHITE,
+            bgcolor=self._row_bg_for(r),
             on_hover=lambda e, rr=r: self._on_row_hover(e, rr),
         )
         self._row_boxes.append(box)
         return box
+
+    def _row_bg_for(self, r: int) -> str:
+        """Zebra stripe: a faint tint on alternate rows aids horizontal
+        tracking across a wide table without the heavier card borders."""
+        if self._striped and r % 2 == 1:
+            return Colors.BACKGROUND_ALT
+        return Colors.WHITE
+
+    def _build_footer(self) -> ft.Control | None:
+        if not self._footer_values:
+            return None
+        cells: list[ft.Control] = []
+        for col in self._columns:
+            text = str(self._footer_values.get(col.key, "") or "")
+            cells.append(
+                ft.Container(
+                    ft.Text(text, size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                    height=self._header_height,
+                    alignment=self._col_align(col),
+                    padding=ft.padding.symmetric(horizontal=10),
+                    **self._cell_kwargs(col),
+                )
+            )
+        if self._on_row_activate is not None:
+            cells.append(ft.Container(width=48, height=self._header_height))
+        return ft.Container(
+            ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER_STRONG)),
+        )
 
     def _render_body(self) -> None:
         self._cell_boxes.clear()
@@ -299,6 +335,9 @@ class DataGrid(ft.Column):
         else:
             for r, row in enumerate(self._rows):
                 controls.append(self._make_row(r, row))
+        footer = self._build_footer()
+        if footer is not None:
+            controls.append(footer)
         self._body.controls = controls
 
     # ---------------------------------------------------------------- reload
@@ -316,6 +355,16 @@ class DataGrid(ft.Column):
     def rows(self) -> list[dict]:
         """Snapshot of the current data (copies, so callers can't mutate it)."""
         return [dict(r) for r in self._rows]
+
+    def set_footer(self, values: dict[str, str] | None) -> None:
+        """Show a bold summary row (e.g. column totals) under the data.
+
+        ``values`` maps a column key to the text shown in that column's
+        footer cell. Pass ``None`` to remove the footer.
+        """
+        self._footer_values = dict(values) if values else None
+        self._render_body()
+        self._safe_update(self._body)
 
     def add_row(self, row: dict | None = None) -> int:
         """Append a (blank) row, move the cursor to its first editable cell
@@ -402,7 +451,7 @@ class DataGrid(ft.Column):
         if self.nav.row == r:
             return
         box = self._row_boxes[r]
-        box.bgcolor = Colors.BACKGROUND_ALT if e.data == "true" else Colors.WHITE
+        box.bgcolor = Colors.BACKGROUND_ALT if e.data == "true" else self._row_bg_for(r)
         self._safe_update(box)
 
     def _paint_selection(self) -> None:

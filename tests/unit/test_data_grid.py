@@ -194,3 +194,20 @@ def test_set_cell_writes_and_notifies_then_reverts_on_failure():
                    on_cell_commit=boom)
     bad.set_cell(0, "item", 9)
     assert bad.row_at(0)["item"] is None  # rolled back
+
+
+def test_zebra_stripes_alternate_and_can_be_disabled():
+    striped = make_grid()
+    assert striped._row_bg_for(0) == Colors.WHITE
+    assert striped._row_bg_for(1) == Colors.BACKGROUND_ALT
+    plain = make_grid(striped=False)
+    assert plain._row_bg_for(1) == Colors.WHITE
+
+
+def test_footer_row_is_appended_and_removed():
+    g = make_grid()
+    assert len(g._body.controls) == len(ROWS)
+    g.set_footer({"name": "الإجمالي", "price": "11.5"})
+    assert len(g._body.controls) == len(ROWS) + 1
+    g.set_footer(None)
+    assert len(g._body.controls) == len(ROWS)

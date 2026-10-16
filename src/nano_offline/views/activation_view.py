@@ -6,7 +6,7 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SelectAllTextField
+from nano_offline.components import SelectAllTextField, auth_scaffold
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import Colors, Radius, Shadow, STATUS_STYLES as _STATUS_STYLES
 
@@ -219,23 +219,9 @@ class ActivationGate:
         )
         self._card = card
 
-        background = ft.Container(
-            ft.Column(
-                [card],
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            expand=True,
-            padding=16,
-            alignment=ft.alignment.center,
-            gradient=ft.LinearGradient(
-                colors=[Colors.PRIMARY_BG, Colors.BACKGROUND, Colors.BACKGROUND],
-                begin=ft.alignment.top_center,
-                end=ft.alignment.bottom_center,
-            ),
-        )
-
-        self.page.add(background)
+        # Same responsive scaffold as LoginGate: stacked card on phones,
+        # brand-panel + form split on wide/desktop windows.
+        self.page.add(ft.SafeArea(auth_scaffold(self.page, card), expand=True))
         self.page.update()
         # trigger the entrance transition on the next frame
         card.opacity = 1

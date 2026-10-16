@@ -4,7 +4,7 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SmartDateField, empty_state
+from nano_offline.components import SmartDateField, empty_state, metric_row
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import reporting_settings
@@ -481,17 +481,14 @@ class ReportsCenter:
     def _render_pnl(self) -> list[ft.Control]:
         date_from, date_to = self._dates()
         report = self.ctx.reports.income_statement(date_from=date_from, date_to=date_to)
-        metrics = ft.ResponsiveRow(
-            [
-                ft.Container(self._metric("المبيعات", self.money(report["sales"]), icon=ft.Icons.POINT_OF_SALE_OUTLINED, accent=Colors.PRIMARY), col={"xs": 6, "md": 4}),
-                ft.Container(self._metric("تكلفة المبيعات", self.money(report["cogs"]), icon=ft.Icons.RECEIPT_LONG_OUTLINED, accent=Colors.ORANGE), col={"xs": 6, "md": 4}),
-                ft.Container(self._metric("مجمل الربح", self.money(report["gross_profit"]), icon=ft.Icons.TRENDING_UP_ROUNDED, accent=Colors.SUCCESS, note=f"هامش {report['gross_margin_percent']:.1f}%"), col={"xs": 6, "md": 4}),
-                ft.Container(self._metric("المصروفات", self.money(report["expenses"]), icon=ft.Icons.PAYMENTS_OUTLINED, accent=Colors.DANGER), col={"xs": 6, "md": 4}),
-                ft.Container(self._metric("صافي الربح", self.money(report["net_profit"]), icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.SUCCESS_ALT), col={"xs": 6, "md": 4}),
-                ft.Container(self._metric("المشتريات", self.money(report["purchases"]), icon=ft.Icons.ADD_SHOPPING_CART_OUTLINED, accent=Colors.PURPLE_LIGHT, note="معلومة مشتريات وليست تكلفة مبيعات"), col={"xs": 6, "md": 4}),
-            ],
-            spacing=10, run_spacing=10,
-        )
+        metrics = metric_row([
+            self._metric("المبيعات", self.money(report["sales"]), icon=ft.Icons.POINT_OF_SALE_OUTLINED, accent=Colors.PRIMARY),
+            self._metric("تكلفة المبيعات", self.money(report["cogs"]), icon=ft.Icons.RECEIPT_LONG_OUTLINED, accent=Colors.ORANGE),
+            self._metric("مجمل الربح", self.money(report["gross_profit"]), icon=ft.Icons.TRENDING_UP_ROUNDED, accent=Colors.SUCCESS, note=f"هامش {report['gross_margin_percent']:.1f}%"),
+            self._metric("المصروفات", self.money(report["expenses"]), icon=ft.Icons.PAYMENTS_OUTLINED, accent=Colors.DANGER),
+            self._metric("صافي الربح", self.money(report["net_profit"]), icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.SUCCESS_ALT),
+            self._metric("المشتريات", self.money(report["purchases"]), icon=ft.Icons.ADD_SHOPPING_CART_OUTLINED, accent=Colors.PURPLE_LIGHT, note="معلومة مشتريات وليست تكلفة مبيعات"),
+        ], spacing=10)
         expenses = ft.Column(spacing=6)
         for row in report["expense_breakdown"]:
             expenses.controls.append(
@@ -584,13 +581,10 @@ class ReportsCenter:
         if not cards.controls:
             cards.controls.append(self._empty("لا توجد مواد مخزنية.", icon=ft.Icons.INVENTORY_2_OUTLINED))
         return [
-            ft.ResponsiveRow(
-                [
-                    ft.Container(self._metric("قيمة المخزون", self.money(valuation["total_value"]), icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PRIMARY, note=f"كما في {date_to or 'آخر حركة'}"), col={"xs": 6, "md": 4}),
-                    ft.Container(self._metric("عدد المواد المخزنية", str(valuation["item_count"]), icon=ft.Icons.CATEGORY_OUTLINED, accent=Colors.WARNING), col={"xs": 6, "md": 4}),
-                ],
-                spacing=10, run_spacing=10,
-            ),
+            metric_row([
+                self._metric("قيمة المخزون", self.money(valuation["total_value"]), icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PRIMARY, note=f"كما في {date_to or 'آخر حركة'}"),
+                self._metric("عدد المواد المخزنية", str(valuation["item_count"]), icon=ft.Icons.CATEGORY_OUTLINED, accent=Colors.WARNING),
+            ], spacing=10),
             self._section_title(ft.Icons.SYNC_ALT_ROUNDED, "حركة المخزون حسب المادة"),
             cards,
         ]
@@ -653,15 +647,12 @@ class ReportsCenter:
             return column
 
         return [
-            ft.ResponsiveRow(
-                [
-                    ft.Container(self._metric("ذمم العملاء", self.money(customers["positive_total"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING), col={"xs": 6, "md": 3}),
-                    ft.Container(self._metric("أرصدة دائنة للعملاء", self.money(customers["credit_total"]), icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.SUCCESS), col={"xs": 6, "md": 3}),
-                    ft.Container(self._metric("ذمم الموردين", self.money(suppliers["positive_total"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER), col={"xs": 6, "md": 3}),
-                    ft.Container(self._metric("دفعات مقدمة للموردين", self.money(suppliers["credit_total"]), icon=ft.Icons.PAYMENTS_OUTLINED, accent=Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                ],
-                spacing=10, run_spacing=10,
-            ),
+            metric_row([
+                self._metric("ذمم العملاء", self.money(customers["positive_total"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING),
+                self._metric("أرصدة دائنة للعملاء", self.money(customers["credit_total"]), icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.SUCCESS),
+                self._metric("ذمم الموردين", self.money(suppliers["positive_total"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER),
+                self._metric("دفعات مقدمة للموردين", self.money(suppliers["credit_total"]), icon=ft.Icons.PAYMENTS_OUTLINED, accent=Colors.PRIMARY),
+            ], spacing=10),
             self._section_title(ft.Icons.PEOPLE_ALT_OUTLINED, "العملاء"), party_cards(customers, "عملاء", ft.Icons.PERSON_OUTLINE, "customer"),
             self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير العملاء المفتوحة"), open_cards(open_customers, "بيع"),
             self._section_title(ft.Icons.LOCAL_SHIPPING_OUTLINED, "الموردون"), party_cards(suppliers, "موردون", ft.Icons.LOCAL_SHIPPING_OUTLINED, "supplier"),
@@ -688,15 +679,12 @@ class ReportsCenter:
         if not cards.controls:
             cards.controls.append(self._empty("لا توجد حركات صندوق في الفترة.", icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED))
         return [
-            ft.ResponsiveRow(
-                [
-                    ft.Container(self._metric("رصيد افتتاحي", self.money(report["opening_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                    ft.Container(self._metric("المقبوضات", self.money(report["receipts"]), icon=ft.Icons.SOUTH_WEST_ROUNDED, accent=Colors.SUCCESS), col={"xs": 6, "md": 3}),
-                    ft.Container(self._metric("المدفوعات", self.money(report["payments"]), icon=ft.Icons.NORTH_EAST_ROUNDED, accent=Colors.DANGER), col={"xs": 6, "md": 3}),
-                    ft.Container(self._metric("الرصيد الختامي", self.money(report["closing_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_OUTLINED, accent=Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                ],
-                spacing=10, run_spacing=10,
-            ),
+            metric_row([
+                self._metric("رصيد افتتاحي", self.money(report["opening_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY),
+                self._metric("المقبوضات", self.money(report["receipts"]), icon=ft.Icons.SOUTH_WEST_ROUNDED, accent=Colors.SUCCESS),
+                self._metric("المدفوعات", self.money(report["payments"]), icon=ft.Icons.NORTH_EAST_ROUNDED, accent=Colors.DANGER),
+                self._metric("الرصيد الختامي", self.money(report["closing_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_OUTLINED, accent=Colors.PRIMARY),
+            ], spacing=10),
             self._section_title(ft.Icons.SWAP_VERT_ROUNDED, "حركات الصندوق"),
             cards,
         ]
@@ -743,15 +731,12 @@ class ReportsCenter:
                 )
             return [
                 self._section_title(icon, title),
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(self._metric("المتوسط الشهري", self.money(data["monthly_average"]), icon=ft.Icons.CALCULATE_OUTLINED, accent=accent), col={"xs": 6, "md": 3}),
-                        ft.Container(self._metric("أساس الاتجاه", self.money(data["trend_base"]), icon=ft.Icons.ROUTE_OUTLINED, accent=Colors.ORANGE), col={"xs": 6, "md": 3}),
-                        ft.Container(self._metric("دقة التوقع", data["confidence_label"], icon=ft.Icons.VERIFIED_OUTLINED, accent=Colors.SUCCESS, note=f"هامش ±{data['band_percent']}٪"), col={"xs": 6, "md": 3}),
-                        ft.Container(self._metric("أشهر البيانات", str(data["history_months"]), icon=ft.Icons.DATE_RANGE_OUTLINED, accent=Colors.PURPLE), col={"xs": 6, "md": 3}),
-                    ],
-                    spacing=10, run_spacing=10,
-                ),
+                metric_row([
+                    self._metric("المتوسط الشهري", self.money(data["monthly_average"]), icon=ft.Icons.CALCULATE_OUTLINED, accent=accent),
+                    self._metric("أساس الاتجاه", self.money(data["trend_base"]), icon=ft.Icons.ROUTE_OUTLINED, accent=Colors.ORANGE),
+                    self._metric("دقة التوقع", data["confidence_label"], icon=ft.Icons.VERIFIED_OUTLINED, accent=Colors.SUCCESS, note=f"هامش ±{data['band_percent']}٪"),
+                    self._metric("أشهر البيانات", str(data["history_months"]), icon=ft.Icons.DATE_RANGE_OUTLINED, accent=Colors.PURPLE),
+                ], spacing=10),
                 ft.Container(
                     ft.Column(
                         [

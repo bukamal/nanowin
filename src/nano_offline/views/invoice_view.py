@@ -22,6 +22,7 @@ from nano_offline.components import (
     status_pill,
     DataGrid,
     GridColumn,
+    metric_row,
 )
 
 from nano_offline.services.invoice_service import InvoiceLineInput
@@ -410,14 +411,11 @@ class InvoiceCenter:
         body = ft.Column(
             [
                 ft.Row([status_pill(status, status_fg, status_bg)], alignment=ft.MainAxisAlignment.START),
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(kpi_card("الإجمالي", "", ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, amount_usd=total, settings=self.ctx.settings), col={"xs": 4}),
-                        ft.Container(kpi_card("المدفوع", "", ft.Icons.CHECK_CIRCLE_OUTLINE, Colors.SUCCESS, amount_usd=paid_amount, settings=self.ctx.settings), col={"xs": 4}),
-                        ft.Container(kpi_card("المتبقي", "", ft.Icons.SCHEDULE, Colors.ORANGE if remaining > 1e-9 else Colors.SUCCESS, amount_usd=remaining, settings=self.ctx.settings), col={"xs": 4}),
-                    ],
-                    spacing=7, run_spacing=7,
-                ),
+                metric_row([
+                    kpi_card("الإجمالي", "", ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, amount_usd=total, settings=self.ctx.settings),
+                    kpi_card("المدفوع", "", ft.Icons.CHECK_CIRCLE_OUTLINE, Colors.SUCCESS, amount_usd=paid_amount, settings=self.ctx.settings),
+                    kpi_card("المتبقي", "", ft.Icons.SCHEDULE, Colors.ORANGE if remaining > 1e-9 else Colors.SUCCESS, amount_usd=remaining, settings=self.ctx.settings),
+                ], spacing=7),
                 ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                 ft.Text("الأصناف", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                 ft.Column(line_rows, spacing=6),
@@ -725,22 +723,11 @@ class InvoiceCenter:
             # --- Scrollable middle: KPI cards, overdue alert, invoice list. ---
             scroll_body = ft.Column(
                 [
-                    ft.ResponsiveRow(
-                        [
-                            ft.Container(
-                                kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
-                                col={"xs": 6, "md": 4},
-                            ),
-                            ft.Container(
-                                kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
-                                col={"xs": 6, "md": 4},
-                            ),
-                            ft.Container(
-                                kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
-                                col={"xs": 12, "md": 4},
-                            ),
-                        ], spacing=8, run_spacing=8,
-                    ),
+                    metric_row([
+                        kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
+                        kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
+                        kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                    ], spacing=8),
                     ft.Container(
                         ft.Row(
                             [
@@ -1740,11 +1727,31 @@ class InvoiceCenter:
                 ],
                 rows=[], page=self.page,
                 on_pick=lambda r, col: open_chooser(r),
+                on_cell_commit=lambda *_: refresh_footer(),
                 formatter=row_formatter,
                 empty_text="اضغط «سطر جديد» لإضافة بنود",
             )
+
+            def refresh_footer() -> None:
+                """Live summary under the grid: picked rows + running total."""
+                count = 0
+                total = 0.0
+                for row in bulk_grid.rows:
+                    if not row.get("item"):
+                        continue
+                    count += 1
+                    total += float(row.get("qty") or 0) * float(row.get("price") or 0)
+                if not count:
+                    bulk_grid.set_footer(None)
+                    return
+                bulk_grid.set_footer({
+                    "item": f"{count} بند",
+                    "price": currency.format_plain(round(total, 2)),
+                })
+
             for _ in range(3):
                 bulk_grid.add_row({"qty": 1})
+            refresh_footer()
 
             chooser_search = SelectAllTextField(
                 label="ابحث عن مادة", hint_text="الاسم أو الباركود",
@@ -1807,6 +1814,7 @@ class InvoiceCenter:
                 bulk_grid.set_cell(index, "item", int(item_row["id"]))
                 if not bulk_grid.row_at(index).get("price"):
                     bulk_grid.set_cell(index, "price", default_display_price(item_row))
+                refresh_footer()
                 hide_chooser()
 
             def open_chooser(index: int) -> None:

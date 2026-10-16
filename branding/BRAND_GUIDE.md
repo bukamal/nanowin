@@ -4,13 +4,20 @@
 Nano is a modern Arabic business application for accounting, inventory, invoices, and local-first operations.
 
 ## Core Logo
-- Primary logo: `logo_primary.png`
-- App icon: `app_icon.png`
+- Mark: a bold rounded monogram **N**.
+- Primary logo: `logo_primary.png` (transparent full-colour mark, for light surfaces).
+- App icon: `app_icon.png` / `nano_app_icon.png` (gradient tile + white mark).
+- In-app badges use `src/assets/icon.png` (transparent mark).
 
-## Color Palette
-- Primary Blue: `#0B63F6`
-- Deep Blue: `#0A2E78`
-- Aqua Accent: `#1AD8D1`
+All assets are generated deterministically by `tools/generate_brand_assets.py`
+(`python3 tools/generate_brand_assets.py`); the script is the source of truth,
+so the icon cannot drift between Windows/Android/iOS/web/macOS again.
+
+## Brand Palette
+The app theme (`src/nano_offline/core/theme.py`) is the single source of truth.
+- Primary teal: `#0F766E` / deep teal: `#115E59`
+- Violet: `#7C3AED` (gradient end) / accent aqua: `#2DD4BF`
+- Launcher icon: smooth teal -> violet diagonal gradient with a white N.
 - Surface: `#FFFFFF`
 - Background: `#F8FAFC`
 - Muted Text: `#64748B`

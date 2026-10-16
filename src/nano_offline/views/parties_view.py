@@ -5,7 +5,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 from nano_offline.core.party_reliability import grade_party
 
-from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet
+from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import currency
 
@@ -306,15 +306,13 @@ class PartyCenter:
                         ft.Container(
                             ft.Column(
                                 [
-                                    ft.ResponsiveRow(
-                                        [
-                                            ft.Container(small_metric("الرصيد الحالي", money(balance), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                                            ft.Container(small_metric("عدد الفواتير", str(int(data.get("invoice_count") or 0)), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PURPLE), col={"xs": 6, "md": 3}),
-                                            ft.Container(small_metric("إجمالي الفواتير", money(data.get("invoice_total")), ft.Icons.PAID_OUTLINED, Colors.SUCCESS), col={"xs": 6, "md": 3}),
-                                            ft.Container(small_metric("انتظام السداد", rel["label"] + (f" · {rel['max_age_days']}ي" if rel["max_age_days"] else ""), ft.Icons.VERIFIED_USER_OUTLINED, grade_color), col={"xs": 6, "md": 3}),
-                                            ft.Container(small_metric("درجة الثقة", f"{trust.score}/100 · {trust.label}" if trust else "—", ft.Icons.SHIELD_OUTLINED, getattr(Colors, {"success":"SUCCESS","info":"PRIMARY","warning":"WARNING","danger":"DANGER","muted":"TEXT_MUTED"}.get(trust.color_key if trust else "muted", "PRIMARY"), Colors.PRIMARY)), col={"xs": 6, "md": 3}),
-                                        ], spacing=7, run_spacing=7,
-                                    ),
+                                    metric_row([
+                                        small_metric("الرصيد الحالي", money(balance), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY),
+                                        small_metric("عدد الفواتير", str(int(data.get("invoice_count") or 0)), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PURPLE),
+                                        small_metric("إجمالي الفواتير", money(data.get("invoice_total")), ft.Icons.PAID_OUTLINED, Colors.SUCCESS),
+                                        small_metric("انتظام السداد", rel["label"] + (f" · {rel['max_age_days']}ي" if rel["max_age_days"] else ""), ft.Icons.VERIFIED_USER_OUTLINED, grade_color),
+                                        small_metric("درجة الثقة", f"{trust.score}/100 · {trust.label}" if trust else "—", ft.Icons.SHIELD_OUTLINED, getattr(Colors, {"success":"SUCCESS","info":"PRIMARY","warning":"WARNING","danger":"DANGER","muted":"TEXT_MUTED"}.get(trust.color_key if trust else "muted", "PRIMARY"), Colors.PRIMARY)),
+                                    ], spacing=7),
                                     ft.Text(f"العنوان: {data.get('address') or '—'}", size=11, color=Colors.TEXT_MUTED),
                                     ft.Divider(height=10),
                                     ft.Text("آخر الفواتير", size=14, weight=ft.FontWeight.BOLD),
@@ -370,11 +368,11 @@ class PartyCenter:
             outstanding_map = _outstanding_by_party()
             total_balance = sum(float(x.get("balance") or 0) for x in all_parties)
             positive = sum(1 for x in all_parties if abs(float(x.get("balance") or 0)) > 1e-9)
-            summary_row.controls = [
-                ft.Container(small_metric(f"عدد {title}", str(len(all_parties)), ft.Icons.GROUP_OUTLINED, Colors.PRIMARY), col={"xs": 6, "md": 4}),
-                ft.Container(small_metric("إجمالي الأرصدة", money(total_balance), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS if total_balance >= 0 else Colors.DANGER), col={"xs": 6, "md": 4}),
-                ft.Container(small_metric("حسابات بحركة", str(positive), ft.Icons.SYNC_ALT, Colors.PURPLE), col={"xs": 12, "md": 4}),
-            ]
+            summary_row.controls = metric_controls([
+                small_metric(f"عدد {title}", str(len(all_parties)), ft.Icons.GROUP_OUTLINED, Colors.PRIMARY),
+                small_metric("إجمالي الأرصدة", money(total_balance), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS if total_balance >= 0 else Colors.DANGER),
+                small_metric("حسابات بحركة", str(positive), ft.Icons.SYNC_ALT, Colors.PURPLE),
+            ])
             rows.controls = []
             for party in parties[: render_limit["n"]]:
                 balance = float(party.get("balance") or 0)

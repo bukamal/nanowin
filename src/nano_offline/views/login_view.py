@@ -5,7 +5,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 from nano_offline.core import sound as sound_engine
 
-from nano_offline.components import PatternPad, SelectAllTextField
+from nano_offline.components import PatternPad, SelectAllTextField, auth_scaffold
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import Colors, Radius, Shadow, STATUS_STYLES
 
@@ -519,15 +519,10 @@ class LoginGate:
         )
         self._card = card
 
-        background = ft.Container(
-            ft.Column([card], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            expand=True,
-            padding=16,
-            alignment=ft.alignment.center,
-            gradient=ft.LinearGradient(colors=[Colors.PRIMARY_BG, Colors.BACKGROUND, Colors.BACKGROUND], begin=ft.alignment.top_center, end=ft.alignment.bottom_center),
-        )
-
-        self.page.add(ft.SafeArea(background, expand=True))
+        # Shared responsive scaffold: a single centred card on phones, a
+        # brand-panel + form split on wide/desktop windows (same shell as
+        # ActivationGate, so the two gates read as one flow).
+        self.page.add(ft.SafeArea(auth_scaffold(self.page, card), expand=True))
         self.page.update()
         card.opacity = 1
         card.scale = 1

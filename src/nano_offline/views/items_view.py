@@ -6,7 +6,7 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, status_pill, DataGrid, GridColumn
+from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, status_pill, DataGrid, GridColumn, metric_controls, metric_row
 from nano_offline.components.buttons import header_close_button, inline_icon_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
@@ -2174,10 +2174,17 @@ class ItemsCenter:
             ]
             bulk_grid = DataGrid(
                 columns=bulk_columns, rows=[], page=page,
+                on_cell_commit=lambda *_: refresh_bulk_footer(),
                 empty_text="اضغط «سطر جديد» لبدء الإدخال",
             )
+            def refresh_bulk_footer() -> None:
+                """Show how many rows are ready to save, so a long sheet stays clear."""
+                ready = sum(1 for row in bulk_grid.rows if str(row.get("name") or "").strip())
+                bulk_grid.set_footer({"name": f"{ready} مادة جاهزة للحفظ"} if ready else None)
+
             for _ in range(3):
                 bulk_grid.add_row()
+            refresh_bulk_footer()
 
             # While one of the header selectors has focus, its field eats
             # Backspace/Enter -- the grid must not also act on those keys
@@ -2377,18 +2384,18 @@ class ItemsCenter:
                         ]),
                         ft.Container(
                             ft.Column([
-                                ft.ResponsiveRow([
-                                    ft.Container(kpi_card("المخزون", qty_fmt(stats.get("quantity")), ft.Icons.INVENTORY, Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                                    ft.Container(kpi_card("متوسط التكلفة", "", ft.Icons.PRICE_CHECK_OUTLINED, Colors.PURPLE, amount_usd=stats.get("average_cost"), settings=ctx.settings), col={"xs": 6, "md": 3}),
-                                    ft.Container(kpi_card("قيمة المخزون", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS, amount_usd=stats.get("inventory_cost_value"), settings=ctx.settings), col={"xs": 6, "md": 3}),
-                                    ft.Container(kpi_card("بسعر البيع", "", ft.Icons.SELL_OUTLINED, Colors.WARNING, amount_usd=stats.get("inventory_sale_value"), settings=ctx.settings), col={"xs": 6, "md": 3}),
-                                ], spacing=7, run_spacing=7),
-                                ft.ResponsiveRow([
-                                    ft.Container(kpi_card("كمية مباعة", qty_fmt(stats.get("sold_qty")), ft.Icons.TRENDING_UP, Colors.DANGER), col={"xs": 6, "md": 3}),
-                                    ft.Container(kpi_card("كمية مشتراة", qty_fmt(stats.get("purchased_qty")), ft.Icons.TRENDING_DOWN, Colors.SUCCESS), col={"xs": 6, "md": 3}),
-                                    ft.Container(kpi_card("فواتير بيع", str(int(stats.get("sale_count") or 0)), ft.Icons.RECEIPT_LONG, Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                                    ft.Container(kpi_card("فواتير شراء", str(int(stats.get("purchase_count") or 0)), ft.Icons.SHOPPING_BAG_OUTLINED, Colors.PURPLE), col={"xs": 6, "md": 3}),
-                                ], spacing=7, run_spacing=7),
+                                metric_row([
+                                    kpi_card("المخزون", qty_fmt(stats.get("quantity")), ft.Icons.INVENTORY, Colors.PRIMARY),
+                                    kpi_card("متوسط التكلفة", "", ft.Icons.PRICE_CHECK_OUTLINED, Colors.PURPLE, amount_usd=stats.get("average_cost"), settings=ctx.settings),
+                                    kpi_card("قيمة المخزون", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS, amount_usd=stats.get("inventory_cost_value"), settings=ctx.settings),
+                                    kpi_card("بسعر البيع", "", ft.Icons.SELL_OUTLINED, Colors.WARNING, amount_usd=stats.get("inventory_sale_value"), settings=ctx.settings),
+                                ], spacing=7),
+                                metric_row([
+                                    kpi_card("كمية مباعة", qty_fmt(stats.get("sold_qty")), ft.Icons.TRENDING_UP, Colors.DANGER),
+                                    kpi_card("كمية مشتراة", qty_fmt(stats.get("purchased_qty")), ft.Icons.TRENDING_DOWN, Colors.SUCCESS),
+                                    kpi_card("فواتير بيع", str(int(stats.get("sale_count") or 0)), ft.Icons.RECEIPT_LONG, Colors.PRIMARY),
+                                    kpi_card("فواتير شراء", str(int(stats.get("purchase_count") or 0)), ft.Icons.SHOPPING_BAG_OUTLINED, Colors.PURPLE),
+                                ], spacing=7),
                                 ft.Text(f"الوحدات: {units_text}", size=10, color=Colors.TEXT_MUTED),
                                 ft.Text(f"آخر بيع: {stats.get('last_sale_date') or '—'}   •   آخر شراء: {stats.get('last_purchase_date') or '—'}", size=10, color=Colors.TEXT_SECONDARY),
                                 ft.Divider(height=8), ft.Text("آخر حركات المخزون", size=14, weight=ft.FontWeight.BOLD), ft.Column(move_cards, spacing=5),
@@ -2530,12 +2537,12 @@ class ItemsCenter:
             inventory_value = sum(float(i.get("quantity") or 0) * float(i.get("average_cost") or 0) for i in all_items if i.get("item_type") == "مخزون")
             low_count = sum(1 for i in all_items if i.get("item_type") == "مخزون" and float(i.get("quantity") or 0) < LOW_STOCK)
             service_count = sum(1 for i in all_items if i.get("item_type") == "خدمة")
-            summary_row.controls = [
-                ft.Container(kpi_card("عدد المواد", str(len(all_items)), ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY), col={"xs": 6, "md": 3}),
-                ft.Container(kpi_card("قيمة المخزون", money(inventory_value), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS), col={"xs": 6, "md": 3}),
-                ft.Container(kpi_card("مخزون منخفض", str(low_count), ft.Icons.WARNING_AMBER_ROUNDED, Colors.DANGER, on_tap=lambda _: set_filter("low")), col={"xs": 6, "md": 3}),
-                ft.Container(kpi_card("الخدمات", str(service_count), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")), col={"xs": 6, "md": 3}),
-            ]
+            summary_row.controls = metric_controls([
+                kpi_card("عدد المواد", str(len(all_items)), ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY),
+                kpi_card("قيمة المخزون", money(inventory_value), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS),
+                kpi_card("مخزون منخفض", str(low_count), ft.Icons.WARNING_AMBER_ROUNDED, Colors.DANGER, on_tap=lambda _: set_filter("low")),
+                kpi_card("الخدمات", str(service_count), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")),
+            ])
             # Desktop: spreadsheet grid instead of the card list. Kept in the
             # same refresh() so search/filters/sort drive both layouts.
             desktop = bool(page.width and page.width >= 900)
