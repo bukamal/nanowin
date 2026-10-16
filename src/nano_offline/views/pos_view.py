@@ -150,6 +150,11 @@ class POSCenter:
         on_saved, if provided, is what actually navigates elsewhere)."""
         if self.on_fullscreen_exit:
             self.on_fullscreen_exit()
+        try:
+            if hasattr(self, "_prev_on_keyboard"):
+                self.page.on_keyboard_event = self._prev_on_keyboard
+        except Exception:
+            pass
 
     def _pos_handle_resize(self) -> None:
         """Relayout POS when the window crosses the desktop breakpoint.
@@ -1360,6 +1365,30 @@ class POSCenter:
             pass
         apply_pos_mode()
         self.page.update()
+        try:
+            self._prev_on_keyboard = getattr(self.page, "on_keyboard_event", None)
+        except Exception:
+            self._prev_on_keyboard = None
+        def _pos_keyboard(e):
+            try:
+                k = (e.key or "").strip().lower().replace(" ", "")
+                if k == "escape" or k == "esc":
+                    clear_cart()
+                    self.notify("تم تفريغ السلة")
+                    self.page.update()
+                    return
+                if k == "f2":
+                    checkout_btn.on_click(None)
+                    return
+                if k == "f4":
+                    hold_cart(None)
+                    return
+                if k == "enter" and (e.ctrl or e.meta):
+                    checkout_btn.on_click(None)
+                    return
+            except Exception:
+                pass
+        self.page.on_keyboard_event = _pos_keyboard
 
         # expose closures needed by helper methods below
         self._render_grid = render_grid
