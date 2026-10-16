@@ -2141,6 +2141,164 @@ class ItemsCenter:
             )
             page.open(sheet)
 
+        def open_bulk_add_sheet(_=None) -> None:
+            """Add many items as a spreadsheet: type rows, then save once.
+
+            Reuses the same :class:`DataGrid` as the list, so the
+            interaction (arrows / Tab / Enter / type-to-replace) is
+            identical to browsing the list. Category, unit and type apply
+            to every row at once -- the same "column default" pattern a
+            paper intake sheet uses -- while name/prices/qty/barcode are
+            entered per row.
+            """
+            cat_options = [(str(c["id"]), c["name"]) for c in categories]
+            unit_options = [(str(u["id"]), u["name"]) for u in units]
+            default_unit = str(units[0]["id"]) if units else None
+
+            type_sel = SearchSelect(
+                label="النوع", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")],
+                value="مخزون", allow_clear=False,
+            )
+            cat_sel = SearchSelect(label="التصنيف", choices=cat_options, value=None)
+            unit_sel = SearchSelect(
+                label="الوحدة الأساسية", choices=unit_options,
+                value=default_unit, allow_clear=False,
+            )
+
+            bulk_columns = [
+                GridColumn("name", "الاسم", editable=True),
+                GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
+                GridColumn("selling_price", "سعر البيع", width=120, align="end", kind="money", editable=True),
+                GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True),
+                GridColumn("barcode", "الباركود", width=150, editable=True),
+            ]
+            bulk_grid = DataGrid(
+                columns=bulk_columns, rows=[], page=page,
+                empty_text="اضغط «سطر جديد» لبدء الإدخال",
+            )
+            for _ in range(3):
+                bulk_grid.add_row()
+
+            # While one of the header selectors has focus, its field eats
+            # Backspace/Enter -- the grid must not also act on those keys
+            # (same reason the list disarms on its search box). The grid
+            # re-arms on the next cell click or when a row is added.
+            def _disarm_on_focus(selector) -> None:
+                previous = selector.field.on_focus
+
+                def chained(e, _prev=previous):
+                    bulk_grid.disarm()
+                    if callable(_prev):
+                        _prev(e)
+
+                selector.field.on_focus = chained
+
+            for _selector in (type_sel, cat_sel, unit_sel):
+                _disarm_on_focus(_selector)
+
+            sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+            # Drag-dismissing the sheet never runs close(); restore the list
+            # grid's keyboard handler here too, or the list loses arrow/Enter
+            # navigation until the next navigation event.
+            sheet.on_dismiss = lambda e: grid.attach()
+
+            def close(_=None):
+                # The bulk grid took over the page's keyboard handler when it
+                # was built; hand it back to the list grid on the way out.
+                page.close(sheet)
+                grid.attach()
+
+            def add_blank(_=None):
+                bulk_grid.add_row()
+
+            def default_id(selector) -> int | None:
+                try:
+                    return int(selector.value) if selector.value else None
+                except (TypeError, ValueError):
+                    return None
+
+            def save_all(_=None):
+                item_type = type_sel.value or "مخزون"
+                category_id = default_id(cat_sel)
+                base_unit_id = default_id(unit_sel)
+                created = 0
+                errors: list[str] = []
+                for row in bulk_grid.rows:
+                    name = str(row.get("name") or "").strip()
+                    if not name:
+                        continue
+                    try:
+                        ctx.items.create(
+                            name=name,
+                            category_id=category_id,
+                            item_type=item_type,
+                            purchase_price=row.get("purchase_price") or 0,
+                            selling_price=row.get("selling_price") or 0,
+                            quantity=row.get("quantity") or 0,
+                            base_unit_id=base_unit_id,
+                            barcode=str(row.get("barcode") or "").strip() or None,
+                        )
+                        created += 1
+                    except Exception as exc:
+                        errors.append(f"{name}: {exc}")
+                if created:
+                    notify(f"تمت إضافة {created} مادة")
+                if errors:
+                    # Keep the sheet open so the user can fix the offending
+                    # rows; a bad barcode is the common case.
+                    notify(errors[0] if len(errors) == 1 else f"تعذّر حفظ {len(errors)} مادة: {errors[0]}", kind="error")
+                    return
+                if not created:
+                    notify("لا توجد صفوف للحفظ", kind="error")
+                    return
+                close()
+                refresh()
+
+            sheet.content = ft.Container(
+                ft.Column(
+                    [
+                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        ft.Row(
+                            [
+                                _icon_bubble(ft.Icons.VIEW_LIST_OUTLINED, color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG),
+                                ft.Column(
+                                    [
+                                        ft.Text("إضافة سريعة (جدول)", size=17, weight=ft.FontWeight.BOLD),
+                                        ft.Text("أدخل عدة مواد في جدول ثم احفظها دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
+                                    ],
+                                    spacing=1, expand=True,
+                                ),
+                                header_close_button(close),
+                            ],
+                            spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Row([type_sel, cat_sel, unit_sel], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Row(
+                            [
+                                ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
+                                ft.Text("حدّد خلية ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY, expand=True),
+                            ],
+                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Container(bulk_grid, height=260, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
+                        ft.Row(
+                            [
+                                ft.Container(expand=True),
+                                ft.FilledButton("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                    ],
+                    spacing=12, tight=True, scroll=ft.ScrollMode.AUTO,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                ),
+                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
+                bgcolor=Colors.WHITE,
+                border_radius=ft.border_radius.only(top_left=28, top_right=28),
+                shadow=Shadow.LG,
+            )
+            page.open(sheet)
+
         def show_item_detail(item: dict):
             try:
                 data = ctx.items.get(int(item["id"])) or item
@@ -2513,6 +2671,7 @@ class ItemsCenter:
 
         def show_more_actions(_=None):
             entries = [
+                ("إضافة سريعة (جدول)", ft.Icons.VIEW_LIST_OUTLINED, open_bulk_add_sheet),
                 ("التصنيفات والوحدات", ft.Icons.TUNE, open_definitions_sheet),
                 ("طباعة الباركودات", ft.Icons.QR_CODE_2, open_bulk_barcode_sheet),
                 ("تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, open_bulk_edit_sheet),
@@ -2667,6 +2826,7 @@ class ItemsCenter:
         )
 
         mini_more = mini_action("المزيد", ft.Icons.MORE_HORIZ, Colors.TEXT_MUTED_DARK, open_more_from_fab)
+        mini_bulk_add = mini_action("إضافة سريعة", ft.Icons.VIEW_LIST_OUTLINED, Colors.TEXT_MUTED_DARK, open_bulk_add_sheet)
         mini_new_item = mini_action("مادة جديدة", ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY, open_new_item)
         main_fab = ft.Container(
             ft.Icon(ft.Icons.ADD_ROUNDED, color=Colors.WHITE, size=26),
@@ -2676,7 +2836,7 @@ class ItemsCenter:
             rotate=ft.Rotate(0), animate_rotation=160,
         )
         fab_column = ft.Column(
-            [mini_more, mini_new_item, main_fab],
+            [mini_more, mini_bulk_add, mini_new_item, main_fab],
             spacing=12,
             horizontal_alignment=ft.CrossAxisAlignment.END,
         )
@@ -2684,7 +2844,7 @@ class ItemsCenter:
 
         def render_fab() -> None:
             is_open = fab_state["open"]
-            for mini in (mini_more, mini_new_item):
+            for mini in (mini_more, mini_bulk_add, mini_new_item):
                 mini.visible = is_open
                 mini.opacity = 1 if is_open else 0
             main_fab.rotate = ft.Rotate(0.125 * 6.283) if is_open else ft.Rotate(0)  # 45°
@@ -2713,6 +2873,7 @@ class ItemsCenter:
         if self.on_context_actions is not None:
             self.on_context_actions([
                 RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: open_item_editor()),
+                RibbonAction("bulk_add", "إضافة سريعة (جدول)", ft.Icons.VIEW_LIST_OUTLINED, on_click=lambda _=None: open_bulk_add_sheet()),
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),

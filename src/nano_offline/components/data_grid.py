@@ -310,6 +310,50 @@ class DataGrid(ft.Column):
         self._render_body()
         self._safe_update(self._body)
 
+    @property
+    def rows(self) -> list[dict]:
+        """Snapshot of the current data (copies, so callers can't mutate it)."""
+        return [dict(r) for r in self._rows]
+
+    def add_row(self, row: dict | None = None) -> int:
+        """Append a (blank) row, move the cursor to its first editable cell
+        and arm the grid. Returns the new row's index.
+
+        Used by the bulk-entry sheets: the user keeps appending rows and
+        saves the whole batch at once, so a blank row must be ready for
+        typing without a click.
+        """
+        blank = {col.key: "" for col in self._columns}
+        if row:
+            # Only keep keys that map to real columns, so a stray field can
+            # never leak into the row that gets saved.
+            blank.update({k: v for k, v in row.items() if k in blank})
+        self._rows.append(blank)
+        index = len(self._rows) - 1
+        # Resize the model *before* selecting, otherwise select() clamps the
+        # cursor against the old (one-shorter) row count.
+        self.nav.set_rows(len(self._rows))
+        editable = self.nav.editable_cols
+        self.nav.select(index, editable[0] if editable else 0)
+        self._armed = True
+        self._prev_cell = None
+        self._render_body()
+        self._safe_update(self._body)
+        return index
+
+    def remove_row(self, index: int) -> None:
+        """Drop a row (e.g. a blank entry the user no longer wants)."""
+        if not (0 <= index < len(self._rows)):
+            return
+        del self._rows[index]
+        self.nav.editing = False
+        self._render_body()
+        self._safe_update(self._body)
+
+    def arm(self) -> None:
+        """Enable keyboard navigation without requiring an initial click."""
+        self._armed = True
+
     # ------------------------------------------------------------- selection
     def _on_cell_click(self, r: int, c: int) -> None:
         was_armed = self._armed
