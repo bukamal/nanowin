@@ -19,8 +19,12 @@ for token in [
 # as part of the 2026-08 refactor that split main.py's view closures into
 # Center classes; same functional guarantee, new location.
 for token in [
-    'ft.Text("إجراءات سريعة"',
-    'ft.Text("آخر الفواتير"',
+    # Dashboard redesign (2026-08): quick actions became a thin icon strip
+    # (no "إجراءات سريعة" header) and the smart surfaces merged into one
+    # "ذكاء الأعمال" card. Pin the section titles that remain.
+    '"ذكاء الأعمال"',
+    '"المبيعات والمشتريات"',
+    '"آخر الفواتير"',
     '"استمر بأداء عملك — لا توجد تنبيهات مهمة حاليًا."',
 ]:
     assert token in dashboard, token

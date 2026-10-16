@@ -1051,7 +1051,11 @@ class DashboardCenter:
         )
 
     def show_center(self) -> None:
-        self._set_header("لوحة التحكم", "نظرة عامة على أداء عملك")
+        # The welcome phrase now lives inside the dashboard's own top
+        # container (the shell header) instead of a separate pinned row, so
+        # the page body opens straight into the content.
+        greeting, date_line, _greeting_icon = self._greeting_and_date()
+        self._set_header(greeting, f"نظرة عامة على أداء عملك · {date_line}")
         summary = self.ctx.dashboard.summary()
         invoices = self.ctx.invoices.list_invoices(limit=100)
         recent = invoices[:5]
@@ -1156,8 +1160,6 @@ class DashboardCenter:
             recent_cards.append(ft.Container(ft.Text("لا توجد فواتير بعد", color=Colors.TEXT_SECONDARY, size=12), padding=12))
 
         alerts_controls: list[ft.Control] = [self._alert_card(a) for a in smart_alerts[:5]]
-        if not alerts_controls:
-            alerts_controls.append(ft.Container(ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=Colors.SUCCESS), ft.Text("لا توجد تنبيهات مهمة حاليًا", size=12)]), padding=12, bgcolor=Colors.SUCCESS_BG, border_radius=14))
 
         best_seller_rows: list[ft.Control] = [self._best_seller_row(r, i + 1) for i, r in enumerate(best_sellers) if float(r.get("revenue") or 0) > 0]
         if not best_seller_rows:
@@ -1168,47 +1170,14 @@ class DashboardCenter:
             restock_rows.append(ft.Text("لا توجد أصناف مرشحة لإعادة الطلب حاليًا", size=11, color=Colors.TEXT_FAINT))
 
         period_label = next(l for k, l, _d in _PERIOD_OPTIONS if k == self._period)
-        greeting, date_line, greeting_icon = self._greeting_and_date()
 
-        # Greeting/date + live currency rate stay pinned above the scroll --
-        # everything else (KPIs, quick actions, alerts, lists...) lives in
-        # the nested scrollable Column below so this row is always visible,
-        # instead of disappearing the moment the user scrolls past it.
-        pinned_header = ft.Container(
-            ft.ResponsiveRow(
-                [
-                    ft.Container(
-                        ft.Row(
-                            [
-                                ft.Container(
-                                    ft.Icon(greeting_icon, size=20, color=Colors.PRIMARY),
-                                    width=40, height=40, alignment=ft.alignment.center,
-                                    bgcolor=Colors.PRIMARY_BG, border_radius=13,
-                                ),
-                                ft.Column(
-                                    [
-                                        ft.Text(greeting, size=17, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
-                                        ft.Text(date_line, size=11, color=Colors.TEXT_FAINT),
-                                    ],
-                                    spacing=2, tight=True,
-                                ),
-                            ],
-                            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        col={"xs": 12, "md": 7},
-                    ),
-                    ft.Container(self._rate_chip(), col={"xs": 12, "md": 5}),
-                ],
-                spacing=10, run_spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.only(bottom=14),
-        )
-
-        # Owner Pulse (priority #1) — richer narrative card; falls back to
-        # the classic "decision of the day" if pulse generation fails.
+        # ---- Owner Pulse (hero) ------------------------------------------
+        # Priority #1: the richer narrative card, falling back to the classic
+        # "decision of the day" card when pulse generation is unavailable.
         pulse_card = ft.Container()
         if owner_pulse is not None:
             from nano_offline.components.owner_pulse_card import build_owner_pulse_card
+
             def _on_pulse_action(decision):
                 kind = getattr(decision, "kind", None)
                 target = getattr(decision, "action_target", None)
@@ -1222,9 +1191,11 @@ class DashboardCenter:
                     self.on_navigate(target)
                 elif self.on_open_notifications:
                     self.on_open_notifications()
+
             def _on_crisis():
                 if self.on_navigate:
                     self.on_navigate("admin")
+
             pulse_card = build_owner_pulse_card(
                 owner_pulse,
                 money_fmt=self.money,
@@ -1234,321 +1205,174 @@ class DashboardCenter:
         elif decision_today is not None:
             pulse_card = self._decision_of_day_card(decision_today)
 
-
-        # Quick command bar + voice mic (hook in core.voice_command)
-        from nano_offline.core import voice_command as voice_cmd
-
-        cmd_field = ft.TextField(
-            hint_text="أمر سريع أو اضغط الميكروفون: بيع سريع، جرد، كم باقي السكر…",
-            dense=True,
-            text_size=13,
-            border_radius=14,
-            filled=True,
-            expand=True,
-            on_submit=lambda e: None,
+        # Hero row: Owner Pulse beside the display-currency control, so the
+        # currency toggle stays reachable without a whole pinned top row.
+        hero_row = ft.ResponsiveRow(
+            [
+                ft.Container(pulse_card, col={"xs": 12, "md": 8}),
+                ft.Container(self._rate_chip(), col={"xs": 12, "md": 4}),
+            ],
+            spacing=12,
+            run_spacing=12,
         )
-        cmd_feedback = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
-        mic_icon = ft.Icon(ft.Icons.MIC_NONE_ROUNDED, size=20, color=Colors.WHITE)
-        mic_btn = ft.Container(
-            mic_icon,
-            width=42, height=42, alignment=ft.alignment.center,
-            bgcolor=Colors.PRIMARY, border_radius=12, ink=True,
-        )
-        listening = {"on": False, "session": False}
 
-        def run_command(_e=None, raw_override: str | None = None):
-            raw = (raw_override if raw_override is not None else (cmd_field.value or "")).strip()
-            if not raw:
-                return
-            try:
-                result = self.ctx.quick_commands.parse(raw)
-            except Exception as exc:
-                cmd_feedback.value = str(exc)
-                cmd_feedback.color = Colors.DANGER
-                self.page.update()
-                return
-            cmd_feedback.value = result.message or ""
-            cmd_feedback.color = Colors.SUCCESS if result.ok else Colors.WARNING
-            if result.action == "voice_stop":
-                listening["session"] = False
-                listening["on"] = False
-                voice_cmd.cancel()
-                _set_listening(False)
-                cmd_feedback.value = "انتهت الجلسة الصوتية"
-                cmd_feedback.color = Colors.TEXT_SECONDARY
-                self.page.update()
-                return
-            if result.action in ("pos_add", "pos_pay", "pos_clear"):
-                try:
-                    setattr(self.ctx, "_pending_voice_command", result)
-                except Exception:
-                    pass
-                if self.on_navigate:
-                    self.on_navigate("pos")
-            elif result.action == "navigate" and result.target and self.on_navigate:
-                self.on_navigate(result.target)
-            elif result.action == "crisis_on":
-                self.ctx.crisis_mode.activate(freeze_current_rate=True)
-                self._notify("تم تفعيل وضع الطوارئ", kind="warning", sound_kind="warning")
-                self.show_center()
-                return
-            elif result.action == "crisis_off":
-                self.ctx.crisis_mode.deactivate()
-                self._notify("تم إلغاء وضع الطوارئ", kind="success")
-                self.show_center()
-                return
-            elif result.action == "query":
-                self._notify(result.message or "", kind="info")
-            cmd_field.value = ""
-            self.page.update()
-
-        def _set_listening(active: bool):
-            listening["on"] = active
-            if active:
-                mic_icon.name = ft.Icons.MIC_ROUNDED
-                mic_btn.bgcolor = Colors.DANGER
-                cmd_feedback.value = "يستمع… تحدّث الآن"
-                cmd_feedback.color = Colors.DANGER
-            else:
-                mic_icon.name = ft.Icons.MIC_NONE_ROUNDED
-                mic_btn.bgcolor = Colors.PRIMARY
-            self.page.update()
-
-        def on_voice_final(text: str):
-            _set_listening(False)
-            text = (text or "").strip()
-            if not text:
-                cmd_feedback.value = "لم يُلتقط كلام واضح"
-                cmd_feedback.color = Colors.WARNING
-                self.page.update()
-                return
-            cmd_field.value = text
-            cmd_feedback.value = f"صوت: {text}"
-            cmd_feedback.color = Colors.PRIMARY
-            self.page.update()
-            run_command(raw_override=text)
-            # Continuous session: keep listening for the next command
-            if listening.get("session") and not listening.get("on"):
-                def _continue(_=None):
-                    if listening.get("session"):
-                        toggle_voice_listen_only()
-                try:
-                    self.page.run_task  # existence check
-                except Exception:
-                    pass
-                # brief pause so TTS/UI settles
-                import threading
-                threading.Timer(0.6, _continue).start()
-
-        def on_voice_error(msg: str):
-            _set_listening(False)
-            cmd_feedback.value = msg
-            cmd_feedback.color = Colors.WARNING
-            self.page.update()
-            # In session mode, retry listen after a soft error (no match / timeout)
-            soft = any(x in (msg or "") for x in ("لم يُلتقط", "لم يُفهم", "انتهى وقت", "NO_MATCH", "SPEECH_TIMEOUT", "timeout"))
-            if listening.get("session") and soft:
-                import threading
-                threading.Timer(0.8, toggle_voice_listen_only).start()
-
-        def on_voice_partial(text: str):
-            if text:
-                cmd_field.value = text
-                cmd_feedback.value = "يستمع…"
-                self.page.update()
-
-        def _start_listen():
-            _set_listening(True)
-            try:
-                # Auto-register the Android native STT engine. (The former
-                # WebSpeechVoiceEngine branch was removed: flet 0.28.3's Page
-                # has no run_javascript, so browser STT could never return
-                # results — see core/voice_command.py removal note.)
-                try:
-                    from nano_offline.core.voice_command import AndroidNativeVoiceEngine, get_engine
-                    nf = getattr(self, "native_files", None)
-                    if nf is not None and not isinstance(get_engine(), AndroidNativeVoiceEngine):
-                        voice_cmd.set_engine(AndroidNativeVoiceEngine(nf, page=self.page))
-                except Exception:
-                    pass
-                voice_cmd.listen_once(
-                    language="ar-SY",
-                    on_partial=on_voice_partial,
-                    on_final=on_voice_final,
-                    on_error=on_voice_error,
-                    timeout_sec=8.0,
-                )
-            except Exception as exc:
-                on_voice_error(str(exc))
-
-        def toggle_voice_listen_only():
-            if listening["on"]:
-                return
-            _start_listen()
-
-        def toggle_voice(_e=None):
-            # Long-press style session: first tap starts a continuous voice
-            # "call"; second tap (while listening or in session) ends it.
-            if listening["on"] or listening.get("session"):
-                listening["session"] = False
-                voice_cmd.cancel()
-                _set_listening(False)
-                cmd_feedback.value = "انتهت الجلسة الصوتية — قل «إيقاف» أو اضغط الميكروفون"
-                cmd_feedback.color = Colors.TEXT_SECONDARY
-                self.page.update()
-                return
-            listening["session"] = True
-            cmd_feedback.value = "جلسة صوتية نشطة — أعطِ أوامرك. قل «إيقاف» للإنهاء"
-            cmd_feedback.color = Colors.PRIMARY
-            _start_listen()
-
-        mic_btn.on_click = toggle_voice
-        cmd_field.on_submit = run_command
-        command_bar = ft.Container(
-            ft.Column(
+        # Quick actions as one thin strip -- was a tall standalone card that
+        # only repeated the same six icons with a header.
+        quick_actions = ft.Container(
+            ft.Row(
                 [
-                    ft.Row(
-                        [
-                            cmd_field,
-                            mic_btn,
-                            ft.Container(
-                                ft.Icon(ft.Icons.SEND_ROUNDED, size=20, color=Colors.WHITE),
-                                width=42, height=42, alignment=ft.alignment.center,
-                                bgcolor=Colors.PRIMARY, border_radius=12,
-                                on_click=run_command, ink=True,
-                            ),
-                        ],
-                        spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    cmd_feedback,
+                    self._action("بيع", ft.Icons.SHOPPING_CART_CHECKOUT, lambda _: self.on_open_sale(), primary=True),
+                    self._action("شراء", ft.Icons.ADD_SHOPPING_CART, lambda _: self.on_open_purchase()),
+                    self._action("الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda _: self.on_navigate("invoices")),
+                    self._action("قائمة شراء", ft.Icons.SHOPPING_BAG_OUTLINED, lambda _: self._open_purchase_list()),
+                    self._action("إغلاق يوم", ft.Icons.LOCK_CLOCK_OUTLINED, lambda _: self._open_day_close()),
+                    self._action("المواد", ft.Icons.INVENTORY_2_OUTLINED, lambda _: self.on_navigate("items")),
                 ],
-                spacing=4,
+                alignment=ft.MainAxisAlignment.SPACE_AROUND,
             ),
-            padding=ft.padding.only(bottom=8),
+            padding=ft.padding.symmetric(horizontal=15, vertical=6),
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=20,
+            shadow=Shadow.SM,
+        )
+
+        # ---- card builder -------------------------------------------------
+        card_style = dict(
+            padding=16,
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=20,
+            shadow=Shadow.SM,
+        )
+
+        def _titled(
+            title: str,
+            controls: list[ft.Control],
+            *,
+            trailing: ft.Control | None = None,
+            spacing: int = 10,
+        ) -> ft.Container:
+            header: list[ft.Control] = [ft.Text(title, size=15, weight=ft.FontWeight.BOLD, expand=True)]
+            if trailing is not None:
+                header.append(trailing)
+            return ft.Container(
+                ft.Column(
+                    [ft.Row(header, vertical_alignment=ft.CrossAxisAlignment.CENTER), *controls],
+                    spacing=spacing,
+                ),
+                **card_style,
+            )
+
+        # Merged "ذكاء الأعمال": the single headline insight + smart alerts +
+        # follow-up decisions. These were three near-duplicate surfaces (the
+        # insight already re-derived the most urgent alert), so they now read
+        # as one card instead of repeating across the page.
+        intelligence_items: list[ft.Control] = [
+            self._smart_insight(
+                alerts=smart_alerts,
+                best_sellers=best_sellers,
+                profit_change=profit_change,
+                net_profit=current_stmt["net_profit"],
+            )
+        ]
+        decision_items = self._decisions_list(decisions) if (decisions and len(decisions) > 1) else []
+        intelligence_items.extend(alerts_controls)
+        intelligence_items.extend(decision_items)
+        if not alerts_controls and not decision_items:
+            intelligence_items.append(
+                ft.Text("لا إشارات تحتاج انتباهك الآن — استمر بأدائك.", size=11, color=Colors.TEXT_FAINT)
+            )
+        intelligence_card = _titled("ذكاء الأعمال", intelligence_items)
+
+        period_card = _titled(
+            "أداء الفترة",
+            [
+                metric_row([
+                    self._period_stat("المبيعات", current_stmt["sales"], sales_change),
+                    self._period_stat("المشتريات", current_stmt["purchases"], purchases_change, invert=True),
+                    self._period_stat("صافي الربح", current_stmt["net_profit"], profit_change),
+                ]),
+                ft.Text("اتجاه المبيعات آخر ١٤ يومًا", size=10, color=Colors.TEXT_FAINT),
+                self._sparkline(sparkline),
+            ],
+            trailing=self._period_selector(),
+            spacing=12,
+        )
+
+        flow_card = _titled(
+            "المبيعات والمشتريات",
+            [
+                flow_row("المبيعات", sales, Colors.PRIMARY),
+                flow_row("المشتريات", purchases, Colors.PURPLE_LIGHT),
+                ft.Row([
+                    ft.Text("قيمة المخزون", size=11, color=Colors.TEXT_SECONDARY, expand=True),
+                    ft.Text(self.money(summary["inventory_value"]), weight=ft.FontWeight.BOLD, size=12),
+                ]),
+            ],
+            trailing=self._flow_donut(sales, purchases),
+            spacing=13,
+        )
+
+        best_seller_card = _titled(
+            "أفضل الأصناف مبيعًا",
+            best_seller_rows,
+            trailing=ft.Text(period_label, size=10, color=Colors.TEXT_FAINT),
+            spacing=9,
+        )
+
+        restock_card = _titled(
+            "مرشحة لإعادة الطلب",
+            restock_rows,
+            trailing=ft.Icon(ft.Icons.TIPS_AND_UPDATES_OUTLINED, size=16, color=Colors.TEXT_FAINT),
+            spacing=9,
+        )
+
+        recent_card = _titled(
+            "آخر الفواتير",
+            recent_cards,
+            trailing=ft.TextButton("عرض الكل", on_click=lambda _: self.on_navigate("invoices")),
+            spacing=8,
+        )
+
+        # ---- three-column grid -------------------------------------------
+        # Three independent card stacks side by side. Each column is its own
+        # Column, so uneven card heights never leave the gaps a plain
+        # ResponsiveRow would -- and on a normal desktop the whole dashboard
+        # fits without scrolling.
+        col_one = ft.Column([period_card, flow_card], spacing=12, expand=True)
+        col_two = ft.Column([intelligence_card, best_seller_card], spacing=12, expand=True)
+
+        col_three_children: list[ft.Control] = []
+        if weekly:
+            col_three_children.append(self._weekly_owner_card(weekly))
+        col_three_children.extend([restock_card, recent_card])
+        col_three = ft.Column(col_three_children, spacing=12, expand=True)
+
+        grid = ft.Row(
+            [col_one, col_two, col_three],
+            spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.START,
         )
 
         scrollable_body = ft.Column(
             [
-                pulse_card,
-                command_bar,
-                ft.Column(self._decisions_list(decisions), spacing=6) if decisions and len(decisions) > 1 else ft.Container(),
-                self._weekly_owner_card(weekly) if weekly else ft.Container(),
-                self._smart_insight(alerts=smart_alerts, best_sellers=best_sellers, profit_change=profit_change, net_profit=current_stmt["net_profit"]),
+                hero_row,
                 metric_row([
                     self._metric("صافي الربح", self.money(summary["net_profit"]), icon=ft.Icons.QUERY_STATS, accent=Colors.SUCCESS, note="بعد تكلفة المبيعات والمصروفات"),
                     self._metric("رصيد الصندوق", self.money(summary["cash"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY, note="الرصيد النقدي الحالي"),
                     self._metric("ذمم العملاء", self.money(summary["receivables"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING, note="مبالغ مستحقة التحصيل"),
                     self._metric("ذمم الموردين", self.money(summary["payables"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER, note="مبالغ مستحقة الدفع"),
                 ], spacing=10),
-                ft.Container(
-                    ft.Column(
-                        [
-                            ft.Row([ft.Text("إجراءات سريعة", size=16, weight=ft.FontWeight.BOLD, expand=True), ft.Text("الأكثر استخدامًا", size=10, color=Colors.TEXT_FAINT)]),
-                            ft.Row(
-                                [
-                                    self._action("بيع", ft.Icons.SHOPPING_CART_CHECKOUT, lambda _: self.on_open_sale(), primary=True),
-                                    self._action("شراء", ft.Icons.ADD_SHOPPING_CART, lambda _: self.on_open_purchase()),
-                                    self._action("الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda _: self.on_navigate("invoices")),
-                                    self._action("قائمة شراء", ft.Icons.SHOPPING_BAG_OUTLINED, lambda _: self._open_purchase_list()),
-                                    self._action("إغلاق يوم", ft.Icons.LOCK_CLOCK_OUTLINED, lambda _: self._open_day_close()),
-                                    self._action("المواد", ft.Icons.INVENTORY_2_OUTLINED, lambda _: self.on_navigate("items")),
-                                ],
-                                alignment=ft.MainAxisAlignment.SPACE_AROUND,
-                            ),
-                        ], spacing=12,
-                    ),
-                    padding=15, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                ),
-                ft.Container(
-                    ft.Column(
-                        [
-                            ft.Row([ft.Text("أداء الفترة", size=16, weight=ft.FontWeight.BOLD, expand=True), self._period_selector()]),
-                            metric_row([
-                                self._period_stat("المبيعات", current_stmt["sales"], sales_change),
-                                self._period_stat("المشتريات", current_stmt["purchases"], purchases_change, invert=True),
-                                self._period_stat("صافي الربح", current_stmt["net_profit"], profit_change),
-                            ]),
-                            ft.Text("اتجاه المبيعات آخر ١٤ يومًا", size=10, color=Colors.TEXT_FAINT),
-                            self._sparkline(sparkline),
-                        ], spacing=12,
-                    ),
-                    padding=16, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                ),
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(
-                            ft.Container(
-                                ft.Column(
-                                    [
-                                        ft.Row(
-                                            [
-                                                ft.Text("المبيعات والمشتريات", size=16, weight=ft.FontWeight.BOLD, expand=True),
-                                                self._flow_donut(sales, purchases),
-                                            ],
-                                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                        ),
-                                        flow_row("المبيعات", sales, Colors.PRIMARY),
-                                        flow_row("المشتريات", purchases, Colors.PURPLE_LIGHT),
-                                        ft.Row([ft.Text("قيمة المخزون", size=11, color=Colors.TEXT_SECONDARY, expand=True), ft.Text(self.money(summary["inventory_value"]), weight=ft.FontWeight.BOLD, size=12)]),
-                                    ], spacing=13,
-                                ),
-                                padding=16, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                            ),
-                            col={"xs": 12, "md": 6},
-                        ),
-                        ft.Container(
-                            ft.Container(
-                                ft.Column([ft.Text("تنبيهات ذكية", size=16, weight=ft.FontWeight.BOLD), *alerts_controls], spacing=10),
-                                padding=16, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                            ),
-                            col={"xs": 12, "md": 6},
-                        ),
-                    ], spacing=10, run_spacing=10,
-                ),
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(
-                            ft.Container(
-                                ft.Column(
-                                    [
-                                        ft.Row([ft.Text("أفضل الأصناف مبيعًا", size=15, weight=ft.FontWeight.BOLD, expand=True), ft.Text(period_label, size=10, color=Colors.TEXT_FAINT)]),
-                                        *best_seller_rows,
-                                    ], spacing=9,
-                                ),
-                                padding=16, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                            ),
-                            col={"xs": 12, "md": 6},
-                        ),
-                        ft.Container(
-                            ft.Container(
-                                ft.Column(
-                                    [
-                                        ft.Row([ft.Text("مرشحة لإعادة الطلب", size=15, weight=ft.FontWeight.BOLD, expand=True), ft.Icon(ft.Icons.TIPS_AND_UPDATES_OUTLINED, size=16, color=Colors.TEXT_FAINT)]),
-                                        *restock_rows,
-                                    ], spacing=9,
-                                ),
-                                padding=16, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                            ),
-                            col={"xs": 12, "md": 6},
-                        ),
-                    ], spacing=10, run_spacing=10,
-                ),
-                ft.Container(
-                    ft.Column([ft.Row([ft.Text("آخر الفواتير", size=16, weight=ft.FontWeight.BOLD, expand=True), ft.TextButton("عرض الكل", on_click=lambda _: self.on_navigate("invoices"))]), *recent_cards], spacing=8),
-                    padding=14, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=20, shadow=Shadow.SM,
-                ),
+                quick_actions,
+                grid,
             ],
             spacing=14,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
 
-        self.content.content = ft.Column(
-            [pinned_header, scrollable_body],
-            spacing=0,
-            expand=True,
-        )
+        self.content.content = scrollable_body
         self.page.update()
 
 
