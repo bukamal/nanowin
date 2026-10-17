@@ -1,10 +1,17 @@
 """Editable, keyboard-driven data grid for the desktop layout.
 
-Renders like a spreadsheet: a sticky header row, zebra-striped body rows,
-a highlighted active cell, and inline editing opened with Enter (or a
-second click) on an editable column. Navigation semantics live in the
-framework-free :mod:`nano_offline.components.grid_model`; this module is
-only the Flet rendering + key wiring around it.
+Renders like a modern spreadsheet: a rounded, clipped card holding a
+pinned, tinted header row, subtly zebra-striped body rows, a hover
+highlight, a soft-ringed active cell, and inline editing opened with
+Enter (or a second click) on an editable column. Navigation semantics
+live in the framework-free :mod:`nano_offline.components.grid_model`;
+this module is only the Flet rendering + key wiring around it.
+
+Two presentation switches exist for callers: ``boxed`` (draw the table's
+own rounded border + shadow -- used by the full-screen Materials grid, and
+left off where a caller already supplies its own frame, e.g. the bulk
+sheets) and ``center_cells`` (centre every header and cell regardless of a
+column's own ``align``).
 
 Why the "selection highlight" model instead of making every cell a
 ``TextField``: a grid of live text inputs needs focus juggling on every
@@ -20,7 +27,7 @@ from typing import Callable
 
 import flet as ft
 
-from nano_offline.core.theme import Colors, Radius
+from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.components.grid_model import GridColumn, GridNavigator
 from nano_offline.components.status_pill import status_pill
 
@@ -75,10 +82,12 @@ class DataGrid(ft.Column):
         parser: Callable[[GridColumn, str], object] | None = None,
         activate_icon: str = ft.Icons.OPEN_IN_NEW_ROUNDED,
         activate_tooltip: str = "فتح",
-        row_height: int = 46,
-        header_height: int = 40,
+        row_height: int = 48,
+        header_height: int = 44,
         empty_text: str = "لا توجد بيانات",
         striped: bool = True,
+        boxed: bool = False,
+        center_cells: bool = False,
     ):
         self._columns = list(columns)
         self._rows: list[dict] = [dict(r) for r in (rows or [])]
@@ -94,6 +103,16 @@ class DataGrid(ft.Column):
         self._header_height = header_height
         self._empty_text = empty_text
         self._striped = bool(striped)
+        # ``boxed`` draws the rounded card + subtle shadow around the whole
+        # table (used by the full-screen Materials grid). Callers that mount
+        # the grid inside their own bordered container (the bulk-entry sheets)
+        # leave it off so the two borders never double up.
+        self._boxed = bool(boxed)
+        # ``center_cells`` centers every column's header *and* cell content,
+        # overriding each column's own ``align`` -- the materials table reads
+        # far cleaner with a symmetric, evenly-centred grid than with prices
+        # pinned to one edge and names to the other.
+        self._center_cells = bool(center_cells)
         # Remembers each row's resting background so hover can restore it
         # (with zebra striping there is no single "row colour" anymore).
         self._row_bg: list[str] = []
@@ -111,18 +130,28 @@ class DataGrid(ft.Column):
         self._armed = False
         self._body = ft.Column(spacing=0)
 
-        super().__init__(
-            controls=[
-                ft.Container(
+        # Header stays pinned; only the body scrolls. Both live inside one
+        # rounded, clipped card so the tinted header's top corners and the
+        # last row's bottom corners follow the table's radius instead of
+        # squaring off against it.
+        card = ft.Container(
+            ft.Column(
+                [
                     self._build_header(),
-                    bgcolor=Colors.BACKGROUND_ALT,
-                    border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER_STRONG)),
-                ),
-                ft.Column([self._body], scroll=ft.ScrollMode.AUTO, expand=True),
-            ],
-            spacing=0,
+                    ft.Column([self._body], scroll=ft.ScrollMode.AUTO, expand=True),
+                ],
+                spacing=0,
+                expand=True,
+            ),
+            bgcolor=Colors.WHITE,
+            border_radius=Radius.MD,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
             expand=True,
         )
+        if self._boxed:
+            card.border = ft.border.all(1, Colors.BORDER)
+            card.shadow = Shadow.SM
+        super().__init__(controls=[card], spacing=0, expand=True)
         self._render_body()
         if page is not None:
             self.attach()
@@ -198,32 +227,50 @@ class DataGrid(ft.Column):
 
     # ------------------------------------------------------------------ build
     def _col_align(self, col: GridColumn):
+        if self._center_cells:
+            return ft.alignment.center
         return {
             "start": ft.alignment.center_right,  # leading edge in RTL
             "center": ft.alignment.center,
             "end": ft.alignment.center_left,
         }.get(col.align, ft.alignment.center_right)
 
+    def _edit_align(self, col: GridColumn) -> ft.TextAlign:
+        """Text alignment for the inline editor, kept in step with the cell
+        it replaces so the value never jumps sideways when the box opens."""
+        if self._center_cells or col.align == "center":
+            return ft.TextAlign.CENTER
+        return ft.TextAlign.LEFT if col.align == "end" else ft.TextAlign.RIGHT
+
     def _cell_kwargs(self, col: GridColumn) -> dict:
         if col.width is None:
             return {"expand": True}
         return {"width": col.width}
 
-    def _build_header(self) -> ft.Row:
+    def _build_header(self) -> ft.Container:
         cells: list[ft.Control] = []
         for col in self._columns:
             cells.append(
                 ft.Container(
-                    ft.Text(col.label, size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    ft.Text(
+                        col.label,
+                        size=12,
+                        weight=ft.FontWeight.W_700,
+                        color=Colors.TEXT_MUTED_DARK,
+                    ),
                     height=self._header_height,
                     alignment=self._col_align(col),
-                    padding=ft.padding.symmetric(horizontal=10),
+                    padding=ft.padding.symmetric(horizontal=12),
                     **self._cell_kwargs(col),
                 )
             )
         if self._on_row_activate is not None:
             cells.append(ft.Container(width=48, height=self._header_height))
-        return ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        return ft.Container(
+            ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER_STRONG)),
+        )
 
     def _display(self, col: GridColumn, value, row: dict) -> ft.Control:
         if self._formatter is not None:
@@ -232,11 +279,17 @@ class DataGrid(ft.Column):
                 return out
             if isinstance(out, tuple) and len(out) == 3:
                 text, fg, bg = out
-                return status_pill(str(text), fg, bg)
+                return status_pill(str(text), fg, bg, size=10)
             if out is None:
-                return ft.Text(_default_text(col, value), size=12, color=Colors.TEXT_PRIMARY)
-            return ft.Text(str(out), size=12, color=Colors.TEXT_PRIMARY)
-        return ft.Text(_default_text(col, value), size=12, color=Colors.TEXT_PRIMARY)
+                return self._text(col, _default_text(col, value))
+            return self._text(col, str(out))
+        return self._text(col, _default_text(col, value))
+
+    def _text(self, col: GridColumn, value) -> ft.Text:
+        """Cell text; money/number cells get a medium weight so a column of
+        figures scans as a tidy block instead of a wall of thin digits."""
+        weight = ft.FontWeight.W_600 if col.kind in ("money", "number") else None
+        return ft.Text(str(value), size=12.5, color=Colors.TEXT_PRIMARY, weight=weight)
 
     def _make_cell(self, r: int, c: int, col: GridColumn, row: dict) -> ft.Container:
         active = (r, c) == self.nav.cell
@@ -244,9 +297,10 @@ class DataGrid(ft.Column):
             self._display(col, row.get(col.key), row),
             height=self._row_height,
             alignment=self._col_align(col),
-            padding=ft.padding.symmetric(horizontal=10),
+            padding=ft.padding.symmetric(horizontal=12),
             bgcolor=Colors.PRIMARY_BG if active else None,
             border=ft.border.all(2, Colors.PRIMARY) if active else None,
+            border_radius=Radius.SM,
             on_click=lambda _, rr=r, cc=c: self._on_cell_click(rr, cc),
             **self._cell_kwargs(col),
         )
@@ -297,7 +351,7 @@ class DataGrid(ft.Column):
                     ft.Text(text, size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
                     height=self._header_height,
                     alignment=self._col_align(col),
-                    padding=ft.padding.symmetric(horizontal=10),
+                    padding=ft.padding.symmetric(horizontal=12),
                     **self._cell_kwargs(col),
                 )
             )
@@ -322,13 +376,20 @@ class DataGrid(ft.Column):
                 ft.Container(
                     ft.Column(
                         [
-                            ft.Icon(ft.Icons.TABLE_ROWS_OUTLINED, size=34, color=Colors.TEXT_FAINT),
+                            ft.Container(
+                                ft.Icon(ft.Icons.TABLE_ROWS_OUTLINED, size=28, color=Colors.PRIMARY),
+                                width=62,
+                                height=62,
+                                bgcolor=Colors.PRIMARY_BG,
+                                border_radius=31,
+                                alignment=ft.alignment.center,
+                            ),
                             ft.Text(self._empty_text, size=13, color=Colors.TEXT_SECONDARY),
                         ],
-                        spacing=8,
+                        spacing=12,
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    padding=ft.padding.symmetric(vertical=48),
+                    padding=ft.padding.symmetric(vertical=52, horizontal=20),
                     alignment=ft.alignment.center,
                 )
             )
@@ -451,7 +512,7 @@ class DataGrid(ft.Column):
         if self.nav.row == r:
             return
         box = self._row_boxes[r]
-        box.bgcolor = Colors.BACKGROUND_ALT if e.data == "true" else self._row_bg_for(r)
+        box.bgcolor = Colors.PRIMARY_BG if e.data == "true" else self._row_bg_for(r)
         self._safe_update(box)
 
     def _paint_selection(self) -> None:
@@ -492,7 +553,7 @@ class DataGrid(ft.Column):
             border=ft.border.all(2, Colors.PRIMARY),
             bgcolor=Colors.WHITE,
             content_padding=ft.padding.symmetric(horizontal=8, vertical=6),
-            text_align=ft.TextAlign.RIGHT if col.align != "end" else ft.TextAlign.LEFT,
+            text_align=self._edit_align(col),
             keyboard_type=ft.KeyboardType.NUMBER if col.kind in ("number", "money") else ft.KeyboardType.TEXT,
             on_submit=lambda _: self._commit_edit(),
             on_blur=lambda _: self._commit_edit(),

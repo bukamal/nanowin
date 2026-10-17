@@ -308,6 +308,8 @@ class ItemsCenter:
             on_cell_commit=_grid_commit,
             on_row_activate=lambda row: show_item_detail(row),
             formatter=_grid_formatter,
+            boxed=True,
+            center_cells=True,
         )
         grid_more = ft.Container(visible=False)
 
