@@ -36,8 +36,17 @@ _FEATURES: dict[str, dict[str, str]] = {
     # Same plugin packages serve both platforms, no work needed.
     "file_picker": {"android": "native", "windows": "native"},
     "file_share": {"android": "native", "windows": "native"},
-    "print_html": {"android": "native", "windows": "native"},
-    "create_pdf": {"android": "native", "windows": "native"},
+    # print_html / create_pdf are only "native" where the `printing` plugin
+    # actually implements `convertHtml`: Android (PrintingHandler.java), iOS and
+    # macOS (PrintingPlugin.swift). Its Windows and Linux plugins never did --
+    # their method handler only knows printPdf/sharePdf/listPrinters/rasterPdf/
+    # printingInfo, so a convertHtml call there is answered with
+    # MissingPluginException on net.nfet_printing. Desktop therefore falls back
+    # to writing the document HTML and opening it in the default browser, which
+    # renders it with the same engine and keeps Arabic RTL + the rich CSS layout
+    # intact (see native_files.dart's nativeHtmlToPdfSupported).
+    "print_html": {"android": "native", "windows": "fallback:browser-print"},
+    "create_pdf": {"android": "native", "windows": "fallback:browser-print"},
     "notifications": {"android": "native", "windows": "native"},
     "sound_pool": {"android": "native", "windows": "native"},
     # No phone camera on a desktop: pick an image file instead. The wedge

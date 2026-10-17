@@ -27,6 +27,36 @@ import 'package:workmanager/workmanager.dart';
 
 import 'sound_pool.dart';
 
+// -- HTML -> PDF capability --------------------------------------------------
+//
+// `Printing.convertHtml` is the only way this bridge turns the documents
+// built by Python's DocumentService (invoice/receipt/statement HTML, with CSS
+// grid + flex, rounded cards, SVG barcodes and RTL Arabic) into PDF bytes.
+//
+// The `printing` plugin only implements that conversion natively on Android
+// (android/.../PrintingHandler.java, `case "convertHtml"`), iOS and macOS
+// (PrintingPlugin.swift). Its Windows and Linux plugins never implemented it:
+// their method-call handler only knows printPdf / sharePdf / listPrinters /
+// rasterPdf / printingInfo, and every other name falls through to
+// result->NotImplemented(). Calling convertHtml there is answered with
+//     MissingPluginException(No implementation found for method convertHtml
+//     on channel net.nfet_printing)
+// which is what used to surface on the Windows desktop build whenever the
+// user printed or shared a document as PDF.
+//
+// PrintingInfo.canConvertHtml is deliberately NOT used to detect this: neither
+// the Windows nor the Android plugin puts a "canConvertHtml" key in its
+// printingInfo map, so PrintingInfo.fromMap's `?? false` makes it read back
+// false on Android too -- i.e. it would wrongly disable the one platform where
+// native conversion does work. The platform list below is therefore written
+// out explicitly, mirroring the three native handlers that exist.
+///
+/// True on the platforms whose `printing` plugin actually implements
+/// `convertHtml`; false on Windows/Linux, which need the browser fallback
+/// implemented in `_FletNativeFilesControlState._openInBrowser`.
+bool get nativeHtmlToPdfSupported =>
+    Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+
 // -- Closed-app smart notifications ----------------------------------------
 //
 // Everything below this comment (down to FletNativeFilesControl) supports
@@ -488,6 +518,46 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
     return out;
   }
 
+  /// Write the document to a temp `.html` file. The markup Python sends is
+  /// self-contained -- inline `<style>`, `<meta charset="utf-8">`, and the
+  /// company logo as a base64 data URI -- so the file renders identically no
+  /// matter which directory or browser picks it up, with no network needed.
+  Future<File> _writeHtmlTempFile(String html, String requestedName) async {
+    if (html.isEmpty) {
+      throw Exception('محتوى التقرير فارغ');
+    }
+    var name = requestedName.trim().isEmpty ? 'nano-report' : requestedName.trim();
+    if (name.toLowerCase().endsWith('.pdf')) {
+      name = name.substring(0, name.length - 4);
+    }
+    if (!name.toLowerCase().endsWith('.html')) name = '$name.html';
+    name = name.replaceAll(RegExp(r'[^A-Za-z0-9._\-\u0600-\u06FF]'), '_');
+    final dir = await getTemporaryDirectory();
+    final out = File('${dir.path}/nano_doc_${DateTime.now().millisecondsSinceEpoch}_$name');
+    await out.writeAsString(html, flush: true, encoding: utf8);
+    return out;
+  }
+
+  /// Hand a file to the OS default handler (the user's browser).
+  ///
+  /// This is the Windows/Linux stand-in for native HTML->PDF: the same engine
+  /// that `convertHtml` uses on Android (Chromium/WebView) renders the page on
+  /// desktop, so the Arabic RTL layout, the CSS grid metric cards and the SVG
+  /// barcodes all come out looking exactly like the mobile print -- and the
+  /// user finishes the job with the browser's own Print / "Save as PDF".
+  Future<void> _openInBrowser(File file) async {
+    final path = file.path;
+    if (Platform.isWindows) {
+      // `start` treats a leading quoted argument as the window title, so the
+      // empty string must stay in place before the real target.
+      await Process.start('cmd.exe', ['/c', 'start', '', path]);
+    } else if (Platform.isMacOS) {
+      await Process.start('open', [path]);
+    } else {
+      await Process.start('xdg-open', [path]);
+    }
+  }
+
   Future<String?> handleMethod(String method, Map<String, String> args) async {
     try {
       switch (method) {
@@ -524,14 +594,28 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
         case 'print_html':
           final html = args['html'] ?? '';
           if (html.isEmpty) return 'error:محتوى التقرير فارغ';
+          final docName = (args['name'] ?? 'nano-report').isEmpty ? 'nano-report' : args['name']!;
+          if (!nativeHtmlToPdfSupported) {
+            // Windows/Linux: hand the document to the browser instead of
+            // asking a platform that never implemented convertHtml.
+            await _openInBrowser(await _writeHtmlTempFile(html, docName));
+            return 'ok';
+          }
           await Printing.layoutPdf(
-            name: (args['name'] ?? 'nano-report').isEmpty ? 'nano-report' : args['name']!,
+            name: docName,
             onLayout: (PdfPageFormat format) => Printing.convertHtml(format: format, html: html),
           );
           return 'ok';
 
         case 'create_pdf':
-          final file = await createPdfFile(args['html'] ?? '', args['filename'] ?? 'nano-report.pdf');
+          final pdfHtml = args['html'] ?? '';
+          if (!nativeHtmlToPdfSupported) {
+            await _openInBrowser(await _writeHtmlTempFile(pdfHtml, args['filename'] ?? 'nano-report.pdf'));
+            // Sentinel, not a path: there is no PDF to hand to share_file.
+            // Python maps it to "already delivered to the browser".
+            return 'browser';
+          }
+          final file = await createPdfFile(pdfHtml, args['filename'] ?? 'nano-report.pdf');
           return file.path;
 
         case 'capture_receipt':

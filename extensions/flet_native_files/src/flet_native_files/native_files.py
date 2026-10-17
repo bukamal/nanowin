@@ -20,6 +20,15 @@ _INTERACTIVE_TIMEOUT = 600.0  # 10 minutes -- effectively "wait for the user"
 # rest of app startup for 10 minutes like a stuck file dialog might.
 _QUICK_TIMEOUT = 15.0
 
+#: Sentinel returned by ``create_pdf`` on platforms whose ``printing`` plugin
+#: never implemented ``convertHtml`` (Windows/Linux). Those builds cannot turn
+#: the document HTML into PDF bytes at all, so the bridge instead writes the
+#: document to a temp `.html` file and opens it in the default browser, where
+#: the user prints it or uses the browser's "Save as PDF". ``share_pdf``
+#: recognises this and reports success without trying to share a path that
+#: does not exist.
+PDF_OPENED_IN_BROWSER = "browser"
+
 
 class NativeFiles(Control):
     """Non-visual bridge for Android/iOS file picker, share sheet and printing.
@@ -89,6 +98,13 @@ class NativeFiles(Control):
         return raw == "ok"
 
     async def create_pdf(self, html: str, *, filename: str = "nano-report.pdf") -> str:
+        """Render ``html`` to a real PDF and return its path.
+
+        On Windows/Linux the ``printing`` plugin has no native HTML->PDF
+        conversion, so the bridge opens the document in the default browser
+        instead and this returns :data:`PDF_OPENED_IN_BROWSER` (never a path
+        in that case).
+        """
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
         raw = await self.invoke_method_async("create_pdf", {"html": html, "filename": filename},
@@ -96,6 +112,8 @@ class NativeFiles(Control):
         )
         if str(raw).startswith("error:"):
             raise RuntimeError(str(raw)[6:])
+        if str(raw).strip() == PDF_OPENED_IN_BROWSER:
+            return PDF_OPENED_IN_BROWSER
         path = str(raw or "").strip()
         if not path:
             raise RuntimeError("تعذر إنشاء ملف PDF")
@@ -346,8 +364,16 @@ class NativeFiles(Control):
         """Create a real PDF file, then share it through share_file/shareXFiles.
 
         Backups and PDFs therefore use the same Android share-sheet code path.
+
+        On Windows/Linux there is no native HTML->PDF conversion, so the
+        document is opened in the default browser instead (see
+        :data:`PDF_OPENED_IN_BROWSER`). That still counts as delivered -- the
+        document is on screen for the user to print/save -- so this returns
+        True rather than letting the caller report a failed/dismissed share.
         """
         path = await self.create_pdf(html, filename=filename)
+        if path == PDF_OPENED_IN_BROWSER:
+            return True
         return await self.share_file(
             path,
             mime_type="application/pdf",
