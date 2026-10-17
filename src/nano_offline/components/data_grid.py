@@ -88,6 +88,11 @@ class DataGrid(ft.Column):
         striped: bool = True,
         boxed: bool = False,
         center_cells: bool = False,
+        on_sort: Callable[[str | None, str | None], None] | None = None,
+        selectable: bool = False,
+        on_selection_change: Callable[[list[dict]], None] | None = None,
+        on_row_menu: Callable[[dict], list] | None = None,
+        viewport_height: int | None = None,
     ):
         self._columns = list(columns)
         self._rows: list[dict] = [dict(r) for r in (rows or [])]
@@ -103,6 +108,16 @@ class DataGrid(ft.Column):
         self._header_height = header_height
         self._empty_text = empty_text
         self._striped = bool(striped)
+        self._on_sort = on_sort
+        self._selectable = bool(selectable)
+        self._on_selection_change = on_selection_change
+        self._on_row_menu = on_row_menu
+        self._sort_key: str | None = None
+        self._sort_dir: str | None = None
+        self._checked: set[int] = set()
+        self._check_buttons: list[ft.IconButton] = []
+        self._select_all_button: ft.IconButton | None = None
+        self._header: ft.Container | None = None
         # ``boxed`` draws the rounded card + subtle shadow around the whole
         # table (used by the full-screen Materials grid). Callers that mount
         # the grid inside their own bordered container (the bulk-entry sheets)
@@ -148,6 +163,13 @@ class DataGrid(ft.Column):
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             expand=True,
         )
+        if viewport_height:
+            # A bounded height turns the inner body scroll into a real
+            # viewport, which keeps the header pinned even when the grid
+            # sits inside an outer page-level scroll (e.g. the invoice
+            # list). Without it, `expand` already bounds the grid.
+            card.height = int(viewport_height)
+            card.expand = False
         if self._boxed:
             card.border = ft.border.all(1, Colors.BORDER)
             card.shadow = Shadow.SM
@@ -247,30 +269,111 @@ class DataGrid(ft.Column):
             return {"expand": True}
         return {"width": col.width}
 
-    def _build_header(self) -> ft.Container:
+    def _trailing_width(self) -> int:
+        return (48 if self._on_row_activate is not None else 0) + (40 if self._on_row_menu is not None else 0)
+
+    def _header_alignment(self, col: GridColumn):
+        if self._center_cells or col.align == "center":
+            return ft.MainAxisAlignment.CENTER
+        return ft.MainAxisAlignment.END if col.align == "end" else ft.MainAxisAlignment.START
+
+    def _header_cell(self, col: GridColumn) -> ft.Control:
+        label = ft.Text(
+            col.label,
+            size=12,
+            weight=ft.FontWeight.W_700,
+            color=Colors.TEXT_MUTED_DARK,
+        )
+        sortable = self._on_sort is not None and col.sortable
+        if not sortable:
+            inner: ft.Control = label
+        else:
+            arrow = None
+            if self._sort_key == col.key:
+                arrow = ft.Icon(
+                    ft.Icons.ARROW_UPWARD if self._sort_dir == "asc" else ft.Icons.ARROW_DOWNWARD,
+                    size=13,
+                    color=Colors.PRIMARY,
+                )
+            inner = ft.Row(
+                [label] + ([arrow] if arrow is not None else []),
+                spacing=4,
+                alignment=self._header_alignment(col),
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        return ft.Container(
+            inner,
+            height=self._header_height,
+            alignment=self._col_align(col),
+            padding=ft.padding.symmetric(horizontal=12),
+            tooltip=(f"ترتيب حسب {col.label}" if sortable else None),
+            ink=bool(sortable),
+            on_click=(lambda _, c=col: self._header_click(c)) if sortable else None,
+            **self._cell_kwargs(col),
+        )
+
+    def _header_cells(self) -> list[ft.Control]:
         cells: list[ft.Control] = []
-        for col in self._columns:
+        if self._selectable:
+            self._select_all_button = ft.IconButton(
+                icon=ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                icon_size=18,
+                icon_color=Colors.TEXT_FAINT,
+                tooltip="تحديد الكل",
+                on_click=lambda _: self._toggle_all(),
+            )
             cells.append(
                 ft.Container(
-                    ft.Text(
-                        col.label,
-                        size=12,
-                        weight=ft.FontWeight.W_700,
-                        color=Colors.TEXT_MUTED_DARK,
-                    ),
+                    self._select_all_button,
+                    width=40,
                     height=self._header_height,
-                    alignment=self._col_align(col),
-                    padding=ft.padding.symmetric(horizontal=12),
-                    **self._cell_kwargs(col),
+                    alignment=ft.alignment.center,
                 )
             )
-        if self._on_row_activate is not None:
-            cells.append(ft.Container(width=48, height=self._header_height))
-        return ft.Container(
-            ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        for col in self._columns:
+            cells.append(self._header_cell(col))
+        trail = self._trailing_width()
+        if trail:
+            cells.append(ft.Container(width=trail, height=self._header_height))
+        return cells
+
+    def _build_header(self) -> ft.Container:
+        self._header = ft.Container(
+            ft.Row(self._header_cells(), spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=Colors.BACKGROUND_ALT,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER_STRONG)),
         )
+        return self._header
+
+    def _refresh_header(self) -> None:
+        header = self._header
+        if header is None:
+            return
+        header.content = ft.Row(self._header_cells(), spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._safe_update(header)
+
+    def _header_click(self, col: GridColumn) -> None:
+        """Cycle a column through ascending -> descending -> unsorted.
+
+        Sorting itself stays in the view: it owns the full (unpaginated)
+        result set, so sorting here would only reorder the visible page.
+        """
+        if self._on_sort is None or not col.sortable:
+            return
+        if self._sort_key != col.key:
+            self._sort_key, self._sort_dir = col.key, "asc"
+        elif self._sort_dir == "asc":
+            self._sort_dir = "desc"
+        else:
+            self._sort_key, self._sort_dir = None, None
+        self._refresh_header()
+        self._on_sort(self._sort_key, self._sort_dir)
+
+    def set_sort(self, key: str | None, direction: str | None = None) -> None:
+        """Update the sort indicator without invoking the view callback."""
+        self._sort_key = key
+        self._sort_dir = direction if key else None
+        self._refresh_header()
 
     def _display(self, col: GridColumn, value, row: dict) -> ft.Control:
         if self._formatter is not None:
@@ -307,8 +410,41 @@ class DataGrid(ft.Column):
         self._cell_boxes[(r, c)] = box
         return box
 
+    def _check_cell(self, r: int) -> ft.Control:
+        button = ft.IconButton(
+            icon=ft.Icons.CHECK_BOX if r in self._checked else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+            icon_size=18,
+            icon_color=Colors.PRIMARY if r in self._checked else Colors.TEXT_FAINT,
+            tooltip="تحديد الصف",
+            on_click=lambda _, rr=r: self._toggle_check(rr),
+        )
+        self._check_buttons.append(button)
+        return ft.Container(button, width=40, height=self._row_height, alignment=ft.alignment.center)
+
+    def _menu_items(self, row: dict) -> list[ft.Control]:
+        items: list[ft.Control] = []
+        if self._on_row_menu is None:
+            return items
+        for entry in self._on_row_menu(row):
+            if entry is None:
+                # This Flet version has no PopupMenuDivider; separators are
+                # simply skipped.
+                continue
+            label, icon, callback = entry[0], entry[1], entry[2]
+            items.append(
+                ft.PopupMenuItem(
+                    text=label,
+                    icon=icon,
+                    on_click=lambda _, cb=callback: cb(),
+                )
+            )
+        return items
+
     def _make_row(self, r: int, row: dict) -> ft.Container:
-        cells = [self._make_cell(r, c, col, row) for c, col in enumerate(self._columns)]
+        cells: list[ft.Control] = []
+        if self._selectable:
+            cells.append(self._check_cell(r))
+        cells.extend(self._make_cell(r, c, col, row) for c, col in enumerate(self._columns))
         if self._on_row_activate is not None:
             cells.append(
                 ft.Container(
@@ -320,6 +456,21 @@ class DataGrid(ft.Column):
                         on_click=lambda _, rr=r: self.activate_row(rr),
                     ),
                     width=48,
+                    height=self._row_height,
+                    alignment=ft.alignment.center,
+                )
+            )
+        if self._on_row_menu is not None:
+            cells.append(
+                ft.Container(
+                    ft.PopupMenuButton(
+                        icon=ft.Icons.MORE_VERT,
+                        icon_size=16,
+                        icon_color=Colors.TEXT_FAINT,
+                        tooltip="إجراءات",
+                        items=self._menu_items(row),
+                    ),
+                    width=40,
                     height=self._row_height,
                     alignment=ft.alignment.center,
                 )
@@ -336,6 +487,8 @@ class DataGrid(ft.Column):
     def _row_bg_for(self, r: int) -> str:
         """Zebra stripe: a faint tint on alternate rows aids horizontal
         tracking across a wide table without the heavier card borders."""
+        if r in self._checked:
+            return Colors.PRIMARY_BG
         if self._striped and r % 2 == 1:
             return Colors.BACKGROUND_ALT
         return Colors.WHITE
@@ -344,6 +497,8 @@ class DataGrid(ft.Column):
         if not self._footer_values:
             return None
         cells: list[ft.Control] = []
+        if self._selectable:
+            cells.append(ft.Container(width=40, height=self._header_height))
         for col in self._columns:
             text = str(self._footer_values.get(col.key, "") or "")
             cells.append(
@@ -355,8 +510,9 @@ class DataGrid(ft.Column):
                     **self._cell_kwargs(col),
                 )
             )
-        if self._on_row_activate is not None:
-            cells.append(ft.Container(width=48, height=self._header_height))
+        trail = self._trailing_width()
+        if trail:
+            cells.append(ft.Container(width=trail, height=self._header_height))
         return ft.Container(
             ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=Colors.BACKGROUND_ALT,
@@ -366,6 +522,7 @@ class DataGrid(ft.Column):
     def _render_body(self) -> None:
         self._cell_boxes.clear()
         self._row_boxes.clear()
+        self._check_buttons.clear()
         self._edit_field = None
         # Clamp the cursor to the new row count *before* building cells so the
         # active-column highlight lands on a real cell.
@@ -400,6 +557,7 @@ class DataGrid(ft.Column):
         if footer is not None:
             controls.append(footer)
         self._body.controls = controls
+        self._sync_select_all()
 
     # ---------------------------------------------------------------- reload
     def row_at(self, index: int) -> dict | None:
@@ -409,6 +567,15 @@ class DataGrid(ft.Column):
 
     def set_rows(self, rows: list[dict]) -> None:
         self._rows = [dict(r) for r in rows]
+        # A new result set (search/filter/sort) invalidates old row indices.
+        self._checked.clear()
+        self._render_body()
+        self._safe_update(self._body)
+        self._emit_selection()
+
+    def set_row_height(self, height: int) -> None:
+        """Switch density ("comfortable" 48px vs "compact" 36px)."""
+        self._row_height = max(28, int(height))
         self._render_body()
         self._safe_update(self._body)
 
@@ -458,9 +625,11 @@ class DataGrid(ft.Column):
         if not (0 <= index < len(self._rows)):
             return
         del self._rows[index]
+        self._checked = {i if i < index else i - 1 for i in self._checked if i != index}
         self.nav.editing = False
         self._render_body()
         self._safe_update(self._body)
+        self._emit_selection()
 
     def arm(self) -> None:
         """Enable keyboard navigation without requiring an initial click."""
@@ -486,6 +655,66 @@ class DataGrid(ft.Column):
                 row[key] = old
         self._render_row(index)
         self._safe_update(self._body)
+
+    # ---------------------------------------------------------- multi-select
+    def _toggle_check(self, r: int) -> None:
+        if r in self._checked:
+            self._checked.discard(r)
+        else:
+            self._checked.add(r)
+        self._paint_check(r)
+        self._sync_select_all()
+        self._emit_selection()
+
+    def _toggle_all(self) -> None:
+        if self._rows and len(self._checked) == len(self._rows):
+            self._checked.clear()
+        else:
+            self._checked = set(range(len(self._rows)))
+        for r in range(len(self._rows)):
+            self._paint_check(r)
+        self._sync_select_all()
+        self._emit_selection()
+
+    def _paint_check(self, r: int) -> None:
+        checked = r in self._checked
+        if 0 <= r < len(self._check_buttons):
+            button = self._check_buttons[r]
+            button.icon = ft.Icons.CHECK_BOX if checked else ft.Icons.CHECK_BOX_OUTLINE_BLANK
+            button.icon_color = Colors.PRIMARY if checked else Colors.TEXT_FAINT
+            self._safe_update(button)
+        if 0 <= r < len(self._row_boxes):
+            box = self._row_boxes[r]
+            box.bgcolor = self._row_bg_for(r)
+            self._safe_update(box)
+
+    def _sync_select_all(self) -> None:
+        if self._select_all_button is None:
+            return
+        self._select_all_button.icon = (
+            ft.Icons.CHECK_BOX
+            if self._rows and len(self._checked) == len(self._rows)
+            else ft.Icons.CHECK_BOX_OUTLINE_BLANK
+        )
+        self._safe_update(self._select_all_button)
+
+    def selected_rows(self) -> list[dict]:
+        return [dict(self._rows[i]) for i in sorted(self._checked) if 0 <= i < len(self._rows)]
+
+    def clear_selection(self) -> None:
+        self._checked.clear()
+        for r in range(len(self._rows)):
+            self._paint_check(r)
+        self._sync_select_all()
+        self._emit_selection()
+
+    def _emit_selection(self) -> None:
+        if self._on_selection_change is None:
+            return
+        try:
+            self._on_selection_change(self.selected_rows())
+        except Exception:
+            pass
 
     # ------------------------------------------------------------- selection
     def _on_cell_click(self, r: int, c: int) -> None:
@@ -577,14 +806,20 @@ class DataGrid(ft.Column):
         field = self._edit_field
         if field is None:
             return
-        self._edit_field = None
-        self.nav.editing = False
         r, c = self.nav.cell
         col = self._columns[c]
         try:
             value = (self._parser or _default_parser)(col, field.value or "")
         except ValueError:
-            value = None  # unparseable -> keep the old value
+            # Keep the editor open and flag the cell instead of silently
+            # throwing the typed value away -- the user can fix it in place
+            # or press Escape to cancel.
+            field.border = ft.border.all(2, Colors.DANGER)
+            field.error_text = "قيمة غير صحيحة"
+            self._safe_update(field)
+            return
+        self._edit_field = None
+        self.nav.editing = False
         old = self._rows[r].get(col.key)
         if value is not None and value != old:
             self._rows[r][col.key] = value
@@ -642,6 +877,7 @@ class DataGrid(ft.Column):
             active = (r, c) == self.nav.cell
             box.bgcolor = Colors.PRIMARY_BG if active else None
             box.border = ft.border.all(2, Colors.PRIMARY) if active else None
+        row_box.bgcolor = self._row_bg_for(r)
         self._safe_update(row_box)
 
     # ----------------------------------------------------------- row action

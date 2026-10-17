@@ -53,13 +53,13 @@ STATUS_AR = {
 # nothing is edited in place; tapping a row (or its open icon) opens the
 # detail sheet, which carries payment/print/PDF/edit/delete.
 INVOICE_GRID_COLUMNS = [
-    GridColumn("id", "الفاتورة", width=92, align="center", kind="number"),
-    GridColumn("type", "النوع", width=84, align="center", kind="badge"),
+    GridColumn("id", "الفاتورة", width=80, align="center", kind="number"),
+    GridColumn("type", "النوع", width=76, align="center", kind="badge"),
     GridColumn("party_name", "الطرف"),
-    GridColumn("invoice_date", "التاريخ", width=106, align="center"),
-    GridColumn("total", "الإجمالي", width=115, align="end", kind="money"),
-    GridColumn("remaining_amount", "المتبقي", width=115, align="end", kind="money"),
-    GridColumn("payment_status", "الحالة", width=150, align="center", kind="badge"),
+    GridColumn("invoice_date", "التاريخ", width=98, align="center"),
+    GridColumn("total", "الإجمالي", width=106, align="end", kind="money"),
+    GridColumn("remaining_amount", "المتبقي", width=106, align="end", kind="money"),
+    GridColumn("payment_status", "الحالة", width=142, align="center", kind="badge", sortable=False),
 ]
 
 
@@ -650,17 +650,127 @@ class InvoiceCenter:
                     return self.money(value)
                 return None
 
+            grid_sort = {"key": None, "dir": None}
+            density_state = {"compact": self.ctx.settings.get("ui.invoices_density", "comfortable") == "compact"}
+            selected_state = {"rows": []}
+            grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
+
+            def apply_grid_sort(key: str | None, direction: str | None) -> None:
+                grid_sort["key"], grid_sort["dir"] = key, direction
+                render_limit["n"] = 60
+                refresh_cards()
+
+            def row_menu(row: dict) -> list:
+                invoice_id = int(row.get("id") or 0)
+                remaining = max(0.0, float(row.get("remaining_amount") or 0))
+                items: list = [
+                    ("فتح", ft.Icons.OPEN_IN_NEW_ROUNDED, lambda i=invoice_id: self.show_invoice_detail(i)),
+                    ("تعديل", ft.Icons.EDIT_OUTLINED, lambda i=invoice_id: self.show_editor(i)),
+                ]
+                if remaining > 1e-9:
+                    items.append(("تسجيل دفعة", ft.Icons.PAYMENTS_OUTLINED, lambda i=invoice_id: self.show_payment_dialog(i)))
+                items.extend([
+                    ("طباعة", ft.Icons.PRINT_OUTLINED, self._print_handler(invoice_id)),
+                    ("مشاركة PDF", ft.Icons.PICTURE_AS_PDF, self._pdf_handler(invoice_id)),
+                    None,
+                    ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),
+                ])
+                return items
+
+            def render_bulk_bar(rows: list[dict]) -> None:
+                selected_state["rows"] = list(rows)
+                if not rows:
+                    bulk_bar.visible = False
+                    bulk_bar.content = None
+                else:
+                    bulk_bar.content = ft.Row(
+                        [
+                            ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                            ft.Text(f"تم تحديد {len(rows)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                            ft.Container(expand=True),
+                            ft.FilledButton(
+                                "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                                style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+                                on_click=confirm_bulk_delete,
+                            ),
+                            ft.TextButton("إلغاء التحديد", on_click=lambda _: invoice_grid.clear_selection()),
+                        ],
+                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                    bulk_bar.visible = True
+                try:
+                    bulk_bar.update()
+                except Exception:
+                    pass
+
+            def confirm_bulk_delete(_=None) -> None:
+                rows = list(selected_state["rows"])
+                if not rows:
+                    return
+                dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف الفواتير"))
+
+                def yes(_ev=None) -> None:
+                    self.page.close(dialog)
+                    deleted = 0
+                    failures = 0
+                    for row in rows:
+                        try:
+                            self.ctx.invoices.delete_invoice(int(row.get("id") or 0))
+                            deleted += 1
+                        except Exception:
+                            failures += 1
+                    self.show_center()
+                    if failures:
+                        self.notify(f"حُذفت {deleted} فاتورة، وتعذّر حذف {failures}", kind="warning")
+                    else:
+                        self.notify(f"حُذفت {deleted} فاتورة", sound_kind="success")
+
+                def no(_ev=None) -> None:
+                    self.page.close(dialog)
+
+                dialog.content = ft.Text(
+                    f"سيتم حذف {len(rows)} فاتورة محددة نهائيًا. سيُعاد احتساب الحسابات والمخزون تلقائيًا."
+                )
+                dialog.actions = [
+                    ft.TextButton("إلغاء", on_click=no),
+                    ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+                ]
+                self.page.open(dialog)
+
+            def toggle_density(_=None) -> None:
+                compact = not density_state["compact"]
+                density_state["compact"] = compact
+                invoice_grid.set_row_height(36 if compact else 48)
+                density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+                density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+                self.ctx.settings.set("ui.invoices_density", "compact" if compact else "comfortable")
+                self.page.update()
+
+            density_button = ft.IconButton(
+                icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+                tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",
+                on_click=toggle_density,
+            )
+            bulk_bar = ft.Container(visible=False)
+
             # Same table language as the materials screen: round clipped
             # card, tinted pinned header, zebra rows, centred cells. Rows are
             # display-only on purpose -- an invoice is a financial record, so
             # nothing is edited in place; the row's open icon (or a row tap)
             # leads to the detail sheet, which carries payment/print/PDF/
-            # edit/delete.
+            # edit/delete. The bounded viewport keeps the header pinned even
+            # though the invoice screen itself scrolls as one page.
             invoice_grid = DataGrid(
                 columns=INVOICE_GRID_COLUMNS,
                 rows=[],
                 page=self.page,
+                row_height=36 if density_state["compact"] else 48,
+                viewport_height=grid_height,
                 on_row_activate=lambda row: self.show_invoice_detail(int(row.get("id") or 0)),
+                on_sort=apply_grid_sort,
+                selectable=True,
+                on_selection_change=render_bulk_bar,
+                on_row_menu=row_menu,
                 formatter=_grid_formatter,
                 boxed=True,
                 center_cells=True,
@@ -669,12 +779,25 @@ class InvoiceCenter:
             )
             grid_more = ft.Container(visible=False)
             desktop_list = ft.Column(
-                [ft.Container(invoice_grid, expand=True), grid_more],
+                [bulk_bar, ft.Container(invoice_grid, expand=True), grid_more],
                 spacing=8, expand=True,
             )
 
             def refresh_cards(_=None):
                 matched = [inv for inv in invoices if matches(inv)]
+                if grid_sort["key"]:
+                    sort_key = grid_sort["key"]
+                    reverse = grid_sort["dir"] == "desc"
+
+                    def sort_value(inv):
+                        if sort_key in ("id", "total", "remaining_amount"):
+                            try:
+                                return float(inv.get(sort_key) or 0)
+                            except (TypeError, ValueError):
+                                return 0.0
+                        return str(inv.get(sort_key) or "")
+
+                    matched.sort(key=sort_value, reverse=reverse)
                 shown = matched[: render_limit["n"]]
                 if not shown:
                     invoice_grid.set_footer(None)
@@ -757,7 +880,10 @@ class InvoiceCenter:
             sticky_header = ft.Container(
                 ft.Column(
                     [
-                        search,
+                        ft.Row(
+                            [ft.Container(search, expand=True), density_button],
+                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                         ft.Column([ft.Text("النوع", size=10, color=Colors.TEXT_SECONDARY), type_row], spacing=4),
                         ft.Column([ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY), status_row], spacing=4),
                     ],

@@ -21,13 +21,13 @@ from nano_offline.core import item_card_signing
 # which has no quantity parameter) and the rest are display-only.
 ITEM_GRID_COLUMNS = [
     GridColumn("name", "الاسم", editable=True),
-    GridColumn("category_name", "التصنيف", width=130),
-    GridColumn("unit_name", "الوحدة", width=90),
-    GridColumn("item_type", "النوع", width=90, align="center", kind="badge"),
-    GridColumn("quantity", "الكمية", width=100, align="end", kind="number"),
-    GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
-    GridColumn("selling_price", "سعر البيع", width=120, align="end", kind="money", editable=True),
-    GridColumn("_status", "الحالة", width=110, align="center", kind="badge"),
+    GridColumn("category_name", "التصنيف", width=120),
+    GridColumn("unit_name", "الوحدة", width=80),
+    GridColumn("item_type", "النوع", width=80, align="center", kind="badge"),
+    GridColumn("quantity", "الكمية", width=90, align="end", kind="number"),
+    GridColumn("purchase_price", "سعر الشراء", width=110, align="end", kind="money", editable=True),
+    GridColumn("selling_price", "سعر البيع", width=110, align="end", kind="money", editable=True),
+    GridColumn("_status", "الحالة", width=100, align="center", kind="badge", sortable=False),
 ]
 
 
@@ -301,12 +301,114 @@ class ItemsCenter:
                 notify(str(exc), kind="error")
                 raise  # let the grid revert the optimistic cell value
 
+        grid_sort = {"key": None, "dir": None}
+        density_state = {"compact": ctx.settings.get("ui.items_density", "comfortable") == "compact"}
+        selected_state = {"rows": []}
+
+        def apply_grid_sort(key: str | None, direction: str | None) -> None:
+            grid_sort["key"], grid_sort["dir"] = key, direction
+            render_limit["n"] = 60
+            refresh()
+
+        def render_bulk_bar(rows: list[dict]) -> None:
+            selected_state["rows"] = list(rows)
+            if not rows:
+                bulk_bar.visible = False
+                bulk_bar.content = None
+            else:
+                bulk_bar.content = ft.Row(
+                    [
+                        ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                        ft.Text(f"تم تحديد {len(rows)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                        ft.Container(expand=True),
+                        ft.OutlinedButton("طباعة باركود", icon=ft.Icons.QR_CODE_2, on_click=print_selected_barcodes),
+                        ft.FilledButton(
+                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                            style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+                            on_click=confirm_bulk_delete,
+                        ),
+                        ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
+                    ],
+                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                bulk_bar.visible = True
+            try:
+                bulk_bar.update()
+            except Exception:
+                pass
+
+        def confirm_bulk_delete(_=None) -> None:
+            rows = list(selected_state["rows"])
+            if not rows:
+                return
+            dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف المواد"))
+
+            def yes(_ev=None) -> None:
+                page.close(dialog)
+                deleted = 0
+                failures = 0
+                for row in rows:
+                    try:
+                        ctx.items.delete(int(row.get("id") or 0))
+                        deleted += 1
+                    except Exception:
+                        failures += 1
+                grid.clear_selection()
+                refresh()
+                if failures:
+                    notify(f"حُذفت {deleted} مادة، وتعذّر حذف {failures} لارتباطها بحركات أو فواتير", kind="warning")
+                else:
+                    notify(f"حُذفت {deleted} مادة", sound_kind="success")
+
+            def no(_ev=None) -> None:
+                page.close(dialog)
+
+            dialog.content = ft.Text(
+                f"سيتم حذف {len(rows)} مادة محددة. المواد المرتبطة بحركات مخزون أو فواتير لن تُحذف."
+            )
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=no),
+                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+            ]
+            page.open(dialog)
+
+        def print_selected_barcodes(_=None) -> None:
+            entries = [(row, 1) for row in selected_state["rows"]]
+            if entries:
+                open_barcode_print_dialog(entries)
+
+        def toggle_density(_=None) -> None:
+            compact = not density_state["compact"]
+            density_state["compact"] = compact
+            grid.set_row_height(36 if compact else 48)
+            density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+            density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+            ctx.settings.set("ui.items_density", "compact" if compact else "comfortable")
+            page.update()
+
+        density_button = ft.IconButton(
+            icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+            tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",
+            on_click=toggle_density,
+        )
+        bulk_bar = ft.Container(visible=False)
+
         grid = DataGrid(
             columns=ITEM_GRID_COLUMNS,
             rows=[],
             page=page,
+            row_height=36 if density_state["compact"] else 48,
             on_cell_commit=_grid_commit,
             on_row_activate=lambda row: show_item_detail(row),
+            on_sort=apply_grid_sort,
+            selectable=True,
+            on_selection_change=render_bulk_bar,
+            on_row_menu=lambda row: [
+                ("تعديل", ft.Icons.EDIT_OUTLINED, lambda r=row: open_item_editor(r)),
+                ("طباعة باركود", ft.Icons.QR_CODE_2, lambda r=row: open_barcode_print_dialog([(r, 1)])),
+                None,
+                ("حذف", ft.Icons.DELETE_OUTLINE, lambda r=row: confirm_delete_item(r)),
+            ],
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -2551,6 +2653,22 @@ class ItemsCenter:
             # "name" is the repository's own default ORDER BY i.name -- no
             # re-sort needed, and re-sorting would just be casefold(name)
             # busywork for the common case.
+            # Header-click sort (DataGrid) runs last and overrides the preset
+            # dropdown for the chosen column.
+            if grid_sort["key"]:
+                header_key = grid_sort["key"]
+                reverse = grid_sort["dir"] == "desc"
+
+                def header_sort_value(item):
+                    value = item.get(header_key)
+                    if header_key in ("quantity", "purchase_price", "selling_price"):
+                        try:
+                            return float(value or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    return str(value or "")
+
+                filtered.sort(key=header_sort_value, reverse=reverse)
             inventory_value = sum(float(i.get("quantity") or 0) * float(i.get("average_cost") or 0) for i in all_items if i.get("item_type") == "مخزون")
             low_count = sum(1 for i in all_items if i.get("item_type") == "مخزون" and float(i.get("quantity") or 0) < LOW_STOCK)
             service_count = sum(1 for i in all_items if i.get("item_type") == "خدمة")
@@ -2601,7 +2719,7 @@ class ItemsCenter:
         ], spacing=6, scroll=ft.ScrollMode.AUTO)
         sort_dd.width = 130
         filters_row = ft.Row(
-            [ft.Container(filters, expand=True), sort_dd],
+            [ft.Container(filters, expand=True), sort_dd, density_button],
             vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8,
         )
 
@@ -2649,7 +2767,7 @@ class ItemsCenter:
         )
         list_switch = ft.Container(content=desktop_list, expand=True)
         list_area = ft.Container(
-            ft.Column([stats_header, stats_body, list_switch], spacing=8, expand=True),
+            ft.Column([stats_header, stats_body, bulk_bar, list_switch], spacing=8, expand=True),
             padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
             expand=True,
         )

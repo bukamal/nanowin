@@ -37,6 +37,7 @@ class GridColumn:
     align: str = "start"  # start | center | end
     editable: bool = False
     kind: str = "text"  # text | number | money | badge
+    sortable: bool = True
 
 
 class GridNavigator:
