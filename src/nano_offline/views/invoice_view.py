@@ -48,6 +48,20 @@ STATUS_AR = {
     "unpaid": "غير مدفوعة",
 }
 
+# Invoice list grid columns -- same table language as the materials screen.
+# Every cell is display-only on purpose: an invoice is a financial record, so
+# nothing is edited in place; tapping a row (or its open icon) opens the
+# detail sheet, which carries payment/print/PDF/edit/delete.
+INVOICE_GRID_COLUMNS = [
+    GridColumn("id", "الفاتورة", width=92, align="center", kind="number"),
+    GridColumn("type", "النوع", width=84, align="center", kind="badge"),
+    GridColumn("party_name", "الطرف"),
+    GridColumn("invoice_date", "التاريخ", width=106, align="center"),
+    GridColumn("total", "الإجمالي", width=115, align="end", kind="money"),
+    GridColumn("remaining_amount", "المتبقي", width=115, align="end", kind="money"),
+    GridColumn("payment_status", "الحالة", width=150, align="center", kind="badge"),
+]
+
 
 class InvoiceCenter:
     """Responsive invoice center/editor for Flet 0.28.x."""
@@ -143,6 +157,84 @@ class InvoiceCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
         return handler
+
+    def _party_insight_text(self, is_sale: bool, party_id: int) -> str | None:
+        """One-line activity insight for a selected party: last invoice
+        recency, usual reorder rhythm and outstanding balance.
+
+        Shared by the full-page editor and the new-invoice sheet so both
+        surfaces show the same hint instead of two drifting copies.
+        """
+        repo = self.ctx.customers if is_sale else self.ctx.suppliers
+        try:
+            summary = repo.activity_summary(party_id)
+        except Exception:
+            return None
+        count = int(summary.get("invoice_count") or 0)
+        if count == 0:
+            return None
+        parts: list[str] = []
+        last_date_obj: date | None = None
+        last_date_str = summary.get("last_invoice_date")
+        if last_date_str:
+            try:
+                last_date_obj = date.fromisoformat(str(last_date_str)[:10])
+                days_since = (date.today() - last_date_obj).days
+                if days_since <= 0:
+                    parts.append("آخر فاتورة اليوم")
+                elif days_since == 1:
+                    parts.append("آخر فاتورة أمس")
+                else:
+                    parts.append(f"آخر فاتورة قبل {days_since} يوم")
+            except Exception:
+                last_date_obj = None
+        recent_dates = sorted({
+            r["invoice_date"] for r in (summary.get("recent_invoices") or []) if r.get("invoice_date")
+        })
+        if last_date_obj is not None and len(recent_dates) >= 2:
+            try:
+                parsed = [date.fromisoformat(str(d)[:10]) for d in recent_dates]
+                intervals = [
+                    (parsed[i + 1] - parsed[i]).days
+                    for i in range(len(parsed) - 1)
+                    if (parsed[i + 1] - parsed[i]).days > 0
+                ]
+                if intervals:
+                    avg_days = round(sum(intervals) / len(intervals))
+                    if avg_days >= 1:
+                        next_expected = last_date_obj + timedelta(days=avg_days)
+                        days_left = (next_expected - date.today()).days
+                        if -2 <= days_left <= 3:
+                            parts.append("اقترب موعد طلبه المعتاد")
+                        elif days_left < -2:
+                            parts.append("تجاوز موعد طلبه المعتاد")
+            except Exception:
+                pass
+        outstanding = float(summary.get("outstanding_total") or 0)
+        if outstanding > 1e-9:
+            parts.append(f"مستحق عليه {self.money(outstanding)}")
+        return " • ".join(parts) if parts else None
+
+    def _sale_margin_warnings(self, inputs: list[InvoiceLineInput], item_map: dict[int, dict]) -> list[str]:
+        """Margin-guard messages for a sale invoice's prepared lines.
+
+        Extracted so the full-page editor's save and the new-invoice
+        sheet's save share one rule (stored USD price per base unit vs the
+        item's average cost) instead of two drifting copies.
+        """
+        warnings: list[str] = []
+        for line in inputs:
+            if not line.item_id:
+                continue
+            item = item_map.get(int(line.item_id))
+            result = check_sale_margin(
+                unit_price_usd=float(line.unit_price) / max(float(line.conversion_factor or 1), 1e-9),
+                item=item,
+                settings=self.ctx.settings,
+            )
+            if result.get("flag"):
+                warnings.append(result.get("message") or "بيع تحت التكلفة")
+        return warnings
 
     def _show_center_error(self, exc: Exception) -> None:
         """Render a recoverable error state instead of leaving a gray Flutter ErrorWidget."""
@@ -401,6 +493,21 @@ class InvoiceCenter:
             await asyncio.sleep(0.1)
             await self._pdf_handler(invoice_id)(None)
 
+        async def do_pay(_=None):
+            # Same close-then-yield-then-open dance as _invoice_more_dialog:
+            # firing another overlay in the same tick as this sheet's close
+            # races Flutter's dismiss animation.
+            close()
+            await asyncio.sleep(0.1)
+            self.show_payment_dialog(invoice_id)
+
+        async def do_delete(_=None):
+            close()
+            await asyncio.sleep(0.1)
+            self.confirm_delete(invoice_id)
+
+        can_pay = remaining > 1e-9 and bool(invoice.get("customer_id") if sale else invoice.get("supplier_id"))
+
         export_row = []
         if self.native_files is not None:
             export_row = [
@@ -420,22 +527,28 @@ class InvoiceCenter:
                 ft.Text("الأصناف", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                 ft.Column(line_rows, spacing=6),
                 ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                ft.Column(
-                    (
-                        [ft.Row(export_row, spacing=10)] if export_row else []
-                    ) + [
-                        ft.Row(
-                            [
-                                ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
-                                ft.FilledButton("إغلاق", on_click=close, expand=True),
-                            ],
-                            spacing=10,
-                        ),
-                    ],
-                    spacing=8,
-                ),
             ],
             spacing=12,
+        )
+        if export_row:
+            body.controls.append(ft.Row(export_row, spacing=10))
+        if can_pay:
+            # The invoice table has no swipe gesture, so payment lives here
+            # (and nowhere else) for outstanding invoices with a known
+            # party -- one obvious place instead of a hidden shortcut.
+            body.controls.append(
+                ft.Row([ft.FilledButton("تسجيل دفعة", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=do_pay, expand=True)], spacing=10)
+            )
+        actions: list[ft.Control] = [
+            ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
+            ft.FilledButton("إغلاق", on_click=close, expand=True),
+        ]
+        body.controls.append(ft.Row(actions, spacing=8))
+        body.controls.append(
+            ft.Row(
+                [ft.TextButton("حذف الفاتورة", icon=ft.Icons.DELETE_OUTLINE, on_click=do_delete)],
+                alignment=ft.MainAxisAlignment.CENTER,
+            )
         )
 
         sheet = self._bottom_sheet(
@@ -448,7 +561,10 @@ class InvoiceCenter:
         )
 
     def show_center(self) -> None:
-        """Reference-style invoice browser with mobile-safe cards and chip filters."""
+        """Reference-style invoice browser: the same table language as the
+        materials screen (round clipped grid, centred cells, tinted pinned
+        header, zebra rows), with chip filters, KPI cards and the overdue
+        alert kept on top of it."""
         if self.on_title_change:
             self.on_title_change("الفواتير", "المبيعات والمشتريات وحالات السداد")
         try:
@@ -458,8 +574,9 @@ class InvoiceCenter:
                 hint_text="رقم الفاتورة، العميل، المورد أو المرجع",
                 prefix_icon=ft.Icons.SEARCH,
                 border_radius=16,
+                on_focus=lambda e: invoice_grid.disarm(),
             )
-            cards = ft.Column(spacing=10)
+            cards = ft.Container(expand=True)
             filters = {"type": "all", "status": "all"}
             # Same reasoning as the items screen: build only a page of cards
             # at a time instead of all (up to 250) on every keystroke.
@@ -508,163 +625,95 @@ class InvoiceCenter:
                 ).lower()
                 return query in haystack
 
-            def invoice_card(inv: dict):
-                invoice_id = int(inv["id"])
-                sale = inv.get("type") == "sale"
-                kind = "بيع" if sale else "شراء"
-                party = inv.get("party_name") or "نقدي"
-                total = float(inv.get("total") or 0)
-                paid_amount = float(inv.get("paid_amount") or 0)
-                remaining = max(0.0, float(inv.get("remaining_amount") or 0))
-                status_key = inv.get("payment_status") or ""
-                status = STATUS_AR.get(status_key, status_key)
-                status_bg = Colors.SUCCESS_BG if status_key == "paid" else Colors.WARNING_BG_ALT if status_key == "partial" else Colors.DANGER_BG
-                status_fg = Colors.SUCCESS_DARKER if status_key == "paid" else Colors.ORANGE_DARK if status_key == "partial" else Colors.DANGER_DARKER
-                has_party = bool(inv.get("customer_id") if sale else inv.get("supplier_id"))
-                # Same icon-badge-carries-the-accent language as the items
-                # list card (accent lives in the round icon badge, not in a
-                # separate border stripe) -- one card language app-wide.
-                accent = Colors.SUCCESS if sale else Colors.PURPLE
-                accent_bg = Colors.SUCCESS_BG if sale else Colors.PURPLE_BG
-                overdue_days = days_since(inv.get("invoice_date")) if remaining > 1e-9 and status_key != "paid" else None
-                is_overdue = bool(overdue_days and overdue_days > overdue_threshold)
-                can_pay = remaining > 1e-9 and has_party
+            def _grid_formatter(col, value, row):
+                if col.key == "id":
+                    return f"#{int(row.get('id') or 0)}"
+                if col.key == "type":
+                    if row.get("type") == "sale":
+                        return ("بيع", Colors.SUCCESS_DARKER, Colors.SUCCESS_BG)
+                    return ("شراء", Colors.PURPLE, Colors.PURPLE_BG)
+                if col.key == "party_name":
+                    return str(value or "نقدي")
+                if col.key == "payment_status":
+                    status_key = str(row.get("payment_status") or "")
+                    label = STATUS_AR.get(status_key, status_key)
+                    remaining = max(0.0, float(row.get("remaining_amount") or 0))
+                    days = days_since(row.get("invoice_date")) if remaining > 1e-9 else None
+                    if days is not None and days > overdue_threshold:
+                        return (f"{label} • متأخرة {days}ي", Colors.DANGER_DARKER, Colors.DANGER_BG)
+                    if status_key == "paid":
+                        return (label, Colors.SUCCESS_DARKER, Colors.SUCCESS_BG)
+                    if status_key == "partial":
+                        return (label, Colors.ORANGE_DARK, Colors.WARNING_BG_ALT)
+                    return (label, Colors.DANGER_DARKER, Colors.DANGER_BG)
+                if col.kind == "money":
+                    return self.money(value)
+                return None
 
-                # One prominent number instead of always showing three --
-                # a fully-paid invoice showing "المدفوع/المتبقي" columns that
-                # just restate the total/zero is pure visual noise. Mirrors
-                # the items card's single "price + status" pairing.
-                if status_key == "paid":
-                    highlight_label, highlight_value, highlight_color = "الإجمالي", self.money(total), Colors.SUCCESS
-                    secondary_control = ft.Text("مسددة بالكامل", size=10, color=Colors.TEXT_SECONDARY)
-                else:
-                    highlight_label, highlight_value, highlight_color = "المتبقي", self.money(remaining), (Colors.ORANGE if remaining > 1e-9 else Colors.SUCCESS)
-                    secondary_parts = [
-                        ft.Text("من إجمالي ", size=10, color=Colors.TEXT_SECONDARY),
-                        ft.Text(self.money(total), size=10, color=Colors.TEXT_SECONDARY),
-                    ]
-                    if paid_amount > 1e-9:
-                        secondary_parts.extend([
-                            ft.Text(" • مدفوع ", size=10, color=Colors.TEXT_SECONDARY),
-                            ft.Text(self.money(paid_amount), size=10, color=Colors.TEXT_SECONDARY),
-                        ])
-                    secondary_control = ft.Row(secondary_parts, spacing=0, tight=True)
-
-                status_badges = [status_pill(status, status_fg, status_bg)]
-                if is_overdue:
-                    status_badges.append(status_pill(f"متأخرة {overdue_days} يوم", Colors.DANGER_DARKER, Colors.DANGER_BG))
-
-                actions = []
-                if can_pay:
-                    actions.append(
-                        ft.OutlinedButton(
-                            "تسجيل دفعة", icon=ft.Icons.PAYMENTS_OUTLINED, expand=True,
-                            on_click=lambda _, iid=invoice_id: self.show_payment_dialog(iid),
-                        )
-                    )
-
-                body: list[ft.Control] = [
-                    ft.Row(
-                        [
-                            ft.Container(ft.Icon(ft.Icons.TRENDING_UP if sale else ft.Icons.TRENDING_DOWN, color=accent, size=21), width=44, height=44, alignment=ft.alignment.center, bgcolor=accent_bg, border_radius=14),
-                            ft.Column(
-                                [
-                                    ft.Row([ft.Text(f"فاتورة {kind} #{invoice_id}", weight=ft.FontWeight.BOLD, size=14, expand=True), *status_badges]),
-                                    ft.Text(f"{party} • {inv.get('invoice_date') or '—'}", size=10, color=Colors.TEXT_SECONDARY),
-                                ],
-                                spacing=3, expand=True,
-                            ),
-                            ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="المزيد", icon_color=Colors.TEXT_SECONDARY, on_click=lambda _, row=inv: self._invoice_more_dialog(row)),
-                        ],
-                        vertical_alignment=ft.CrossAxisAlignment.START,
-                    ),
-                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                    ft.Row(
-                        [
-                            ft.Column([ft.Text(highlight_label, size=9, color=Colors.TEXT_FAINT), ft.Text(highlight_value, size=17, weight=ft.FontWeight.BOLD, color=highlight_color)], spacing=2),
-                            secondary_control,
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.END,
-                    ),
-                ]
-                if actions:
-                    body.append(ft.Row(actions, spacing=8))
-
-                # Whole card is tappable now (like the items row) -- opens a
-                # quick detail sheet instead of requiring a permanent "فتح"
-                # button just to view the invoice. Buttons/kebab inside sit
-                # on top and absorb their own tap, so they don't also
-                # trigger this.
-                card = ft.Container(
-                    ft.Column(body, spacing=9),
-                    padding=13, border=ft.border.all(1, Colors.BORDER), border_radius=16,
-                    bgcolor=Colors.WHITE, shadow=Shadow.SM, ink=True,
-                    on_click=lambda _, iid=invoice_id: self.show_invoice_detail(iid),
-                )
-
-                if not can_pay:
-                    return card
-
-                # Swipe = quick, non-destructive "تسجيل دفعة" shortcut on
-                # outstanding invoices with a known party -- unlike the
-                # items list, invoices never get a swipe-to-delete gesture
-                # (too easy to trigger by accident on a financial record);
-                # the only destructive action stays behind "المزيد" + a
-                # confirm dialog. Refreshing right after re-renders this
-                # same card in place (the payment doesn't remove it).
-                def swipe_to_payment(_, iid=invoice_id):
-                    self.show_payment_dialog(iid)
-                    refresh_cards()
-
-                payment_background = ft.Container(
-                    content=ft.Row([ft.Icon(ft.Icons.PAYMENTS_OUTLINED, color=Colors.WHITE, size=22), ft.Text("تسجيل دفعة", color=Colors.WHITE, size=12, weight=ft.FontWeight.W_600)], spacing=6),
-                    bgcolor=Colors.SUCCESS_DARK, border_radius=16, padding=ft.padding.symmetric(horizontal=20), alignment=ft.alignment.center_left,
-                )
-                payment_background_end = ft.Container(
-                    content=ft.Row([ft.Text("تسجيل دفعة", color=Colors.WHITE, size=12, weight=ft.FontWeight.W_600), ft.Icon(ft.Icons.PAYMENTS_OUTLINED, color=Colors.WHITE, size=22)], spacing=6, alignment=ft.MainAxisAlignment.END),
-                    bgcolor=Colors.SUCCESS_DARK, border_radius=16, padding=ft.padding.symmetric(horizontal=20), alignment=ft.alignment.center_right,
-                )
-                return ft.Dismissible(
-                    key=f"invoice-{invoice_id}",
-                    content=card,
-                    dismiss_direction=ft.DismissDirection.HORIZONTAL,
-                    background=payment_background,
-                    secondary_background=payment_background_end,
-                    on_dismiss=swipe_to_payment,
-                )
+            # Same table language as the materials screen: round clipped
+            # card, tinted pinned header, zebra rows, centred cells. Rows are
+            # display-only on purpose -- an invoice is a financial record, so
+            # nothing is edited in place; the row's open icon (or a row tap)
+            # leads to the detail sheet, which carries payment/print/PDF/
+            # edit/delete.
+            invoice_grid = DataGrid(
+                columns=INVOICE_GRID_COLUMNS,
+                rows=[],
+                page=self.page,
+                on_row_activate=lambda row: self.show_invoice_detail(int(row.get("id") or 0)),
+                formatter=_grid_formatter,
+                boxed=True,
+                center_cells=True,
+                activate_tooltip="فتح الفاتورة",
+                empty_text="لا توجد فواتير",
+            )
+            grid_more = ft.Container(visible=False)
+            desktop_list = ft.Column(
+                [ft.Container(invoice_grid, expand=True), grid_more],
+                spacing=8, expand=True,
+            )
 
             def refresh_cards(_=None):
                 matched = [inv for inv in invoices if matches(inv)]
-                cards.controls = [invoice_card(inv) for inv in matched[: render_limit["n"]]]
-                if not cards.controls:
+                shown = matched[: render_limit["n"]]
+                if not shown:
+                    invoice_grid.set_footer(None)
                     if invoices:
-                        cards.controls = [empty_state(
+                        cards.content = empty_state(
                             "لا توجد فواتير مطابقة",
                             icon=ft.Icons.RECEIPT_LONG_OUTLINED,
                             hint="جرّب تغيير البحث أو عوامل التصفية",
-                        )]
+                        )
                     else:
-                        cards.controls = [empty_state(
+                        cards.content = empty_state(
                             "لا توجد فواتير بعد",
                             icon=ft.Icons.RECEIPT_LONG_OUTLINED,
                             hint="أنشئ أول فاتورة بيع أو شراء",
                             action_label="بيع جديد",
                             on_action=lambda _: self.show_editor(None, "sale"),
-                        )]
-                elif len(matched) > render_limit["n"]:
-                    remaining = len(matched) - render_limit["n"]
-
-                    def load_more(_=None):
-                        render_limit["n"] += 60
-                        refresh_cards()
-
-                    cards.controls.append(
-                        ft.OutlinedButton(
-                            f"تحميل المزيد ({remaining})",
-                            icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                            on_click=load_more,
                         )
+                    self.page.update()
+                    return
+                invoice_grid.set_rows(shown)
+                # Totals cover the whole filtered set, not just the first
+                # page of 60 -- so the footer answers "how much is open in
+                # what I'm looking at" without paging through 250 rows.
+                invoice_grid.set_footer({
+                    "type": f"{len(matched)} فاتورة",
+                    "total": self.money(sum(float(i.get("total") or 0) for i in matched)),
+                    "remaining_amount": self.money(sum(max(0.0, float(i.get("remaining_amount") or 0)) for i in matched)),
+                })
+                remaining = len(matched) - len(shown)
+                if remaining > 0:
+                    grid_more.content = ft.Row(
+                        [ft.OutlinedButton(f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                                           on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh_cards()))],
+                        alignment=ft.MainAxisAlignment.CENTER,
                     )
+                    grid_more.visible = True
+                else:
+                    grid_more.visible = False
+                cards.content = desktop_list
                 self.page.update()
 
             def refresh_from_search(e=None):
@@ -857,6 +906,587 @@ class InvoiceCenter:
         ]
         self.page.open(dialog)
 
+    def show_new_invoice_sheet(
+        self,
+        invoice_type: str | None = None,
+        *,
+        prefill_lines: list[dict] | None = None,
+        party_id: int | None = None,
+    ) -> None:
+        """Create a sale/purchase invoice through a 3-step bottom sheet.
+
+        Step 1 (بيانات): type, party -- with the same one-line activity
+        insight the page editor shows -- date and reference. Step 2 (بنود):
+        the same editable DataGrid used by the bulk-entry sheet and the
+        materials screen (picker column, live count/total footer, barcode
+        scan). Step 3 (الدفع): paid amount with quick chips, notes and a
+        live remaining summary.
+
+        Saving deliberately reuses the page editor's exact rules: the same
+        ``InvoiceLineInput`` shape (unit_price stored in USD), the same
+        margin guard (including its two-attempt confirm) and the same
+        ``create_invoice`` call, so an invoice saved from this sheet is
+        indistinguishable from one saved from the full page.
+        """
+        invoice_type = invoice_type if invoice_type in ("sale", "purchase") else "sale"
+        self.invoice_type = invoice_type
+        settings = self.ctx.settings
+        rate = currency.get_effective_rate(settings)
+        customers = self.ctx.customers.list()
+        suppliers = self.ctx.suppliers.list()
+        items = self.ctx.items.list()
+        item_map = {int(i["id"]): i for i in items}
+        previous_key_handler = getattr(self.page, "on_keyboard_event", None)
+        step = {"idx": 0, "opened": False}
+
+        def _safe_update(control) -> None:
+            # A control may not be attached to the page yet on the first
+            # render -- same guard the page editor uses.
+            try:
+                control.update()
+            except Exception:
+                pass
+
+        # ------------------------------------------------------------- header
+        type_dd = SegmentedToggle(
+            options=[
+                SegmentOption("sale", "بيع", ft.Icons.TRENDING_UP),
+                SegmentOption("purchase", "شراء", ft.Icons.TRENDING_DOWN),
+            ],
+            value=invoice_type,
+        )
+        party_dd = SearchSelect(label="العميل")
+        party_insight = ft.Container(visible=False)
+        invoice_date = SmartDateField(label="التاريخ", value=date.today().isoformat())
+        reference = SelectAllTextField(label="المرجع")
+
+        def party_options() -> None:
+            is_sale = (type_dd.value or "sale") == "sale"
+            source = customers if is_sale else suppliers
+            party_dd.label = "العميل" if is_sale else "المورد"
+            party_dd.set_choices([(str(p["id"]), p["name"]) for p in source])
+            if party_dd.value and not any(str(p["id"]) == party_dd.value for p in source):
+                party_dd.value = None
+
+        def update_party_insight() -> None:
+            is_sale = (type_dd.value or "sale") == "sale"
+            text = self._party_insight_text(is_sale, int(party_dd.value)) if party_dd.value else None
+            if not text:
+                party_insight.visible = False
+                _safe_update(party_insight)
+                return
+            party_insight.content = ft.Row(
+                [
+                    ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=15, color=Colors.PRIMARY),
+                    ft.Text(text, size=11, color=Colors.PRIMARY_DARK, expand=True),
+                ],
+                spacing=8,
+            )
+            party_insight.padding = ft.padding.symmetric(horizontal=10, vertical=8)
+            party_insight.bgcolor = Colors.PRIMARY_BG
+            party_insight.border = ft.border.all(1, Colors.PRIMARY_BORDER)
+            party_insight.border_radius = 10
+            party_insight.visible = True
+            _safe_update(party_insight)
+
+        # --------------------------------------------------------------- grid
+        def default_display_price(item_row: dict) -> float:
+            price_key = "selling_price" if (type_dd.value or "sale") == "sale" else "purchase_price"
+            return round(currency.to_display(float(item_row.get(price_key) or 0), rate), 2)
+
+        def row_formatter(col, value, row):
+            if col.key == "item":
+                if not value:
+                    return "— اختر مادة —"
+                item_row = item_map.get(int(value))
+                return item_row["name"] if item_row else "—"
+            if col.key == "price":
+                return currency.format_plain(value) if value else ""
+            return None
+
+        lines_grid = DataGrid(
+            columns=[
+                GridColumn("item", "المادة", editable=True, kind="picker"),
+                GridColumn("qty", "الكمية", editable=True, kind="number", width=100, align="end"),
+                GridColumn("price", currency.amount_field_label("السعر", settings), editable=True, kind="money", width=150, align="end"),
+            ],
+            rows=[], page=self.page,
+            on_pick=lambda r, col: open_chooser(r),
+            on_cell_commit=lambda *_: refresh_summary(),
+            formatter=row_formatter,
+            empty_text="اضغط «سطر جديد» أو «مسح باركود»",
+        )
+
+        chooser_search = SelectAllTextField(
+            label="ابحث عن مادة", hint_text="الاسم أو الباركود",
+            prefix_icon=ft.Icons.SEARCH, dense=True,
+        )
+        chooser_results = ft.Column(spacing=4)
+        picking_row = {"index": None}
+
+        def render_chooser(term: str = "") -> None:
+            term = (term or "").strip().lower()
+            cards: list[ft.Control] = []
+            for item_row in items:
+                haystack = f"{item_row.get('name', '')} {item_row.get('barcode', '')}".lower()
+                if term and term not in haystack:
+                    continue
+                cards.append(
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Column(
+                                    [
+                                        ft.Text(item_row["name"], size=13, weight=ft.FontWeight.W_600),
+                                        ft.Text(item_row.get("barcode") or "بلا باركود", size=9, color=Colors.TEXT_SECONDARY),
+                                    ],
+                                    spacing=1, expand=True,
+                                ),
+                                ft.Text(currency.format_plain(default_display_price(item_row)), size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=9, border=ft.border.all(1, Colors.BORDER), border_radius=10,
+                        bgcolor=Colors.WHITE, ink=True,
+                        on_click=lambda _, i=item_row: choose_item(i),
+                    )
+                )
+                if len(cards) >= 40:
+                    break
+            if not cards:
+                cards = [ft.Text("لا توجد نتائج", size=11, color=Colors.TEXT_SECONDARY)]
+            chooser_results.controls = cards
+            _safe_update(chooser_results)
+
+        chooser_search.on_change = lambda e: render_chooser(e.control.value)
+        chooser_panel = ft.Container(
+            ft.Column([chooser_search, ft.Container(chooser_results, height=240)], spacing=8),
+            visible=False,
+        )
+
+        def hide_chooser() -> None:
+            picking_row["index"] = None
+            chooser_panel.visible = False
+            _safe_update(chooser_panel)
+
+        def choose_item(item_row: dict) -> None:
+            index = picking_row["index"]
+            if index is None:
+                return
+            lines_grid.set_cell(index, "item", int(item_row["id"]))
+            if not lines_grid.row_at(index).get("price"):
+                lines_grid.set_cell(index, "price", default_display_price(item_row))
+            hide_chooser()
+            refresh_summary()
+
+        def open_chooser(index: int) -> None:
+            picking_row["index"] = index
+            chooser_search.value = ""
+            render_chooser("")
+            chooser_panel.visible = True
+            # While the chooser's search box has focus it owns the keys.
+            lines_grid.disarm()
+            _safe_update(chooser_panel)
+            try:
+                chooser_search.focus()
+            except Exception:
+                pass
+
+        def add_blank(_=None) -> None:
+            lines_grid.add_row({"qty": 1})
+
+        def add_or_bump_row(item_id: int) -> str:
+            for index, row in enumerate(lines_grid.rows):
+                if row.get("item") and int(row["item"]) == item_id:
+                    try:
+                        qty = float(row.get("qty") or 0) + 1
+                    except (TypeError, ValueError):
+                        qty = 1.0
+                    lines_grid.set_cell(index, "qty", qty)
+                    refresh_summary()
+                    return "bumped"
+            item_row = item_map.get(item_id)
+            index = lines_grid.add_row({"qty": 1})
+            lines_grid.set_cell(index, "item", item_id)
+            if item_row is not None:
+                lines_grid.set_cell(index, "price", default_display_price(item_row))
+            refresh_summary()
+            return "added"
+
+        async def scan_line(_=None) -> None:
+            if self.native_files is None:
+                self.notify("مسح الباركود غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                code = await self.native_files.scan_barcode()
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+                return
+            if not code:
+                return
+            found = self.ctx.items.find_by_barcode(code)
+            if not found:
+                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                return
+            status = add_or_bump_row(int(found["id"]))
+            if barcode_settings.scan_feedback_mode(settings) == "brief":
+                self.notify("✔", kind="success", sound_kind="scan")
+            elif status == "bumped":
+                self.notify(f"✔ زيدت الكمية: {found['name']}", kind="success", sound_kind="scan")
+            else:
+                self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+
+        # ------------------------------------------------- payment / summary
+        paid = SmartAmountField(
+            label=currency.amount_field_label("الدفعة الأولى", settings),
+            value="0",
+            on_change=lambda e: refresh_summary(),
+        )
+        notes = SelectAllTextField(label="ملاحظات", multiline=True, min_lines=1, max_lines=3)
+        lines_summary_text = ft.Text("لا بنود بعد", size=10, color=Colors.TEXT_SECONDARY)
+        total_text = ft.Text("0", size=20, weight=ft.FontWeight.BOLD)
+        remaining_text = ft.Text("0", size=16, weight=ft.FontWeight.BOLD)
+        paid_progress = ft.ProgressBar(value=0, color=Colors.SUCCESS, bgcolor=Colors.BACKGROUND_ALT, height=6, border_radius=6)
+
+        def rows_total_display() -> float:
+            total = 0.0
+            for row in lines_grid.rows:
+                if not row.get("item"):
+                    continue
+                try:
+                    total += float(row.get("qty") or 0) * float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    continue
+            return total
+
+        def refresh_summary(_=None) -> None:
+            total = rows_total_display()
+            count = sum(1 for row in lines_grid.rows if row.get("item"))
+            lines_grid.set_footer(
+                {"item": f"{count} بند", "price": currency.format_plain(round(total, 2))} if count else None
+            )
+            lines_summary_text.value = f"{count} بند" if count else "لا بنود بعد"
+            # Anonymous invoices are cash by definition (same rule the page
+            # editor and the accounting service enforce): with no party the
+            # paid field auto-fills with the total and locks.
+            cash_without_party = not bool(party_dd.value)
+            paid.disabled = cash_without_party
+            paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
+            if cash_without_party:
+                paid.value = currency.format_plain(total)
+                paid_value = total
+            else:
+                try:
+                    paid_value = float(paid.value or 0)
+                except Exception:
+                    paid_value = 0.0
+            total_text.value = currency.format_display_value(total, settings)
+            remaining_text.value = currency.format_display_value(max(0.0, total - paid_value), settings)
+            remaining_text.color = Colors.SUCCESS if total - paid_value <= 1e-9 else Colors.ORANGE
+            paid_progress.value = max(0.0, min(1.0, paid_value / total)) if total > 1e-9 else 1.0
+            quick_chips.visible = not cash_without_party
+            _safe_update(lines_summary_text)
+            _safe_update(paid)
+            _safe_update(total_text)
+            _safe_update(remaining_text)
+            _safe_update(paid_progress)
+            _safe_update(quick_chips)
+
+        def quick_pay(ratio: float) -> None:
+            paid.value = currency.format_plain(round(rows_total_display() * ratio, 2))
+            _safe_update(paid)
+            refresh_summary()
+
+        def quick_pay_chip(label: str, ratio: float, icon) -> ft.Container:
+            return ft.Container(
+                ft.Row([ft.Icon(icon, size=14, color=Colors.PRIMARY), ft.Text(label, size=11, weight=ft.FontWeight.W_600)], spacing=5),
+                padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                border=ft.border.all(1, Colors.PRIMARY), border_radius=12,
+                bgcolor=Colors.WHITE, ink=True,
+                on_click=lambda _: quick_pay(ratio),
+            )
+
+        quick_chips = ft.Row(
+            [
+                quick_pay_chip("دفعة كاملة", 1.0, ft.Icons.CHECK_CIRCLE_OUTLINE),
+                quick_pay_chip("النصف", 0.5, ft.Icons.PERCENT),
+                quick_pay_chip("بدون دفعة", 0.0, ft.Icons.MONEY_OFF_OUTLINED),
+            ],
+            spacing=6, wrap=True,
+        )
+
+        # ---------------------------------------------------------------- save
+        def _default_unit(item_id: int) -> tuple[int | None, float]:
+            # Same default as the page editor's update_line_units: the
+            # item's first unit (its base unit) wins when none is chosen.
+            try:
+                units = self.ctx.items.units(item_id)
+            except Exception:
+                units = []
+            if not units:
+                return None, 1.0
+            try:
+                return int(units[0]["id"]), float(units[0].get("conversion_factor") or 1)
+            except Exception:
+                return None, 1.0
+
+        def build_inputs() -> list[InvoiceLineInput]:
+            inputs: list[InvoiceLineInput] = []
+            for idx, row in enumerate(lines_grid.rows, start=1):
+                if not row.get("item"):
+                    continue
+                item_id = int(row["item"])
+                try:
+                    qty = float(row.get("qty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0.0
+                if qty <= 0:
+                    raise ValueError(f"كمية البند {idx} غير صحيح")
+                try:
+                    unit_price = (
+                        currency.parse_display_input(str(row.get("price")), settings)
+                        if row.get("price") not in (None, "")
+                        else 0.0
+                    )
+                except Exception as exc:
+                    raise ValueError(f"سعر البند {idx} غير صحيح") from exc
+                unit_id, factor = _default_unit(item_id)
+                inputs.append(
+                    InvoiceLineInput(
+                        description="",
+                        item_id=item_id,
+                        unit_id=unit_id,
+                        conversion_factor=factor,
+                        quantity=qty,
+                        unit_price=unit_price,
+                    )
+                )
+            if not inputs:
+                raise ValueError("أدخل مادة وكمية على الأقل")
+            return inputs
+
+        def save(_=None) -> None:
+            try:
+                inputs = build_inputs()
+                if (type_dd.value or "sale") == "sale" and not getattr(self, "_margin_override", False):
+                    warnings = self._sale_margin_warnings(inputs, item_map)
+                    if warnings:
+                        self._margin_override = True
+                        self.notify(warnings[0] + " — احفظ مرة أخرى للتأكيد", kind="warning")
+                        return
+                self._margin_override = False
+                is_sale = (type_dd.value or "sale") == "sale"
+                saved_id = self.ctx.invoices.create_invoice(
+                    invoice_type=type_dd.value or "sale",
+                    lines=inputs,
+                    customer_id=int(party_dd.value) if (is_sale and party_dd.value) else None,
+                    supplier_id=int(party_dd.value) if (not is_sale and party_dd.value) else None,
+                    invoice_date=(invoice_date.value or "").strip(),
+                    reference=reference.value,
+                    notes=notes.value,
+                    paid_amount=currency.parse_display_input(paid.value, settings),
+                )
+                close()
+                self.notify(f"تم حفظ الفاتورة #{saved_id}", sound_kind="save")
+                self.show_center()
+                if is_sale:
+                    # Same PHASE10 refresh the page editor triggers: a sale
+                    # moves the numbers on the home screen widget.
+                    refresh_home_widget(self.page, self.native_files, self.ctx.dashboard, self.ctx.settings)
+                if self.on_saved:
+                    self.on_saved()
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        def type_changed(_=None) -> None:
+            self.invoice_type = type_dd.value or "sale"
+            party_options()
+            # Prices are invoice-type dependent; refill selected rows --
+            # exactly what the page editor's type_changed does.
+            for index, row in enumerate(lines_grid.rows):
+                if not row.get("item"):
+                    continue
+                item_row = item_map.get(int(row["item"]))
+                if item_row is not None:
+                    lines_grid.set_cell(index, "price", default_display_price(item_row))
+            update_party_insight()
+            refresh_summary()
+
+        type_dd.on_change = type_changed
+        party_dd.on_change = lambda e: (update_party_insight(), refresh_summary())
+
+        # -------------------------------------------------------------- steps
+        step1_body = ft.Column(
+            [
+                ft.Column([ft.Text("نوع الفاتورة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd], spacing=6, tight=True),
+                ft.Column([party_dd, party_insight], spacing=6, tight=True),
+                ft.ResponsiveRow(
+                    [
+                        ft.Container(invoice_date, col={"xs": 12, "md": 6}),
+                        ft.Container(reference, col={"xs": 12, "md": 6}),
+                    ],
+                    spacing=7, run_spacing=7,
+                ),
+                ft.Container(
+                    ft.Text("بدون اختيار عميل / مورد تُحسب الفاتورة نقدية تلقائيًا", size=10, color=Colors.PRIMARY, weight=ft.FontWeight.W_600),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=7), bgcolor=Colors.PRIMARY_BG, border_radius=12,
+                ),
+            ],
+            spacing=12, tight=True,
+        )
+
+        step2_body = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
+                        ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line),
+                    ],
+                    spacing=8, wrap=True,
+                ),
+                chooser_panel,
+                ft.Container(lines_grid, height=300, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
+                ft.Text("افتح خلية المادة لاختيارها • Tab للتنقل بين الخلايا • Enter للتحرير", size=10, color=Colors.TEXT_SECONDARY),
+            ],
+            spacing=10, tight=True,
+        )
+
+        step3_body = ft.Column(
+            [
+                ft.Container(
+                    ft.Column(
+                        [
+                            ft.Row([ft.Text("ملخص الفاتورة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), ft.Container(expand=True), lines_summary_text], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            ft.Row(
+                                [
+                                    ft.Column([ft.Text("إجمالي الفاتورة", size=12, color=Colors.TEXT_SECONDARY), total_text], spacing=2, expand=True),
+                                    ft.Column([ft.Text("المتبقي", size=12, color=Colors.TEXT_SECONDARY), remaining_text], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END, expand=True),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            paid_progress,
+                        ],
+                        spacing=8, tight=True,
+                    ),
+                    padding=12, bgcolor=Colors.BACKGROUND, border_radius=12,
+                ),
+                ft.Column([ft.Text("الدفعة الأولى", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), quick_chips, paid], spacing=8, tight=True),
+                notes,
+            ],
+            spacing=12, tight=True,
+        )
+
+        steps = [step1_body, step2_body, step3_body]
+        step_titles = [
+            "بيانات الفاتورة — النوع والطرف والتاريخ",
+            "بنود الفاتورة — اختر المادة والكمية والسعر",
+            "الدفع والمراجعة — الدفعة الأولى والملاحظات",
+        ]
+
+        title_text = ft.Text("فاتورة بيع جديدة", size=18, weight=ft.FontWeight.BOLD)
+        subtitle_text = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+        icon_bubble = ft.Container(ft.Icon(ft.Icons.TRENDING_UP, color=Colors.SUCCESS, size=22), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.SUCCESS_BG, border_radius=14)
+        body_holder = ft.Column([], spacing=14, tight=True)
+        footer_holder = ft.Row([], spacing=10, alignment=ft.MainAxisAlignment.END)
+        dots = ft.Row([], spacing=6, alignment=ft.MainAxisAlignment.CENTER)
+
+        def render_step() -> None:
+            idx = step["idx"]
+            is_sale = (type_dd.value or "sale") == "sale"
+            title_text.value = f"فاتورة {'بيع' if is_sale else 'شراء'} جديدة"
+            icon_bubble.content = ft.Icon(ft.Icons.TRENDING_UP if is_sale else ft.Icons.TRENDING_DOWN, color=Colors.SUCCESS if is_sale else Colors.PURPLE, size=22)
+            icon_bubble.bgcolor = Colors.SUCCESS_BG if is_sale else Colors.PURPLE_BG
+            subtitle_text.value = f"الخطوة {['١', '٢', '٣'][idx]} من ٣ — {step_titles[idx]}"
+            body_holder.controls = [steps[idx]]
+            dots.controls = [
+                ft.Container(width=7, height=7, border_radius=4, bgcolor=Colors.PRIMARY if i == idx else Colors.BORDER_STRONG)
+                for i in range(len(steps))
+            ]
+            if idx == 0:
+                footer_holder.controls = [
+                    ft.TextButton("إلغاء", on_click=close),
+                    ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: go(1)),
+                ]
+            elif idx < len(steps) - 1:
+                footer_holder.controls = [
+                    ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1)),
+                    ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: go(1)),
+                ]
+            else:
+                footer_holder.controls = [
+                    ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1)),
+                    ft.FilledButton("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                ]
+
+        def go(delta: int) -> None:
+            step["idx"] = max(0, min(len(steps) - 1, step["idx"] + delta))
+            render_step()
+            if step["opened"]:
+                self.page.update()
+
+        sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+
+        def close(_=None) -> None:
+            # The grid took over the page's keyboard handler when built;
+            # hand it back so the shell's shortcuts (and the list grid's
+            # arrow/Enter navigation) keep working.
+            self.page.close(sheet)
+            self.page.on_keyboard_event = previous_key_handler
+
+        sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
+
+        # ----------------------------------------------------------- initial
+        party_options()
+        if party_id:
+            try:
+                party_dd.value = str(int(party_id))
+            except Exception:
+                pass
+        prefill_lines = prefill_lines or []
+        for line in prefill_lines:
+            item_id = line.get("item_id")
+            if not item_id:
+                continue
+            item_id = int(item_id)
+            item_row = item_map.get(item_id)
+            index = lines_grid.add_row({"qty": line.get("quantity") or 1})
+            lines_grid.set_cell(index, "item", item_id)
+            price_usd = line.get("unit_price")
+            if price_usd:
+                lines_grid.set_cell(index, "price", round(currency.to_display(float(price_usd), rate), 2))
+            elif item_row is not None:
+                lines_grid.set_cell(index, "price", default_display_price(item_row))
+        if not prefill_lines:
+            # Three blank rows, same head start the bulk-entry sheet gives.
+            for _ in range(3):
+                lines_grid.add_row({"qty": 1})
+        update_party_insight()
+        refresh_summary()
+
+        render_step()
+        sheet.content = ft.Container(
+            ft.Column(
+                [
+                    ft.Row([ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10)], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row(
+                        [icon_bubble, ft.Column([title_text, subtitle_text], spacing=1, expand=True), header_close_button(close)],
+                        spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    dots,
+                    ft.Divider(height=1, color=Colors.BORDER_ALT),
+                    body_holder,
+                    footer_holder,
+                ],
+                spacing=14, tight=True, scroll=ft.ScrollMode.AUTO,
+            ),
+            padding=ft.padding.only(left=20, right=20, top=12, bottom=24),
+            bgcolor=Colors.WHITE,
+            border_radius=ft.border_radius.only(top_left=28, top_right=28),
+            shadow=Shadow.LG,
+        )
+        self.page.open(sheet)
+        step["opened"] = True
+
     def show_editor(
         self,
         invoice_id: int | None = None,
@@ -865,6 +1495,12 @@ class InvoiceCenter:
         prefill_lines: list[dict] | None = None,
         party_id: int | None = None,
     ) -> None:
+        if invoice_id is None:
+            # Creating a new invoice now goes through the 3-step bottom
+            # sheet (same pattern as creating a material); the full-page
+            # editor below stays for editing existing invoices.
+            self.show_new_invoice_sheet(invoice_type, prefill_lines=prefill_lines, party_id=party_id)
+            return
         existing = self.ctx.invoices.get_invoice(invoice_id) if invoice_id else None
         if invoice_id and not existing:
             self.notify("الفاتورة غير موجودة")
@@ -935,55 +1571,7 @@ class InvoiceCenter:
                 party_dd.value = None
 
         def party_insight_text(is_sale: bool, party_id: int) -> str | None:
-            repo = self.ctx.customers if is_sale else self.ctx.suppliers
-            try:
-                summary = repo.activity_summary(party_id)
-            except Exception:
-                return None
-            count = int(summary.get("invoice_count") or 0)
-            if count == 0:
-                return None
-            parts: list[str] = []
-            last_date_obj: date | None = None
-            last_date_str = summary.get("last_invoice_date")
-            if last_date_str:
-                try:
-                    last_date_obj = date.fromisoformat(str(last_date_str)[:10])
-                    days_since = (date.today() - last_date_obj).days
-                    if days_since <= 0:
-                        parts.append("آخر فاتورة اليوم")
-                    elif days_since == 1:
-                        parts.append("آخر فاتورة أمس")
-                    else:
-                        parts.append(f"آخر فاتورة قبل {days_since} يوم")
-                except Exception:
-                    last_date_obj = None
-            recent_dates = sorted({
-                r["invoice_date"] for r in (summary.get("recent_invoices") or []) if r.get("invoice_date")
-            })
-            if last_date_obj is not None and len(recent_dates) >= 2:
-                try:
-                    parsed = [date.fromisoformat(str(d)[:10]) for d in recent_dates]
-                    intervals = [
-                        (parsed[i + 1] - parsed[i]).days
-                        for i in range(len(parsed) - 1)
-                        if (parsed[i + 1] - parsed[i]).days > 0
-                    ]
-                    if intervals:
-                        avg_days = round(sum(intervals) / len(intervals))
-                        if avg_days >= 1:
-                            next_expected = last_date_obj + timedelta(days=avg_days)
-                            days_left = (next_expected - date.today()).days
-                            if -2 <= days_left <= 3:
-                                parts.append("اقترب موعد طلبه المعتاد")
-                            elif days_left < -2:
-                                parts.append("تجاوز موعد طلبه المعتاد")
-                except Exception:
-                    pass
-            outstanding = float(summary.get("outstanding_total") or 0)
-            if outstanding > 1e-9:
-                parts.append(f"مستحق عليه {self.money(outstanding)}")
-            return " • ".join(parts) if parts else None
+            return self._party_insight_text(is_sale, party_id)
 
         def _safe_update(control) -> None:
             # A control may not be attached to the page yet the first time
@@ -1550,19 +2138,7 @@ class InvoiceCenter:
                     )
                 # Margin guard for sale invoices (stored USD vs average cost)
                 if (type_dd.value or "sale") == "sale" and not getattr(self, "_margin_override", False):
-                    warnings = []
-                    for line in inputs:
-                        if not line.item_id:
-                            continue
-                        item = item_map.get(int(line.item_id))
-                        # unit_price is in display units; convert to base USD per unit already stored
-                        result = check_sale_margin(
-                            unit_price_usd=float(line.unit_price) / max(float(line.conversion_factor or 1), 1e-9),
-                            item=item,
-                            settings=self.ctx.settings,
-                        )
-                        if result.get("flag"):
-                            warnings.append(result.get("message") or "بيع تحت التكلفة")
+                    warnings = self._sale_margin_warnings(inputs, item_map)
                     if warnings:
                         self._margin_override = True
                         self.notify(
