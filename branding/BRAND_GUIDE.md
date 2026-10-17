@@ -4,20 +4,23 @@
 Nano is a modern Arabic business application for accounting, inventory, invoices, and local-first operations.
 
 ## Core Logo
-- Mark: a bold rounded monogram **N**.
-- Primary logo: `logo_primary.png` (transparent full-colour mark, for light surfaces).
-- App icon: `app_icon.png` / `nano_app_icon.png` (gradient tile + white mark).
-- In-app badges use `src/assets/icon.png` (transparent mark).
+- Master artwork: `branding/source/brand.png` — the one square image the
+  entire identity is derived from. Swap this file to rebrand the app.
+- Primary logo: `logo_primary.png`.
+- App icon: `app_icon.png` / `nano_app_icon.png`.
+- In-app mark / badges: `src/assets/icon.png`.
+- Splash screens: `src/assets/splash*.png` (light + dark variants).
 
-All assets are generated deterministically by `tools/generate_brand_assets.py`
-(`python3 tools/generate_brand_assets.py`); the script is the source of truth,
-so the icon cannot drift between Windows/Android/iOS/web/macOS again.
+Every one of those files is generated deterministically from the master by
+`tools/generate_brand_assets.py` (`python3 tools/generate_brand_assets.py`),
+so the mark cannot drift between Windows/Android/iOS/web/macOS again. To
+rebrand, replace `branding/source/brand.png` and re-run the script — do not
+hand-edit the individual PNGs.
 
 ## Brand Palette
 The app theme (`src/nano_offline/core/theme.py`) is the single source of truth.
 - Primary teal: `#0F766E` / deep teal: `#115E59`
 - Violet: `#7C3AED` (gradient end) / accent aqua: `#2DD4BF`
-- Launcher icon: smooth teal -> violet diagonal gradient with a white N.
 - Surface: `#FFFFFF`
 - Background: `#F8FAFC`
 - Muted Text: `#64748B`
