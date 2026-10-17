@@ -1246,7 +1246,7 @@ class POSCenter:
                     ),
                     ft.Text(
                         label, size=12, weight=ft.FontWeight.W_600,
-                        color=Colors.WHITE if active else Colors.TEXT_DARK,
+                        color=Colors.WHITE if active else Colors.TEXT_MUTED_DARK,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True,
                     ),
                 ],
