@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
+import csv as _csv
+import json
+import tempfile
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import flet as ft
 
@@ -53,13 +57,13 @@ STATUS_AR = {
 # nothing is edited in place; tapping a row (or its open icon) opens the
 # detail sheet, which carries payment/print/PDF/edit/delete.
 INVOICE_GRID_COLUMNS = [
-    GridColumn("id", "الفاتورة", width=80, align="center", kind="number"),
-    GridColumn("type", "النوع", width=76, align="center", kind="badge"),
-    GridColumn("party_name", "الطرف"),
-    GridColumn("invoice_date", "التاريخ", width=98, align="center"),
-    GridColumn("total", "الإجمالي", width=106, align="end", kind="money"),
-    GridColumn("remaining_amount", "المتبقي", width=106, align="end", kind="money"),
-    GridColumn("payment_status", "الحالة", width=142, align="center", kind="badge", sortable=False),
+    GridColumn("id", "الفاتورة", width=80, align="center", kind="number", tooltip="رقم الفاتورة — اضغط للترتيب"),
+    GridColumn("type", "النوع", width=76, align="center", kind="badge", tooltip="بيع (مبيعات) أو شراء (مشتريات)"),
+    GridColumn("party_name", "الطرف", tooltip="العميل في المبيعات أو المورد في المشتريات — نقدي عند عدم التحديد"),
+    GridColumn("invoice_date", "التاريخ", width=98, align="center", tooltip="تاريخ الفاتورة — الافتراضي ترتيب زمني مع تجميع (اليوم/أمس…)"),
+    GridColumn("total", "الإجمالي", width=106, align="end", kind="money", tooltip="إجمالي الفاتورة بالمبلغ المعروض"),
+    GridColumn("remaining_amount", "المتبقي", width=106, align="end", kind="money", tooltip="ما لم يُسدَّد بعد — أحمر عند التأخر عن السداد"),
+    GridColumn("payment_status", "الحالة", width=142, align="center", kind="badge", sortable=False, tooltip="حالة السداد، وتظهر مؤشرات التأخير بالأيام"),
 ]
 
 
@@ -654,6 +658,147 @@ class InvoiceCenter:
             density_state = {"compact": self.ctx.settings.get("ui.invoices_density", "comfortable") == "compact"}
             selected_state = {"rows": []}
             grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
+            export_state = {"rows": []}
+            hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.invoices_hidden_columns", "").split(",")))}
+            auto_hidden = {"keys": {"invoice_date"} if (self.page.width or 1200) < 720 else set()}
+
+            def current_hidden() -> set[str]:
+                return set(hidden_state["keys"]) | set(auto_hidden["keys"])
+
+            def toggle_column(key: str) -> None:
+                if key in hidden_state["keys"]:
+                    hidden_state["keys"].discard(key)
+                else:
+                    hidden_state["keys"].add(key)
+                self.ctx.settings.set("ui.invoices_hidden_columns", ",".join(sorted(hidden_state["keys"])))
+                invoice_grid.set_hidden_keys(current_hidden())
+                self.page.update()
+
+            columns_button = ft.PopupMenuButton(
+                icon=ft.Icons.VIEW_COLUMN,
+                tooltip="إظهار/إخفاء الأعمدة",
+                items=[
+                    ft.PopupMenuItem(
+                        text=c.label,
+                        checked=c.key not in hidden_state["keys"],
+                        on_click=lambda _, k=c.key: toggle_column(k),
+                    )
+                    for c in INVOICE_GRID_COLUMNS
+                ],
+            )
+
+            async def export_csv(_=None) -> None:
+                rows = export_state["rows"]
+                if not rows:
+                    self.notify("لا توجد بيانات للتصدير", kind="warning")
+                    return
+                if self.native_files is None:
+                    self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                    return
+                try:
+                    path = Path(tempfile.gettempdir()) / f"nano_invoices_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                        writer = _csv.writer(fh)
+                        writer.writerow(["الفاتورة", "النوع", "الطرف", "التاريخ", "الإجمالي", "المدفوع", "المتبقي", "الحالة", "المرجع"])
+                        for inv in rows:
+                            writer.writerow([
+                                inv.get("id") or "",
+                                "بيع" if inv.get("type") == "sale" else "شراء",
+                                inv.get("party_name") or "نقدي",
+                                inv.get("invoice_date") or "",
+                                inv.get("total") or 0,
+                                inv.get("paid_amount") or 0,
+                                max(0.0, float(inv.get("remaining_amount") or 0)),
+                                STATUS_AR.get(str(inv.get("payment_status") or ""), inv.get("payment_status") or ""),
+                                inv.get("reference") or "",
+                            ])
+                    await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير الفواتير")
+                    self.notify("تم تجهيز ملف CSV (بترميز يفتح في Excel العربي)")
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            export_button = ft.IconButton(
+                icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+                tooltip="تصدير CSV للعرض الحالي",
+                on_click=export_csv,
+            )
+
+            def focus_search() -> None:
+                invoice_grid.disarm()
+                try:
+                    search.focus()
+                except Exception:
+                    pass
+
+            def invoice_is_overdue(row: dict) -> bool:
+                remaining = max(0.0, float(row.get("remaining_amount") or 0))
+                days = days_since(row.get("invoice_date"))
+                return remaining > 1e-9 and days is not None and days > overdue_threshold
+
+            def invoice_row_bg(row: dict) -> str | None:
+                return Colors.DANGER_BG if invoice_is_overdue(row) else None
+
+            def invoice_group(row: dict) -> str | None:
+                if grid_sort["key"]:
+                    return None
+                if invoice_is_overdue(row):
+                    return "متأخرة السداد"
+                days = days_since(row.get("invoice_date"))
+                if days is None:
+                    return "بدون تاريخ"
+                if days <= 0:
+                    return "اليوم"
+                if days == 1:
+                    return "أمس"
+                if days <= 7:
+                    return "هذا الأسبوع"
+                if days <= 30:
+                    return "هذا الشهر"
+                return "أقدم من شهر"
+
+            def detail_chip(icon, label: str, value: str) -> ft.Control:
+                return ft.Container(
+                    ft.Row(
+                        [
+                            ft.Icon(icon, size=15, color=Colors.PRIMARY),
+                            ft.Text(f"{label}: ", size=11, color=Colors.TEXT_SECONDARY),
+                            ft.Text(value, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                        ],
+                        spacing=5,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                    border=ft.border.all(1, Colors.BORDER),
+                    border_radius=10,
+                    bgcolor=Colors.WHITE,
+                )
+
+            def invoice_expand_panel(row: dict) -> ft.Control:
+                chips = [
+                    detail_chip(ft.Icons.TAG_OUTLINED, "المرجع", str(row.get("reference") or "—")),
+                    detail_chip(
+                        ft.Icons.PAYMENTS_OUTLINED, "مدفوع",
+                        f"{self.money(row.get('paid_amount'))} من {self.money(row.get('total'))}",
+                    ),
+                ]
+                notes = str(row.get("notes") or "").strip()
+                if notes:
+                    chips.append(detail_chip(ft.Icons.NOTES_OUTLINED, "ملاحظات", notes[:80]))
+                return ft.Row(chips, spacing=8, wrap=True)
+
+            def duplicate_invoice(invoice_id: int) -> None:
+                src = self.ctx.invoices.get_invoice(invoice_id)
+                if not src:
+                    return
+                lines = [
+                    {"item_id": ln.get("item_id"), "quantity": ln.get("quantity"), "unit_price": ln.get("unit_price")}
+                    for ln in (src.get("lines") or [])
+                    if ln.get("item_id")
+                ]
+                skipped = len(src.get("lines") or []) - len(lines)
+                party = src.get("customer_id") if src.get("type") == "sale" else src.get("supplier_id")
+                self.show_editor(None, src.get("type"), prefill_lines=lines, party_id=party)
+                if skipped:
+                    self.notify(f"تم تجاهل {skipped} بند بلا مادة أثناء التكرار", kind="warning")
 
             def apply_grid_sort(key: str | None, direction: str | None) -> None:
                 grid_sort["key"], grid_sort["dir"] = key, direction
@@ -666,6 +811,7 @@ class InvoiceCenter:
                 items: list = [
                     ("فتح", ft.Icons.OPEN_IN_NEW_ROUNDED, lambda i=invoice_id: self.show_invoice_detail(i)),
                     ("تعديل", ft.Icons.EDIT_OUTLINED, lambda i=invoice_id: self.show_editor(i)),
+                    ("تكرار كفاتورة جديدة", ft.Icons.CONTENT_COPY_OUTLINED, lambda i=invoice_id: duplicate_invoice(i)),
                 ]
                 if remaining > 1e-9:
                     items.append(("تسجيل دفعة", ft.Icons.PAYMENTS_OUTLINED, lambda i=invoice_id: self.show_payment_dialog(i)))
@@ -766,11 +912,17 @@ class InvoiceCenter:
                 page=self.page,
                 row_height=36 if density_state["compact"] else 48,
                 viewport_height=grid_height,
+                hidden_keys=current_hidden(),
                 on_row_activate=lambda row: self.show_invoice_detail(int(row.get("id") or 0)),
                 on_sort=apply_grid_sort,
                 selectable=True,
                 on_selection_change=render_bulk_bar,
                 on_row_menu=row_menu,
+                row_bg=invoice_row_bg,
+                group_by=invoice_group,
+                on_row_expand=invoice_expand_panel,
+                on_search_shortcut=focus_search,
+                on_new_shortcut=lambda: self.show_editor(None, "sale"),
                 formatter=_grid_formatter,
                 boxed=True,
                 center_cells=True,
@@ -798,6 +950,14 @@ class InvoiceCenter:
                         return str(inv.get(sort_key) or "")
 
                     matched.sort(key=sort_value, reverse=reverse)
+                else:
+                    # Default view: overdue invoices pinned first, the rest
+                    # stay in the service's date-descending order, and the
+                    # group banners narrate "متأخرة السداد / اليوم / أمس…".
+                    matched.sort(key=lambda inv: 0 if invoice_is_overdue(inv) else 1)
+                export_state["rows"] = matched
+                invoice_grid.set_hidden_keys(current_hidden())
+                invoice_grid.set_group_by(None if grid_sort["key"] else invoice_group)
                 shown = matched[: render_limit["n"]]
                 if not shown:
                     invoice_grid.set_footer(None)
@@ -881,8 +1041,8 @@ class InvoiceCenter:
                 ft.Column(
                     [
                         ft.Row(
-                            [ft.Container(search, expand=True), density_button],
-                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            [ft.Container(search, expand=True), columns_button, export_button, density_button],
+                            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         ft.Column([ft.Text("النوع", size=10, color=Colors.TEXT_SECONDARY), type_row], spacing=4),
                         ft.Column([ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY), status_row], spacing=4),
@@ -1341,6 +1501,109 @@ class InvoiceCenter:
             spacing=6, wrap=True,
         )
 
+        # --------------------------------------------------------------- draft
+        # An unfinished invoice survives an accidental dismiss (back gesture,
+        # drag-down): its state is stored in settings and offered back next
+        # time the same invoice type is being created.
+        draft_key = "ui.invoice_draft"
+        draft_saved = {"saved": False}
+
+        def clear_draft() -> None:
+            try:
+                self.ctx.settings.set(draft_key, "")
+            except Exception:
+                pass
+
+        def load_draft() -> dict | None:
+            try:
+                raw = self.ctx.settings.get(draft_key, "")
+                if raw:
+                    data = json.loads(raw)
+                    if isinstance(data, dict) and data.get("lines") is not None:
+                        return data
+            except Exception:
+                pass
+            return None
+
+        def persist_draft() -> None:
+            if draft_saved["saved"]:
+                return
+            lines = []
+            for row in lines_grid.rows:
+                if not row.get("item"):
+                    continue
+                lines.append({"item_id": int(row["item"]), "qty": row.get("qty"), "price": row.get("price")})
+            if not lines and not party_dd.value and not (reference.value or "").strip() and not (notes.value or "").strip():
+                clear_draft()
+                return
+            payload = {
+                "type": type_dd.value or "sale",
+                "party_id": int(party_dd.value) if party_dd.value else None,
+                "invoice_date": invoice_date.value,
+                "reference": reference.value,
+                "notes": notes.value,
+                "paid": paid.value,
+                "lines": lines,
+            }
+            try:
+                self.ctx.settings.set(draft_key, json.dumps(payload, ensure_ascii=False))
+            except Exception:
+                pass
+
+        def restore_draft(draft: dict) -> None:
+            type_dd.value = draft.get("type") if draft.get("type") in ("sale", "purchase") else "sale"
+            self.invoice_type = type_dd.value
+            party_options()
+            if draft.get("party_id"):
+                try:
+                    party_dd.value = str(int(draft["party_id"]))
+                except Exception:
+                    pass
+            invoice_date.value = draft.get("invoice_date") or date.today().isoformat()
+            reference.value = draft.get("reference") or ""
+            notes.value = draft.get("notes") or ""
+            paid.value = str(draft.get("paid") or "0")
+            lines_grid.set_rows([])
+            for line in draft.get("lines") or []:
+                try:
+                    item_id = int(line.get("item_id"))
+                except (TypeError, ValueError):
+                    continue
+                item_row = item_map.get(item_id)
+                if item_row is None:
+                    continue
+                index = lines_grid.add_row({"qty": line.get("qty") or 1})
+                lines_grid.set_cell(index, "item", item_id)
+                if line.get("price") not in (None, ""):
+                    lines_grid.set_cell(index, "price", float(line["price"]))
+                else:
+                    lines_grid.set_cell(index, "price", default_display_price(item_row))
+            update_party_insight()
+            refresh_summary()
+
+        draft_banner = ft.Container(visible=False)
+
+        def hide_draft_banner() -> None:
+            draft_banner.visible = False
+            _safe_update(draft_banner)
+
+        def show_draft_banner(draft: dict) -> None:
+            draft_banner.content = ft.Row(
+                [
+                    ft.Icon(ft.Icons.RESTORE_ROUNDED, size=16, color=Colors.ORANGE_DARK),
+                    ft.Text("توجد مسودة غير محفوظة لهذه الفاتورة", size=11, color=Colors.ORANGE_DARK, expand=True),
+                    ft.TextButton("استعادة", on_click=lambda _: (restore_draft(draft), hide_draft_banner())),
+                    ft.TextButton("حذف", on_click=lambda _: (clear_draft(), hide_draft_banner())),
+                ],
+                spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            draft_banner.padding = ft.padding.symmetric(horizontal=10, vertical=6)
+            draft_banner.bgcolor = Colors.WARNING_BG_ALT
+            draft_banner.border = ft.border.all(1, Colors.WARNING)
+            draft_banner.border_radius = 10
+            draft_banner.visible = True
+            _safe_update(draft_banner)
+
         # ---------------------------------------------------------------- save
         def _default_unit(item_id: int) -> tuple[int | None, float]:
             # Same default as the page editor's update_line_units: the
@@ -1412,6 +1675,8 @@ class InvoiceCenter:
                     notes=notes.value,
                     paid_amount=currency.parse_display_input(paid.value, settings),
                 )
+                draft_saved["saved"] = True
+                clear_draft()
                 close()
                 self.notify(f"تم حفظ الفاتورة #{saved_id}", sound_kind="save")
                 self.show_center()
@@ -1444,6 +1709,7 @@ class InvoiceCenter:
         # -------------------------------------------------------------- steps
         step1_body = ft.Column(
             [
+                draft_banner,
                 ft.Column([ft.Text("نوع الفاتورة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd], spacing=6, tight=True),
                 ft.Column([party_dd, party_insight], spacing=6, tight=True),
                 ft.ResponsiveRow(
@@ -1556,10 +1822,11 @@ class InvoiceCenter:
             # The grid took over the page's keyboard handler when built;
             # hand it back so the shell's shortcuts (and the list grid's
             # arrow/Enter navigation) keep working.
+            persist_draft()
             self.page.close(sheet)
             self.page.on_keyboard_event = previous_key_handler
 
-        sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
+        sheet.on_dismiss = lambda e: (persist_draft(), setattr(self.page, "on_keyboard_event", previous_key_handler))
 
         # ----------------------------------------------------------- initial
         party_options()
@@ -1588,6 +1855,10 @@ class InvoiceCenter:
                 lines_grid.add_row({"qty": 1})
         update_party_insight()
         refresh_summary()
+
+        draft = load_draft()
+        if draft and draft.get("type") in (None, "", invoice_type):
+            show_draft_banner(draft)
 
         render_step()
         sheet.content = ft.Container(

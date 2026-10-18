@@ -38,6 +38,7 @@ class GridColumn:
     editable: bool = False
     kind: str = "text"  # text | number | money | badge
     sortable: bool = True
+    tooltip: str | None = None
 
 
 class GridNavigator:

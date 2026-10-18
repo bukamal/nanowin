@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import csv as _csv
+import tempfile
+from datetime import datetime
+from pathlib import Path
 
 import flet as ft
 
@@ -20,14 +24,14 @@ from nano_offline.core import item_card_signing
 # quantity is derived from inventory movements (see ItemRepository.update,
 # which has no quantity parameter) and the rest are display-only.
 ITEM_GRID_COLUMNS = [
-    GridColumn("name", "الاسم", editable=True),
-    GridColumn("category_name", "التصنيف", width=120),
-    GridColumn("unit_name", "الوحدة", width=80),
-    GridColumn("item_type", "النوع", width=80, align="center", kind="badge"),
-    GridColumn("quantity", "الكمية", width=90, align="end", kind="number"),
-    GridColumn("purchase_price", "سعر الشراء", width=110, align="end", kind="money", editable=True),
-    GridColumn("selling_price", "سعر البيع", width=110, align="end", kind="money", editable=True),
-    GridColumn("_status", "الحالة", width=100, align="center", kind="badge", sortable=False),
+    GridColumn("name", "الاسم", editable=True, tooltip="اسم المادة أو الخدمة — قابل للتعديل مباشرة"),
+    GridColumn("category_name", "التصنيف", width=120, tooltip="التصنيف المسجّل للمادة"),
+    GridColumn("unit_name", "الوحدة", width=80, tooltip="الوحدة الأساسية للمادة"),
+    GridColumn("item_type", "النوع", width=80, align="center", kind="badge", tooltip="مخزون (يُتابع) أو خدمة (لا مخزون)"),
+    GridColumn("quantity", "الكمية", width=90, align="end", kind="number", tooltip="الكمية المتاحة حاليًا من حركات المخزون"),
+    GridColumn("purchase_price", "سعر الشراء", width=110, align="end", kind="money", editable=True, tooltip="آخر سعر شراء — قابل للتعديل"),
+    GridColumn("selling_price", "سعر البيع", width=110, align="end", kind="money", editable=True, tooltip="سعر البيع الحالي — قابل للتعديل"),
+    GridColumn("_status", "الحالة", width=100, align="center", kind="badge", sortable=False, tooltip="متوفر / منخفض / نفد / خدمة"),
 ]
 
 
@@ -304,6 +308,127 @@ class ItemsCenter:
         grid_sort = {"key": None, "dir": None}
         density_state = {"compact": ctx.settings.get("ui.items_density", "comfortable") == "compact"}
         selected_state = {"rows": []}
+        export_state = {"rows": []}
+        hidden_state = {"keys": set(filter(None, ctx.settings.get("ui.items_hidden_columns", "").split(",")))}
+        auto_hidden = {"keys": {"category_name", "unit_name"} if (page.width or 1200) < 720 else set()}
+
+        def current_hidden() -> set[str]:
+            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
+
+        def toggle_column(key: str) -> None:
+            if key in hidden_state["keys"]:
+                hidden_state["keys"].discard(key)
+            else:
+                hidden_state["keys"].add(key)
+            ctx.settings.set("ui.items_hidden_columns", ",".join(sorted(hidden_state["keys"])))
+            grid.set_hidden_keys(current_hidden())
+            page.update()
+
+        def column_menu_items() -> list:
+            return [
+                ft.PopupMenuItem(
+                    text=c.label,
+                    checked=c.key not in hidden_state["keys"],
+                    on_click=lambda _, k=c.key: toggle_column(k),
+                )
+                for c in ITEM_GRID_COLUMNS
+            ]
+
+        columns_button = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN,
+            tooltip="إظهار/إخفاء الأعمدة",
+            items=column_menu_items(),
+        )
+
+        async def export_csv(_=None) -> None:
+            rows = export_state["rows"]
+            if not rows:
+                notify("لا توجد بيانات للتصدير", kind="warning")
+                return
+            if self.native_files is None:
+                notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    writer = _csv.writer(fh)
+                    writer.writerow(["الاسم", "التصنيف", "الوحدة", "النوع", "الكمية", "سعر الشراء", "سعر البيع", "الباركود"])
+                    for item in rows:
+                        writer.writerow([
+                            item.get("name") or "",
+                            item.get("category_name") or "",
+                            item.get("unit_name") or "",
+                            item.get("item_type") or "",
+                            item.get("quantity") or 0,
+                            item.get("purchase_price") or 0,
+                            item.get("selling_price") or 0,
+                            item.get("barcode") or "",
+                        ])
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير المواد")
+                notify("تم تجهيز ملف CSV (بترميز يفتح في Excel العربي)")
+            except Exception as exc:
+                notify(str(exc), kind="error")
+
+        export_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+            tooltip="تصدير CSV للعرض الحالي",
+            on_click=export_csv,
+        )
+
+        def item_row_bg(row: dict) -> str | None:
+            if row.get("item_type") != "مخزون":
+                return None
+            qty = float(row.get("quantity") or 0)
+            if qty <= 0:
+                return Colors.DANGER_BG
+            if qty < LOW_STOCK:
+                return Colors.WARNING_BG_ALT
+            return None
+
+        def item_expand_panel(row: dict) -> ft.Control:
+            item_id = int(row.get("id") or 0)
+            stock_value = float(row.get("quantity") or 0) * float(row.get("average_cost") or 0)
+            last_move = "لا حركات مخزون"
+            try:
+                moves = ctx.items.movements(item_id, limit=1)
+                if moves:
+                    mv = moves[0]
+                    kind_label = mv.get("movement_type") or mv.get("kind") or "حركة"
+                    last_move = f"{kind_label} • {mv.get('quantity')} • {str(mv.get('movement_date') or '')[:10]}"
+            except Exception:
+                pass
+
+            def chip(icon, label: str, value: str):
+                return ft.Container(
+                    ft.Row(
+                        [
+                            ft.Icon(icon, size=15, color=Colors.PRIMARY),
+                            ft.Text(f"{label}: ", size=11, color=Colors.TEXT_SECONDARY),
+                            ft.Text(value, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                        ],
+                        spacing=5,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                    border=ft.border.all(1, Colors.BORDER),
+                    border_radius=10,
+                    bgcolor=Colors.WHITE,
+                )
+
+            return ft.Row(
+                [
+                    chip(ft.Icons.QR_CODE_2_OUTLINED, "الباركود", str(row.get("barcode") or "بلا باركود")),
+                    chip(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, "قيمة المخزون", money(stock_value)),
+                    chip(ft.Icons.HISTORY_ROUNDED, "آخر حركة", last_move),
+                ],
+                spacing=8, wrap=True,
+            )
+
+        def focus_search() -> None:
+            grid.disarm()
+            try:
+                search.focus()
+            except Exception:
+                pass
 
         def apply_grid_sort(key: str | None, direction: str | None) -> None:
             grid_sort["key"], grid_sort["dir"] = key, direction
@@ -398,6 +523,7 @@ class ItemsCenter:
             rows=[],
             page=page,
             row_height=36 if density_state["compact"] else 48,
+            hidden_keys=current_hidden(),
             on_cell_commit=_grid_commit,
             on_row_activate=lambda row: show_item_detail(row),
             on_sort=apply_grid_sort,
@@ -409,6 +535,10 @@ class ItemsCenter:
                 None,
                 ("حذف", ft.Icons.DELETE_OUTLINE, lambda r=row: confirm_delete_item(r)),
             ],
+            row_bg=item_row_bg,
+            on_row_expand=item_expand_panel,
+            on_search_shortcut=focus_search,
+            on_new_shortcut=lambda: open_item_editor(),
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -2679,6 +2809,8 @@ class ItemsCenter:
                 kpi_card("الخدمات", str(service_count), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")),
             ])
             # Desktop spreadsheet grid, driven by search/filters/sort.
+            export_state["rows"] = filtered
+            grid.set_hidden_keys(current_hidden())
             shown = filtered[: render_limit["n"]]
             grid.set_rows(shown)
             remaining = len(filtered) - len(shown)
@@ -2719,8 +2851,8 @@ class ItemsCenter:
         ], spacing=6, scroll=ft.ScrollMode.AUTO)
         sort_dd.width = 130
         filters_row = ft.Row(
-            [ft.Container(filters, expand=True), sort_dd, density_button],
-            vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8,
+            [ft.Container(filters, expand=True), sort_dd, columns_button, export_button, density_button],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=4,
         )
 
         # Sticky header: only search + filters, always reachable while
