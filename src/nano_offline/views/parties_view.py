@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+import csv as _csv
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
 import flet as ft
 
 from nano_offline.core.toast import toast
 from nano_offline.core.party_reliability import grade_party
 
-from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls
+from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import currency
+
+
+# Desktop grid columns for the customers/suppliers screens. Balance is the
+# headline number; grade summarizes outstanding-invoice behavior.
+PARTY_GRID_COLUMNS = [
+    GridColumn("name", "الاسم", tooltip="اسم العميل أو المورد — اضغط للترتيب"),
+    GridColumn("phone", "الهاتف", width=120, align="center", tooltip="رقم الهاتف المسجّل — يُخفى تلقائيًا على الشاشات الضيقة"),
+    GridColumn("balance", "الرصيد", width=120, align="end", kind="money", tooltip="الرصيد الحالي: موجب يعني مبلغًا مستحقًا على الطرف"),
+    GridColumn("_grade", "التقييم", width=170, align="center", kind="badge", sortable=False, tooltip="تقييم انتظام السداد بناءً على الفواتير غير المسددة"),
+]
 
 
 class PartyCenter:
@@ -48,15 +63,149 @@ class PartyCenter:
         self._set_header(title, f"إدارة بيانات {title} والحسابات المرتبطة")
         search = SelectAllTextField(
             label=f"بحث في {title}",
-            hint_text=f"الاسم أو الهاتف",
+            hint_text="الاسم أو الهاتف",
             prefix_icon=ft.Icons.SEARCH,
             expand=True,
         )
-        rows = ft.Column(spacing=9)
         # Same paging as the items/invoices screens: build only a page of
-        # cards at a time instead of every matching customer/supplier.
+        # rows at a time instead of every matching customer/supplier.
         render_limit = {"n": 60}
         summary_row = ft.ResponsiveRow(spacing=8, run_spacing=8)
+
+        # ---- desktop grid (same spreadsheet treatment as items/invoices) --
+        grid_sort = {"key": None, "dir": None}
+        density_state = {"compact": self.ctx.settings.get("ui.parties_density", "comfortable") == "compact"}
+        selected_state = {"rows": []}
+        outstanding_state = {"map": {}}
+        export_state = {"rows": []}
+        hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.parties_hidden_columns", "").split(",")))}
+        auto_hidden = {"keys": {"phone"} if (page.width or 1200) < 720 else set()}
+
+        def current_hidden() -> set[str]:
+            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
+
+        def toggle_column(key: str) -> None:
+            if key in hidden_state["keys"]:
+                hidden_state["keys"].discard(key)
+            else:
+                hidden_state["keys"].add(key)
+            self.ctx.settings.set("ui.parties_hidden_columns", ",".join(sorted(hidden_state["keys"])))
+            grid.set_hidden_keys(current_hidden())
+            page.update()
+
+        columns_button = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN,
+            tooltip="إظهار/إخفاء الأعمدة",
+            items=[
+                ft.PopupMenuItem(
+                    text=c.label,
+                    checked=c.key not in hidden_state["keys"],
+                    on_click=lambda _, k=c.key: toggle_column(k),
+                )
+                for c in PARTY_GRID_COLUMNS
+            ],
+        )
+
+        async def export_csv(_=None) -> None:
+            rows_out = export_state["rows"]
+            if not rows_out:
+                notify("لا توجد بيانات للتصدير", kind="warning")
+                return
+            if self.native_files is None:
+                notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_parties_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    writer = _csv.writer(fh)
+                    writer.writerow(["الاسم", "الهاتف", "العنوان", "الرصيد", "التقييم"])
+                    for party in rows_out:
+                        rel = party_grade(party)
+                        writer.writerow([
+                            party.get("name") or "",
+                            party.get("phone") or "",
+                            party.get("address") or "",
+                            party.get("balance") or 0,
+                            (rel or {}).get("label") or "",
+                        ])
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject=f"تصدير {title}")
+                notify("تم تجهيز ملف CSV (بترميز يفتح في Excel العربي)")
+            except Exception as exc:
+                notify(str(exc), kind="error")
+
+        export_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+            tooltip="تصدير CSV للعرض الحالي",
+            on_click=export_csv,
+        )
+
+        def party_grade(row: dict) -> dict | None:
+            try:
+                return grade_party(
+                    balance=float(row.get("balance") or 0),
+                    outstanding_rows=outstanding_state["map"].get(int(row.get("id") or 0), []),
+                )
+            except Exception:
+                return None
+
+        def _grid_formatter(col, value, row):
+            if col.key == "balance":
+                return money(value)
+            if col.key == "phone":
+                return str(value or "—")
+            if col.key == "_grade":
+                rel = party_grade(row)
+                if not rel:
+                    return ("—", Colors.TEXT_SECONDARY, Colors.BACKGROUND)
+                label = rel["label"]
+                if rel.get("max_age_days"):
+                    label = f"{label} · {rel['max_age_days']}ي"
+                return (label, getattr(Colors, rel["color_token"], Colors.PRIMARY), getattr(Colors, rel["bg_token"], Colors.PRIMARY_BG))
+            return None
+
+        def party_row_bg(row: dict) -> str | None:
+            rel = party_grade(row)
+            if rel and rel.get("color_token") == "danger":
+                return Colors.DANGER_BG
+            return None
+
+        def party_expand_panel(row: dict) -> ft.Control:
+            def chip(icon, label: str, value: str):
+                return ft.Container(
+                    ft.Row(
+                        [
+                            ft.Icon(icon, size=15, color=Colors.PRIMARY),
+                            ft.Text(f"{label}: ", size=11, color=Colors.TEXT_SECONDARY),
+                            ft.Text(value, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                        ],
+                        spacing=5,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                    border=ft.border.all(1, Colors.BORDER),
+                    border_radius=10,
+                    bgcolor=Colors.WHITE,
+                )
+
+            return ft.Row(
+                [
+                    chip(ft.Icons.PHONE_OUTLINED, "الهاتف", str(row.get("phone") or "بلا هاتف")),
+                    chip(ft.Icons.LOCATION_ON_OUTLINED, "العنوان", str(row.get("address") or "بلا عنوان")),
+                    chip(ft.Icons.CALENDAR_MONTH_OUTLINED, "أُضيف", str(row.get("created_at") or "—")[:10]),
+                ],
+                spacing=8, wrap=True,
+            )
+
+        def focus_search() -> None:
+            grid.disarm()
+            try:
+                search.focus()
+            except Exception:
+                pass
+
+        def apply_grid_sort(key: str | None, direction: str | None) -> None:
+            grid_sort["key"], grid_sort["dir"] = key, direction
+            render_limit["n"] = 60
+            refresh()
 
         def small_metric(label: str, value: str, icon, accent: str):
             return ft.Container(
@@ -105,15 +254,11 @@ class PartyCenter:
             page.open(sheet)
 
         def confirm_delete(party: dict, parent_dialog=None, restore_on_cancel: bool = False):
-            # restore_on_cancel=True is used by the swipe-to-delete row (see
-            # `rows.controls.append` below): the row has already been swiped
-            # out of view by Dismissible's own animation *before* this dialog
-            # opens, so cancelling here must restore it. refresh() is the
-            # correct way to do that — nothing was actually deleted, so
-            # re-reading from `repo` naturally redraws the still-existing
-            # party back into the list. Tap-triggered deletes (from
-            # show_detail) pass restore_on_cancel=False since no row was
-            # ever removed from view for those.
+            # Kept parameter-compatible with the old swipe-to-delete rows
+            # (SWIPE_ACTIONS_NOTES.md): the desktop grid now routes deletes
+            # through the ⋮ row menu and the bulk bar into this same guarded
+            # dialog, which re-reads from `repo` after cancelling or
+            # deleting so the list always reflects actual data.
             confirm = ft.AlertDialog(modal=True)
 
             def close(_=None):
@@ -362,6 +507,133 @@ class PartyCenter:
                 by.setdefault(pid, []).append(r)
             return by
 
+        def render_bulk_bar(rows_out: list[dict]) -> None:
+            selected_state["rows"] = list(rows_out)
+            if not rows_out:
+                bulk_bar.visible = False
+                bulk_bar.content = None
+            else:
+                bulk_bar.content = ft.Row(
+                    [
+                        ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                        ft.Text(f"تم تحديد {len(rows_out)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                        ft.Container(expand=True),
+                        ft.FilledButton(
+                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                            style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+                            on_click=confirm_bulk_delete,
+                        ),
+                        ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
+                    ],
+                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                bulk_bar.visible = True
+            try:
+                bulk_bar.update()
+            except Exception:
+                pass
+
+        def confirm_bulk_delete(_=None) -> None:
+            chosen = list(selected_state["rows"])
+            if not chosen:
+                return
+            dialog = ft.AlertDialog(modal=True, title=ft.Text(f"تأكيد حذف {title}"))
+
+            def yes(_ev=None) -> None:
+                page.close(dialog)
+                deleted = 0
+                failures = 0
+                for party in chosen:
+                    try:
+                        repo.delete(int(party.get("id") or 0))
+                        deleted += 1
+                    except Exception:
+                        failures += 1
+                grid.clear_selection()
+                refresh()
+                if failures:
+                    notify(f"حُذف {deleted}، وتعذّر حذف {failures} لارتباطها بحركات مالية", kind="warning")
+                else:
+                    notify(f"تم حذف {deleted}", sound_kind="success")
+
+            def no(_ev=None) -> None:
+                page.close(dialog)
+
+            dialog.content = ft.Text(f"سيتم حذف {len(chosen)} من {title}. من لديه حركات مالية مرتبطة لن يُحذف.")
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=no),
+                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+            ]
+            page.open(dialog)
+
+        def toggle_density(_=None) -> None:
+            compact = not density_state["compact"]
+            density_state["compact"] = compact
+            grid.set_row_height(36 if compact else 48)
+            density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+            density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+            self.ctx.settings.set("ui.parties_density", "compact" if compact else "comfortable")
+            page.update()
+
+        density_button = ft.IconButton(
+            icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+            tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",
+            on_click=toggle_density,
+        )
+        bulk_bar = ft.Container(visible=False)
+
+        def party_menu(row: dict) -> list:
+            items: list = [
+                ("فتح الحساب", ft.Icons.OPEN_IN_NEW_ROUNDED, lambda r=row: show_detail(dict(r))),
+                ("تعديل", ft.Icons.EDIT_OUTLINED, lambda r=row: open_editor(dict(r))),
+            ]
+            balance = abs(float(row.get("balance") or 0))
+            if is_customer and self.on_open_receipt and balance > 1e-9:
+                items.append((
+                    "سند قبض", ft.Icons.PAYMENTS_OUTLINED,
+                    lambda r=row: self.on_open_receipt(customer_id=int(r["id"]), amount=max(0.0, float(r.get("balance") or 0))),
+                ))
+            if (not is_customer) and self.on_open_payment and balance > 1e-9:
+                items.append((
+                    "سند صرف", ft.Icons.PAYMENTS_OUTLINED,
+                    lambda r=row: self.on_open_payment(supplier_id=int(r["id"]), amount=max(0.0, float(r.get("balance") or 0))),
+                ))
+            if self.on_open_statement is not None:
+                items.append((
+                    "كشف الحساب", ft.Icons.DESCRIPTION_OUTLINED,
+                    lambda r=row: self.on_open_statement("customer" if is_customer else "supplier", int(r["id"])),
+                ))
+            items.append(None)
+            items.append(("حذف", ft.Icons.DELETE_OUTLINE, lambda r=row: confirm_delete(dict(r))))
+            return items
+
+        grid_height = max(300, min(560, int((page.height or 760) * 0.52)))
+        grid = DataGrid(
+            columns=PARTY_GRID_COLUMNS,
+            rows=[],
+            page=page,
+            row_height=36 if density_state["compact"] else 48,
+            viewport_height=grid_height,
+            hidden_keys=current_hidden(),
+            on_row_activate=lambda row: show_detail(dict(row)),
+            on_sort=apply_grid_sort,
+            selectable=True,
+            on_selection_change=render_bulk_bar,
+            on_row_menu=party_menu,
+            row_bg=party_row_bg,
+            on_row_expand=party_expand_panel,
+            on_search_shortcut=focus_search,
+            on_new_shortcut=lambda: open_editor(),
+            formatter=_grid_formatter,
+            boxed=True,
+            center_cells=True,
+            activate_tooltip="فتح الحساب",
+            empty_text="لا توجد نتائج",
+        )
+        grid_more = ft.Container(visible=False)
+        desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
+        list_switch = ft.Container(content=desktop_list)
+
         def refresh(_=None):
             parties = repo.list(search.value or "")
             all_parties = repo.list()
@@ -373,99 +645,55 @@ class PartyCenter:
                 small_metric("إجمالي الأرصدة", money(total_balance), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS if total_balance >= 0 else Colors.DANGER),
                 small_metric("حسابات بحركة", str(positive), ft.Icons.SYNC_ALT, Colors.PURPLE),
             ])
-            rows.controls = []
-            for party in parties[: render_limit["n"]]:
-                balance = float(party.get("balance") or 0)
-                initials = (party.get("name") or "؟").strip()[:1]
-                row_card = ft.Container(
-                    ft.Row(
-                        [
-                            ft.Container(ft.Text(initials, size=18, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY), width=46, height=46, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=15),
-                            ft.Column(
-                                [
-                                    ft.Text(party["name"], weight=ft.FontWeight.BOLD, size=14),
-                                    ft.Text(party.get("phone") or party.get("address") or "بدون بيانات اتصال", size=10, color=Colors.TEXT_SECONDARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                                ], expand=True, spacing=2,
-                            ),
-                            ft.Column(
-                                [
-                                    ft.Text(money(balance), weight=ft.FontWeight.BOLD, size=13, color=Colors.TEXT_PRIMARY),
-                                    ft.Text(
-                                        (
-                                            lambda g: g["label"]
-                                        )(
-                                            grade_party(
-                                                balance=balance,
-                                                outstanding_rows=outstanding_map.get(int(party["id"]), []),
-                                            )
-                                        ),
-                                        size=9,
-                                        color=Colors.TEXT_SECONDARY,
-                                    ),
-                                ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END,
-                            ),
-                            ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT),
-                        ], vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    padding=12, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM,
-                    on_click=lambda _, p=dict(party): show_detail(p), ink=True,
-                )
-                # Swipe actions — deliberately narrow scope (see
-                # SWIPE_ACTIONS_NOTES.md): parties are the one list in the
-                # app with a real, already-guarded delete() (server refuses
-                # if linked invoices exist). The swipe itself never deletes
-                # anything — it only opens the *same* modal confirmation
-                # used by the tap-to-delete path (`confirm_delete`), so a
-                # misjudged or accidental swipe can never destroy data by
-                # itself; the worst case is an unwanted confirm dialog the
-                # user dismisses. Both drag directions are wired to the
-                # identical action, so RTL-vs-LTR "which way does the row
-                # go" ambiguity has no wrong answer to guess.
-                rows.controls.append(
-                    ft.Dismissible(
-                        key=f"party-{party['id']}",
-                        content=row_card,
-                        dismiss_direction=ft.DismissDirection.HORIZONTAL,
-                        background=ft.Container(
-                            content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE, color=Colors.WHITE, size=22), ft.Text("حذف", color=Colors.WHITE, size=12, weight=ft.FontWeight.W_600)], spacing=6, alignment=ft.MainAxisAlignment.START),
-                            bgcolor=Colors.DANGER_DARK, border_radius=16, padding=ft.padding.symmetric(horizontal=20), alignment=ft.alignment.center_left,
-                        ),
-                        secondary_background=ft.Container(
-                            content=ft.Row([ft.Text("حذف", color=Colors.WHITE, size=12, weight=ft.FontWeight.W_600), ft.Icon(ft.Icons.DELETE_OUTLINE, color=Colors.WHITE, size=22)], spacing=6, alignment=ft.MainAxisAlignment.END),
-                            bgcolor=Colors.DANGER_DARK, border_radius=16, padding=ft.padding.symmetric(horizontal=20), alignment=ft.alignment.center_right,
-                        ),
-                        on_dismiss=lambda _, p=dict(party): confirm_delete(p, restore_on_cancel=True),
-                    )
-                )
-            if not rows.controls:
+            outstanding_state["map"] = outstanding_map
+            if grid_sort["key"]:
+                sort_key = grid_sort["key"]
+                reverse = grid_sort["dir"] == "desc"
+
+                def sort_value(party):
+                    if sort_key == "balance":
+                        try:
+                            return float(party.get("balance") or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    return str(party.get(sort_key) or "")
+
+                parties.sort(key=sort_value, reverse=reverse)
+            export_state["rows"] = parties
+            grid.set_hidden_keys(current_hidden())
+            if not parties:
+                grid.set_rows([])
                 if all_parties:
-                    rows.controls.append(empty_state(
+                    list_switch.content = empty_state(
                         "لا توجد نتائج مطابقة للبحث",
                         icon=ft.Icons.PERSON_SEARCH,
                         hint="جرّب اسمًا أو رقم هاتف مختلف",
-                    ))
+                    )
                 else:
-                    rows.controls.append(empty_state(
+                    list_switch.content = empty_state(
                         f"لا يوجد {title} بعد",
                         icon=ft.Icons.PERSON_SEARCH,
                         hint=f"ابدأ بإضافة أول {singular}",
                         action_label=f"إضافة {singular}",
                         on_action=lambda _: open_editor(),
-                    ))
-            elif len(parties) > render_limit["n"]:
-                remaining = len(parties) - render_limit["n"]
-
-                def load_more(_=None):
-                    render_limit["n"] += 60
-                    refresh()
-
-                rows.controls.append(
-                    ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})",
-                        icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=load_more,
                     )
+                page.update()
+                return
+            shown = parties[: render_limit["n"]]
+            grid.set_rows(shown)
+            remaining = len(parties) - len(shown)
+            if remaining > 0:
+                grid_more.content = ft.Row(
+                    [ft.OutlinedButton(
+                        f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                        on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh())),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
                 )
+                grid_more.visible = True
+            else:
+                grid_more.visible = False
+            list_switch.content = desktop_list
             page.update()
 
         def refresh_from_search(e=None):
@@ -479,12 +707,15 @@ class PartyCenter:
         # party list, and the primary "إضافة" action stays one tap away at
         # the bottom instead of scrolling off with the list.
         sticky_top = ft.Container(
-            search,
+            ft.Row(
+                [ft.Container(search, expand=True), columns_button, export_button, density_button],
+                spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
             padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
             bgcolor=Colors.WHITE,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
-        scroll_body = ft.Column([summary_row, rows], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True)
+        scroll_body = ft.Column([summary_row, list_switch], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True)
         bottom_bar = ft.Container(
             ft.FilledButton(f"إضافة {singular}", icon=ft.Icons.ADD, on_click=lambda _: open_editor(), expand=True),
             padding=ft.padding.only(left=18, right=18, top=10, bottom=10),

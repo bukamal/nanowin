@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from datetime import date
+import csv as _csv
+import tempfile
+from datetime import date, datetime
+from pathlib import Path
 
 import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, status_pill, metric_row, metric_controls
+from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
 from nano_offline.services.statement_service import StatementService
@@ -16,6 +19,46 @@ from nano_offline.core.home_widget import refresh_home_widget
 
 
 # Compatibility terminology: «سند دفع» هو نفسه «سند صرف» في الإصدارات السابقة.
+
+# Desktop grid columns for the vouchers screen (قبض/دفع). Both the
+# allocated and unallocated shares are shown side by side so the
+# "على الحساب" leftovers that need follow-up are one glance away.
+VOUCHER_GRID_COLUMNS = [
+    GridColumn("id", "السند", width=80, align="center", kind="number", tooltip="رقم السند — اضغط للترتيب"),
+    GridColumn("voucher_type", "النوع", width=80, align="center", kind="badge", tooltip="قبض (من الحساب) أو دفع (إلى الحساب)"),
+    GridColumn("party_name", "الحساب", tooltip="الطرف المرتبط بالسند — نقدي عند عدم التحديد"),
+    GridColumn("voucher_date", "التاريخ", width=98, align="center", tooltip="تاريخ السند — يُخفى تلقائيًا على الشاشات الضيقة"),
+    GridColumn("amount", "المبلغ", width=110, align="end", kind="money", tooltip="قيمة السند الإجمالية"),
+    GridColumn("allocated_amount", "موزّع", width=100, align="end", kind="money", tooltip="الجزء الموزّع على فواتير"),
+    GridColumn("unallocated_amount", "على الحساب", width=110, align="end", kind="money", tooltip="رصيد غير موزّع — الصف مُظلَّل عند وجوده"),
+]
+
+# Desktop grid columns for the expenses screen.
+EXPENSE_GRID_COLUMNS = [
+    GridColumn("description", "البيان", tooltip="وصف المصروف — اضغط للترتيب"),
+    GridColumn("category_name", "التصنيف", width=140, align="center", kind="badge", tooltip="تصنيف المصروف"),
+    GridColumn("expense_date", "التاريخ", width=100, align="center", tooltip="تاريخ المصروف"),
+    GridColumn("reference", "المرجع", width=130, tooltip="رقم أو مرجع المستند — يُخفى تلقائيًا على الشاشات الضيقة"),
+    GridColumn("_receipt", "الإيصال", width=80, align="center", kind="badge", sortable=False, tooltip="صورة إيصال مرفقة"),
+    GridColumn("amount", "المبلغ", width=120, align="end", kind="money", tooltip="قيمة المصروف"),
+]
+
+
+def _detail_chip(icon, label: str, value: str) -> ft.Control:
+    return ft.Container(
+        ft.Row(
+            [
+                ft.Icon(icon, size=15, color=Colors.PRIMARY),
+                ft.Text(f"{label}: ", size=11, color=Colors.TEXT_SECONDARY),
+                ft.Text(value, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+            ],
+            spacing=5,
+        ),
+        padding=ft.padding.symmetric(horizontal=10, vertical=7),
+        border=ft.border.all(1, Colors.BORDER),
+        border_radius=10,
+        bgcolor=Colors.WHITE,
+    )
 
 class FinanceCenter:
     def __init__(self, page: ft.Page, ctx, content: ft.Container, on_changed=None, native_files=None, on_title_change=None, on_open_invoice=None, on_context_actions=None):
@@ -88,7 +131,6 @@ class FinanceCenter:
     def show_vouchers(self) -> None:
         self._set_header("السندات", "سندات القبض والدفع والمصروفات وربطها بالفواتير")
         search = SelectAllTextField(label="بحث في السندات", hint_text="رقم السند، الحساب أو المرجع", prefix_icon=ft.Icons.SEARCH)
-        rows = ft.Column(spacing=9)
         summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
         filter_state = {"type": "all"}
         # Same client-visible paging as parties/items/invoices (see
@@ -127,6 +169,229 @@ class FinanceCenter:
 
         type_filter.on_change = on_type_filter_change
 
+        # ---- desktop grid (same spreadsheet treatment as items/invoices) --
+        grid_sort = {"key": None, "dir": None}
+        density_state = {"compact": self.ctx.settings.get("ui.vouchers_density", "comfortable") == "compact"}
+        selected_state = {"rows": []}
+        export_state = {"rows": []}
+        hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.vouchers_hidden_columns", "").split(",")))}
+        auto_hidden = {"keys": {"voucher_date", "unallocated_amount"} if (self.page.width or 1200) < 720 else set()}
+
+        def current_hidden() -> set[str]:
+            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
+
+        def toggle_column(key: str) -> None:
+            if key in hidden_state["keys"]:
+                hidden_state["keys"].discard(key)
+            else:
+                hidden_state["keys"].add(key)
+            self.ctx.settings.set("ui.vouchers_hidden_columns", ",".join(sorted(hidden_state["keys"])))
+            grid.set_hidden_keys(current_hidden())
+            self.page.update()
+
+        columns_button = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN,
+            tooltip="إظهار/إخفاء الأعمدة",
+            items=[
+                ft.PopupMenuItem(
+                    text=c.label,
+                    checked=c.key not in hidden_state["keys"],
+                    on_click=lambda _, k=c.key: toggle_column(k),
+                )
+                for c in VOUCHER_GRID_COLUMNS
+            ],
+        )
+
+        async def export_csv(_=None) -> None:
+            rows_out = export_state["rows"]
+            if not rows_out:
+                self.notify("لا توجد بيانات للتصدير", kind="warning")
+                return
+            if self.native_files is None:
+                self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_vouchers_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    writer = _csv.writer(fh)
+                    writer.writerow(["السند", "النوع", "الحساب", "التاريخ", "المبلغ", "موزّع", "على الحساب", "المرجع"])
+                    for v in rows_out:
+                        writer.writerow([
+                            v.get("id") or "",
+                            "قبض" if v.get("voucher_type") == "receipt" else "دفع",
+                            v.get("party_name") or "نقدي",
+                            v.get("voucher_date") or "",
+                            v.get("amount") or 0,
+                            v.get("allocated_amount") or 0,
+                            v.get("unallocated_amount") or 0,
+                            v.get("reference") or "",
+                        ])
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير السندات")
+                self.notify("تم تجهيز ملف CSV (بترميز يفتح في Excel العربي)")
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        export_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+            tooltip="تصدير CSV للعرض الحالي",
+            on_click=export_csv,
+        )
+
+        def _grid_formatter(col, value, row):
+            if col.key == "voucher_type":
+                if row.get("voucher_type") == "receipt":
+                    return ("قبض", Colors.SUCCESS, Colors.SUCCESS_BG)
+                return ("دفع", Colors.DANGER_DARK, Colors.DANGER_BG)
+            if col.key == "party_name":
+                return str(value or "نقدي")
+            if col.kind == "money":
+                return self.money(value)
+            return None
+
+        def voucher_row_bg(row: dict) -> str | None:
+            if float(row.get("unallocated_amount") or 0) > 1e-9:
+                return Colors.WARNING_BG_ALT
+            return None
+
+        def voucher_expand_panel(row: dict) -> ft.Control:
+            return ft.Row(
+                [
+                    _detail_chip(ft.Icons.TAG_OUTLINED, "المرجع", str(row.get("reference") or "—")),
+                    _detail_chip(ft.Icons.CALENDAR_MONTH_OUTLINED, "التاريخ", str(row.get("voucher_date") or "—")),
+                    _detail_chip(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, "موزّع", self.money(row.get("allocated_amount"))),
+                ],
+                spacing=8, wrap=True,
+            )
+
+        def duplicate_voucher(row: dict) -> None:
+            source = self.ctx.payments.get_voucher(int(row.get("id") or 0))
+            if source:
+                self.show_voucher_dialog(None, source.get("voucher_type") or "receipt", initial_data=source)
+
+        def focus_search() -> None:
+            grid.disarm()
+            try:
+                search.focus()
+            except Exception:
+                pass
+
+        def apply_grid_sort(key: str | None, direction: str | None) -> None:
+            grid_sort["key"], grid_sort["dir"] = key, direction
+            render_limit["n"] = 60
+            refresh()
+
+        def render_bulk_bar(rows_out: list[dict]) -> None:
+            selected_state["rows"] = list(rows_out)
+            if not rows_out:
+                bulk_bar.visible = False
+                bulk_bar.content = None
+            else:
+                bulk_bar.content = ft.Row(
+                    [
+                        ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                        ft.Text(f"تم تحديد {len(rows_out)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                        ft.Container(expand=True),
+                        ft.FilledButton(
+                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                            style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+                            on_click=confirm_bulk_delete,
+                        ),
+                        ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
+                    ],
+                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                bulk_bar.visible = True
+            try:
+                bulk_bar.update()
+            except Exception:
+                pass
+
+        def confirm_bulk_delete(_=None) -> None:
+            chosen = list(selected_state["rows"])
+            if not chosen:
+                return
+            dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف السندات"))
+
+            def yes(_ev=None) -> None:
+                self.page.close(dialog)
+                deleted = 0
+                failures = 0
+                for voucher in chosen:
+                    try:
+                        self.ctx.payments.delete_voucher(int(voucher.get("id") or 0))
+                        deleted += 1
+                    except Exception:
+                        failures += 1
+                if failures:
+                    self.notify(f"حُذف {deleted}، وتعذّر حذف {failures}", kind="warning")
+                else:
+                    self.notify(f"تم حذف {deleted} وعكس أثرها المالي", sound_kind="success")
+                self.show_vouchers()
+                self._changed()
+
+            def no(_ev=None) -> None:
+                self.page.close(dialog)
+
+            dialog.content = ft.Text(f"سيتم حذف {len(chosen)} سند وتوزيعاتها وإعادة احتساب الذمم. هل تريد المتابعة؟")
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=no),
+                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+            ]
+            self.page.open(dialog)
+
+        def toggle_density(_=None) -> None:
+            compact = not density_state["compact"]
+            density_state["compact"] = compact
+            grid.set_row_height(36 if compact else 48)
+            density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+            density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+            self.ctx.settings.set("ui.vouchers_density", "compact" if compact else "comfortable")
+            self.page.update()
+
+        density_button = ft.IconButton(
+            icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+            tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",
+            on_click=toggle_density,
+        )
+        bulk_bar = ft.Container(visible=False)
+
+        def voucher_menu(row: dict) -> list:
+            voucher_id = int(row.get("id") or 0)
+            return [
+                ("فتح", ft.Icons.OPEN_IN_NEW_ROUNDED, lambda i=voucher_id: self.show_voucher_detail(i)),
+                ("تعديل", ft.Icons.EDIT_OUTLINED, lambda i=voucher_id: self.show_voucher_dialog(i)),
+                ("تكرار", ft.Icons.CONTENT_COPY_OUTLINED, lambda r=row: duplicate_voucher(r)),
+                None,
+                ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=voucher_id: self.confirm_delete_voucher(i)),
+            ]
+
+        grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
+        grid = DataGrid(
+            columns=VOUCHER_GRID_COLUMNS,
+            rows=[],
+            page=self.page,
+            row_height=36 if density_state["compact"] else 48,
+            viewport_height=grid_height,
+            hidden_keys=current_hidden(),
+            on_row_activate=lambda row: self.show_voucher_detail(int(row.get("id") or 0)),
+            on_sort=apply_grid_sort,
+            selectable=True,
+            on_selection_change=render_bulk_bar,
+            on_row_menu=voucher_menu,
+            row_bg=voucher_row_bg,
+            on_row_expand=voucher_expand_panel,
+            on_search_shortcut=focus_search,
+            on_new_shortcut=lambda: self.show_voucher_dialog(None, "receipt"),
+            formatter=_grid_formatter,
+            boxed=True,
+            center_cells=True,
+            activate_tooltip="فتح السند",
+            empty_text="لا توجد سندات",
+        )
+        grid_more = ft.Container(visible=False)
+        desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
+        list_switch = ft.Container(content=desktop_list)
+
         def refresh(_=None):
             vouchers = self.ctx.payments.list_vouchers()
             receipts = sum(float(v.get("amount") or 0) for v in vouchers if v.get("voucher_type") == "receipt")
@@ -146,69 +411,54 @@ class FinanceCenter:
                 if q and q not in hay:
                     continue
                 filtered.append(v)
-            rows.controls = []
-            for voucher in filtered[: render_limit["n"]]:
-                receipt = voucher["voucher_type"] == "receipt"
-                title = "سند قبض" if receipt else "سند دفع"
-                accent = Colors.SUCCESS if receipt else Colors.DANGER_DARK
-                allocated = float(voucher.get("allocated_amount") or 0)
-                unallocated = float(voucher.get("unallocated_amount") or 0)
-                # Same "badge next to the title" language as the invoices
-                # list's status/overdue pills -- an unallocated balance is
-                # this row's equivalent of "needs attention".
-                badges = [status_pill("على الحساب", Colors.ORANGE_DARK, Colors.WARNING_BG_ALT)] if unallocated > 1e-9 else []
-                rows.controls.append(
-                    ft.Container(
-                        ft.Row([
-                            ft.Container(ft.Icon(ft.Icons.SOUTH_WEST if receipt else ft.Icons.NORTH_EAST, size=18, color=accent), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.SUCCESS_BG if receipt else Colors.DANGER_BG, border_radius=14),
-                            ft.Column([
-                                ft.Row([ft.Text(f"{title} #{voucher['id']}", size=13, weight=ft.FontWeight.BOLD, expand=True), *badges]),
-                                ft.Text(f"{voucher.get('party_name') or '—'} • {voucher.get('voucher_date') or '—'}", size=10, color=Colors.TEXT_SECONDARY),
-                                ft.Row(
-                                    [ft.Text("موزع ", size=9, color=Colors.TEXT_SECONDARY), money_row(allocated, self.ctx.settings, size=9, color=Colors.TEXT_SECONDARY)]
-                                    + ([ft.Text(" • على الحساب ", size=9, color=Colors.TEXT_SECONDARY), money_row(unallocated, self.ctx.settings, size=9, color=Colors.TEXT_SECONDARY)] if unallocated else []),
-                                    spacing=2, tight=True,
-                                ),
-                            ], spacing=2, expand=True),
-                            ft.Column([
-                                money_row(voucher.get("amount"), self.ctx.settings, size=15, weight=ft.FontWeight.BOLD, color=accent),
-                                ft.Text(voucher.get("reference") or "بدون مرجع", size=9, color=Colors.TEXT_FAINT, max_lines=1),
-                            ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
-                            ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT),
-                        ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        padding=12, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM,
-                        on_click=lambda _, vid=int(voucher["id"]): self.show_voucher_detail(vid), ink=True,
-                    )
-                )
-            if not rows.controls:
+            if grid_sort["key"]:
+                sort_key = grid_sort["key"]
+                reverse = grid_sort["dir"] == "desc"
+
+                def sort_value(voucher):
+                    if sort_key in ("id", "amount", "allocated_amount", "unallocated_amount"):
+                        try:
+                            return float(voucher.get(sort_key) or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    return str(voucher.get(sort_key) or "")
+
+                filtered.sort(key=sort_value, reverse=reverse)
+            export_state["rows"] = filtered
+            grid.set_hidden_keys(current_hidden())
+            if not filtered:
+                grid.set_rows([])
                 if vouchers:
-                    rows.controls.append(empty_state(
+                    list_switch.content = empty_state(
                         "لا توجد سندات مطابقة",
                         icon=ft.Icons.RECEIPT_LONG_OUTLINED,
                         hint="جرّب تغيير البحث أو عوامل التصفية",
-                    ))
+                    )
                 else:
-                    rows.controls.append(empty_state(
+                    list_switch.content = empty_state(
                         "لا توجد سندات بعد",
                         icon=ft.Icons.RECEIPT_LONG_OUTLINED,
                         hint="أنشئ أول سند قبض أو دفع لتتبع حركة الصندوق",
                         action_label="سند قبض جديد",
                         on_action=lambda _: self.show_voucher_dialog(None, "receipt"),
-                    ))
-            elif len(filtered) > render_limit["n"]:
-                remaining = len(filtered) - render_limit["n"]
-
-                def load_more(_=None):
-                    render_limit["n"] += 60
-                    refresh()
-
-                rows.controls.append(
-                    ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})",
-                        icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=load_more,
                     )
+                self.page.update()
+                return
+            shown = filtered[: render_limit["n"]]
+            grid.set_rows(shown)
+            remaining = len(filtered) - len(shown)
+            if remaining > 0:
+                grid_more.content = ft.Row(
+                    [ft.OutlinedButton(
+                        f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                        on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh())),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
                 )
+                grid_more.visible = True
+            else:
+                grid_more.visible = False
+            list_switch.content = desktop_list
             self.page.update()
 
         def refresh_from_search(_=None):
@@ -226,7 +476,10 @@ class FinanceCenter:
                 [
                     self._section_nav("vouchers"),
                     search,
-                    type_filter,
+                    ft.Row(
+                        [ft.Container(type_filter, expand=True), columns_button, export_button, density_button],
+                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                 ],
                 spacing=10,
             ),
@@ -239,7 +492,7 @@ class FinanceCenter:
             ft.Column(
                 [
                     summary,
-                    rows,
+                    list_switch,
                 ],
                 spacing=12,
                 scroll=ft.ScrollMode.AUTO,
@@ -585,12 +838,222 @@ class FinanceCenter:
     def show_expenses(self) -> None:
         self._set_header("المصروفات", "تسجيل ومتابعة مصروفات النشاط")
         search = SelectAllTextField(label="بحث في المصروفات", hint_text="البيان، التصنيف أو المرجع", prefix_icon=ft.Icons.SEARCH)
-        rows = ft.Column(spacing=9)
         summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
         filter_state = {"month_only": False}
         # Same client-visible paging as parties/items/invoices/vouchers —
         # see parties_view.py.
         render_limit = {"n": 60}
+
+        # ---- desktop grid (same spreadsheet treatment as items/invoices) --
+        grid_sort = {"key": None, "dir": None}
+        density_state = {"compact": self.ctx.settings.get("ui.expenses_density", "comfortable") == "compact"}
+        selected_state = {"rows": []}
+        export_state = {"rows": []}
+        hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.expenses_hidden_columns", "").split(",")))}
+        auto_hidden = {"keys": {"reference"} if (self.page.width or 1200) < 720 else set()}
+
+        def current_hidden() -> set[str]:
+            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
+
+        def toggle_column(key: str) -> None:
+            if key in hidden_state["keys"]:
+                hidden_state["keys"].discard(key)
+            else:
+                hidden_state["keys"].add(key)
+            self.ctx.settings.set("ui.expenses_hidden_columns", ",".join(sorted(hidden_state["keys"])))
+            grid.set_hidden_keys(current_hidden())
+            self.page.update()
+
+        columns_button = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN,
+            tooltip="إظهار/إخفاء الأعمدة",
+            items=[
+                ft.PopupMenuItem(
+                    text=c.label,
+                    checked=c.key not in hidden_state["keys"],
+                    on_click=lambda _, k=c.key: toggle_column(k),
+                )
+                for c in EXPENSE_GRID_COLUMNS
+            ],
+        )
+
+        async def export_csv(_=None) -> None:
+            rows_out = export_state["rows"]
+            if not rows_out:
+                self.notify("لا توجد بيانات للتصدير", kind="warning")
+                return
+            if self.native_files is None:
+                self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_expenses_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    writer = _csv.writer(fh)
+                    writer.writerow(["البيان", "التصنيف", "التاريخ", "المرجع", "إيصال", "المبلغ"])
+                    for exp in rows_out:
+                        writer.writerow([
+                            exp.get("description") or "",
+                            exp.get("category_name") or "بلا تصنيف",
+                            exp.get("expense_date") or "",
+                            exp.get("reference") or "",
+                            "نعم" if exp.get("has_receipt") else "لا",
+                            exp.get("amount") or 0,
+                        ])
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير المصروفات")
+                self.notify("تم تجهيز ملف CSV (بترميز يفتح في Excel العربي)")
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        export_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+            tooltip="تصدير CSV للعرض الحالي",
+            on_click=export_csv,
+        )
+
+        def _grid_formatter(col, value, row):
+            if col.key == "category_name":
+                return str(value or "بلا تصنيف")
+            if col.key == "_receipt":
+                if row.get("has_receipt"):
+                    return ("إيصال", Colors.PRIMARY, Colors.PRIMARY_BG)
+                return ("—", Colors.TEXT_SECONDARY, Colors.BACKGROUND)
+            if col.key == "reference":
+                return str(value or "بدون مرجع")
+            if col.kind == "money":
+                return self.money(value)
+            return None
+
+        def expense_expand_panel(row: dict) -> ft.Control:
+            return ft.Row(
+                [
+                    _detail_chip(ft.Icons.CATEGORY_OUTLINED, "التصنيف", str(row.get("category_name") or "بلا تصنيف")),
+                    _detail_chip(ft.Icons.CALENDAR_MONTH_OUTLINED, "التاريخ", str(row.get("expense_date") or "—")),
+                    _detail_chip(ft.Icons.TAG_OUTLINED, "المرجع", str(row.get("reference") or "بدون مرجع")),
+                ],
+                spacing=8, wrap=True,
+            )
+
+        def focus_search() -> None:
+            grid.disarm()
+            try:
+                search.focus()
+            except Exception:
+                pass
+
+        def apply_grid_sort(key: str | None, direction: str | None) -> None:
+            grid_sort["key"], grid_sort["dir"] = key, direction
+            render_limit["n"] = 60
+            refresh()
+
+        def render_bulk_bar(rows_out: list[dict]) -> None:
+            selected_state["rows"] = list(rows_out)
+            if not rows_out:
+                bulk_bar.visible = False
+                bulk_bar.content = None
+            else:
+                bulk_bar.content = ft.Row(
+                    [
+                        ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                        ft.Text(f"تم تحديد {len(rows_out)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                        ft.Container(expand=True),
+                        ft.FilledButton(
+                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                            style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+                            on_click=confirm_bulk_delete,
+                        ),
+                        ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
+                    ],
+                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                bulk_bar.visible = True
+            try:
+                bulk_bar.update()
+            except Exception:
+                pass
+
+        def confirm_bulk_delete(_=None) -> None:
+            chosen = list(selected_state["rows"])
+            if not chosen:
+                return
+            dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف المصروفات"))
+
+            def yes(_ev=None) -> None:
+                self.page.close(dialog)
+                deleted = 0
+                failures = 0
+                for exp in chosen:
+                    try:
+                        self.ctx.expenses.delete_expense(int(exp.get("id") or 0))
+                        deleted += 1
+                    except Exception:
+                        failures += 1
+                if failures:
+                    self.notify(f"حُذف {deleted}، وتعذّر حذف {failures}", kind="warning")
+                else:
+                    self.notify(f"تم حذف {deleted} مصروف", sound_kind="success")
+                self.show_expenses()
+                self._changed()
+
+            def no(_ev=None) -> None:
+                self.page.close(dialog)
+
+            dialog.content = ft.Text(f"سيتم حذف {len(chosen)} مصروف. هل تريد المتابعة؟")
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=no),
+                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+            ]
+            self.page.open(dialog)
+
+        def toggle_density(_=None) -> None:
+            compact = not density_state["compact"]
+            density_state["compact"] = compact
+            grid.set_row_height(36 if compact else 48)
+            density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+            density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+            self.ctx.settings.set("ui.expenses_density", "compact" if compact else "comfortable")
+            self.page.update()
+
+        density_button = ft.IconButton(
+            icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+            tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",
+            on_click=toggle_density,
+        )
+        bulk_bar = ft.Container(visible=False)
+
+        def expense_menu(row: dict) -> list:
+            expense_id = int(row.get("id") or 0)
+            items: list = [("تعديل", ft.Icons.EDIT_OUTLINED, lambda i=expense_id: self.show_expense_dialog(i))]
+            if row.get("has_receipt"):
+                items.append(("عرض الإيصال", ft.Icons.IMAGE_OUTLINED, lambda i=expense_id: self.show_receipt_photo(i)))
+            items.append(None)
+            items.append(("حذف", ft.Icons.DELETE_OUTLINE, lambda i=expense_id: self.confirm_delete_expense(i)))
+            return items
+
+        grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
+        grid = DataGrid(
+            columns=EXPENSE_GRID_COLUMNS,
+            rows=[],
+            page=self.page,
+            row_height=36 if density_state["compact"] else 48,
+            viewport_height=grid_height,
+            hidden_keys=current_hidden(),
+            on_row_activate=lambda row: self.show_expense_dialog(int(row.get("id") or 0)),
+            on_sort=apply_grid_sort,
+            selectable=True,
+            on_selection_change=render_bulk_bar,
+            on_row_menu=expense_menu,
+            on_row_expand=expense_expand_panel,
+            on_search_shortcut=focus_search,
+            on_new_shortcut=lambda: self.show_expense_dialog(),
+            formatter=_grid_formatter,
+            boxed=True,
+            center_cells=True,
+            activate_tooltip="تعديل المصروف",
+            empty_text="لا توجد مصروفات",
+        )
+        grid_more = ft.Container(visible=False)
+        desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
+        list_switch = ft.Container(content=desktop_list)
 
         def toggle_month(_=None):
             filter_state["month_only"] = not filter_state["month_only"]
@@ -614,56 +1077,54 @@ class FinanceCenter:
                 kpi_card("هذا الشهر", "", ft.Icons.CALENDAR_MONTH_OUTLINED, Colors.ORANGE, on_tap=lambda _: toggle_month(), amount_usd=month_total, settings=self.ctx.settings),
                 kpi_card("التصنيفات", str(len(categories)), ft.Icons.CATEGORY_OUTLINED, Colors.PURPLE),
             ])
-            rows.controls = []
-            for exp in filtered[: render_limit["n"]]:
-                rows.controls.append(ft.Container(
-                    ft.Row([
-                        ft.Container(ft.Icon(ft.Icons.RECEIPT_OUTLINED, size=18, color=Colors.ORANGE), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.WARNING_BG_ALT, border_radius=14),
-                        ft.Column([
-                            ft.Row([
-                                ft.Text(exp["description"], size=13, weight=ft.FontWeight.BOLD, expand=True),
-                                status_pill(exp.get("category_name") or "بلا تصنيف", Colors.PURPLE, Colors.PURPLE_BG),
-                                (ft.Icon(ft.Icons.IMAGE_OUTLINED, size=15, color=Colors.PRIMARY, tooltip="صورة إيصال") if exp.get("has_receipt") else ft.Container()),
-                            ]),
-                            ft.Text(exp.get("expense_date") or "—", size=10, color=Colors.TEXT_SECONDARY),
-                        ], spacing=2, expand=True),
-                        ft.Column([money_row(exp.get("amount"), self.ctx.settings, size=15, weight=ft.FontWeight.BOLD, color=Colors.DANGER_DARK), ft.Text(exp.get("reference") or "بدون مرجع", size=9, color=Colors.TEXT_FAINT)], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
-                        ft.PopupMenuButton(items=[
-                            ft.PopupMenuItem(text="تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=lambda _, eid=int(exp["id"]): self.show_expense_dialog(eid)),
-                            ft.PopupMenuItem(text="حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _, eid=int(exp["id"]): self.confirm_delete_expense(eid)),
-                        ] + ([ft.PopupMenuItem(text="عرض الإيصال", icon=ft.Icons.IMAGE_OUTLINED, on_click=lambda _, eid=int(exp["id"]): self.show_receipt_photo(eid))] if exp.get("has_receipt") else [])),
-                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=12, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM,
-                ))
-            if not rows.controls:
+            if grid_sort["key"]:
+                sort_key = grid_sort["key"]
+                reverse = grid_sort["dir"] == "desc"
+
+                def sort_value(expense):
+                    if sort_key == "amount":
+                        try:
+                            return float(expense.get(sort_key) or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    return str(expense.get(sort_key) or "")
+
+                filtered.sort(key=sort_value, reverse=reverse)
+            export_state["rows"] = filtered
+            grid.set_hidden_keys(current_hidden())
+            if not filtered:
+                grid.set_rows([])
                 if expenses:
-                    rows.controls.append(empty_state(
+                    list_switch.content = empty_state(
                         "لا توجد مصروفات مطابقة",
                         icon=ft.Icons.RECEIPT_OUTLINED,
                         hint="جرّب تغيير البحث أو عوامل التصفية",
-                    ))
+                    )
                 else:
-                    rows.controls.append(empty_state(
+                    list_switch.content = empty_state(
                         "لا توجد مصروفات بعد",
                         icon=ft.Icons.RECEIPT_OUTLINED,
                         hint="سجّل أول مصروف لمتابعة تكاليف النشاط",
                         action_label="مصروف جديد",
                         on_action=lambda _: self.show_expense_dialog(),
-                    ))
-            elif len(filtered) > render_limit["n"]:
-                remaining = len(filtered) - render_limit["n"]
-
-                def load_more(_=None):
-                    render_limit["n"] += 60
-                    refresh()
-
-                rows.controls.append(
-                    ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})",
-                        icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=load_more,
                     )
+                self.page.update()
+                return
+            shown = filtered[: render_limit["n"]]
+            grid.set_rows(shown)
+            remaining = len(filtered) - len(shown)
+            if remaining > 0:
+                grid_more.content = ft.Row(
+                    [ft.OutlinedButton(
+                        f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                        on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh())),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
                 )
+                grid_more.visible = True
+            else:
+                grid_more.visible = False
+            list_switch.content = desktop_list
             self.page.update()
 
         def refresh_from_search(_=None):
@@ -675,7 +1136,16 @@ class FinanceCenter:
         # invoice_view: section tabs + search stay pinned, KPI cards and the
         # expense list scroll together beneath them.
         sticky_header = ft.Container(
-            ft.Column([self._section_nav("expenses"), search], spacing=10),
+            ft.Column(
+                [
+                    self._section_nav("expenses"),
+                    ft.Row(
+                        [ft.Container(search, expand=True), columns_button, export_button, density_button],
+                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=10,
+            ),
             padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
             bgcolor=Colors.WHITE,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
@@ -686,7 +1156,7 @@ class FinanceCenter:
                 [
                     summary,
                     ft.Row([ft.FilledButton("مصروف جديد", icon=ft.Icons.ADD, on_click=lambda _: self.show_expense_dialog())]),
-                    rows,
+                    list_switch,
                     ft.Container(height=24),
                 ],
                 spacing=12,
