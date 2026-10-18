@@ -411,6 +411,8 @@ class DataGrid(ft.Column):
         Views disable grouping while an explicit column sort is active,
         since banners only make sense over a meaningful row order.
         """
+        if hook is self._group_by:
+            return
         self._group_by = hook
         self._render_body()
         self._safe_update(self._body)
@@ -721,7 +723,15 @@ class DataGrid(ft.Column):
         return None
 
     def set_rows(self, rows: list[dict]) -> None:
-        self._rows = [dict(r) for r in rows]
+        # Views call this on every refresh (data unchanged on most of them,
+        # e.g. after set_hidden_keys/set_group_by bookkeeping). Rebuilding
+        # the body for identical data is the dominant cost of a refresh
+        # (~33ms per 60 rows, measured), so bail out early -- and keep the
+        # user's expansion/selection state to boot.
+        incoming = [dict(r) for r in rows]
+        if incoming == self._rows:
+            return
+        self._rows = incoming
         # A new result set (search/filter/sort) invalidates old row indices.
         self._checked.clear()
         self._expanded.clear()

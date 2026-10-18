@@ -15,6 +15,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
+from nano_offline.core.expiring import invalidate_insights
 from nano_offline.core.home_widget import refresh_home_widget
 
 
@@ -83,6 +84,9 @@ class FinanceCenter:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
     def _changed(self) -> None:
+        # Vouchers/expenses feed the dashboard's cached advisory block
+        # (receivables pulse, alerts); drop the cache on every write.
+        invalidate_insights()
         if self.on_changed:
             self.on_changed()
 

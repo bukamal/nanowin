@@ -7,8 +7,14 @@ import flet as ft
 
 from nano_offline.core.theme import Colors, Radius, SEVERITY_STYLE, Shadow
 from nano_offline.core import currency
+from nano_offline.core.expiring import cached_insight
 from nano_offline.core.toast import toast
 from nano_offline.components import SelectAllTextField, new_form_sheet, render_form_sheet, metric_row
+
+
+#: Advisory insights tolerate a couple of minutes of staleness; explicit
+#: invalidation (invalidate_insights) makes writes reflect immediately.
+INSIGHT_TTL = 120.0
 
 # Arabic weekday/month names for the header's live date line -- kept local
 # (rather than relying on locale-dependent strftime) so it renders correctly
@@ -902,7 +908,7 @@ class DashboardCenter:
 
         def refresh_preview(_=None):
             try:
-                counted_disp = float((counted_field.value or "0").replace(",", "").strip() or 0)
+                _counted_disp = float((counted_field.value or "0").replace(",", "").strip() or 0)
                 counted_usd = currency_mod.parse_display_input(counted_field.value, self.ctx.settings)
             except Exception:
                 counted_usd = 0.0
@@ -1076,24 +1082,29 @@ class DashboardCenter:
 
         sparkline = self.ctx.dashboard.sales_trend(14)
 
-        # -- smart alerts (same rules engine behind the notifications bell,
-        # recomputed live -- see NotificationService.generate_alerts) -----
+        # -- smart alerts (same rules engine behind the notifications bell)
+        # and the advisory insights below are the expensive part of this
+        # screen (>1s of rules+SQLite on a mid-size shop, measured). They
+        # are cached for a short window so tab switches back to the
+        # dashboard don't re-pay that cost; KPIs/statements above stay
+        # uncached, and data-changing flows call invalidate_insights() so
+        # fresh advice appears right after a sale/voucher/expense.
         try:
-            smart_alerts = self.ctx.notifications.generate_alerts()
+            smart_alerts = cached_insight("alerts", INSIGHT_TTL, self.ctx.notifications.generate_alerts)
         except Exception:
             smart_alerts = []
         try:
-            decisions = self.ctx.smart_assistant.decisions(limit=8)
-            decision_today = self.ctx.smart_assistant.decision_of_the_day()
+            decisions = cached_insight("decisions", INSIGHT_TTL, lambda: self.ctx.smart_assistant.decisions(limit=8))
+            decision_today = cached_insight("decision_today", INSIGHT_TTL, self.ctx.smart_assistant.decision_of_the_day)
         except Exception:
             decisions = []
             decision_today = None
         try:
-            owner_pulse = self.ctx.owner_pulse.generate()
+            owner_pulse = cached_insight("owner_pulse", INSIGHT_TTL, self.ctx.owner_pulse.generate)
         except Exception:
             owner_pulse = None
         try:
-            weekly = self.ctx.dashboard.weekly_owner_summary()
+            weekly = cached_insight("weekly_owner", INSIGHT_TTL, self.ctx.dashboard.weekly_owner_summary)
         except Exception:
             weekly = None
 

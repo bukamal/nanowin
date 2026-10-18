@@ -22,6 +22,7 @@ refresh paths never disagree.
 from datetime import datetime, timezone
 
 from nano_offline.core import currency
+from nano_offline.core.expiring import invalidate_insights
 
 
 def home_widget_snapshot(dashboard, settings=None) -> dict:
@@ -97,7 +98,12 @@ def _fire(page, native_files, method: str, *args) -> None:
 def refresh_home_widget(page, native_files, dashboard, settings=None) -> None:
     """Immediate, app-open refresh -- a sale or voucher just posted, and
     DashboardService has fresh numbers in memory. Fire-and-forget so a
-    slow/failed push never blocks the save flow that triggered it."""
+    slow/failed push never blocks the save flow that triggered it.
+
+    Data just changed, so the dashboard's cached advisory block (owner
+    pulse / alerts / assistant decisions) is dropped here too -- called
+    after sale, voucher and expense writes and after a restore."""
+    invalidate_insights()
     snapshot = home_widget_snapshot(dashboard, settings)
     _fire(page, native_files, "push_home_widget", snapshot)
 

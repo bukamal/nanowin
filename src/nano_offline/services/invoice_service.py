@@ -7,6 +7,7 @@ from decimal import Decimal
 from nano_offline.core.database import Database
 from nano_offline.core import currency
 from nano_offline.core import money
+from nano_offline.core.expiring import invalidate_insights
 from nano_offline.services.accounting_rebuilder import AccountingRebuilder
 
 EPSILON = 1e-9
@@ -148,6 +149,9 @@ class InvoiceService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','invoice',?,?)",
                 (invoice_id, f"{invoice_type}:{total}"),
             )
+            # Dashboard insights (receivables, pulse, alerts) are cached for
+            # a short TTL; a fresh sale must not wait it out.
+            invalidate_insights()
             return invoice_id
 
     def update_invoice(
@@ -203,6 +207,7 @@ class InvoiceService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','invoice',?,?)",
                 (invoice_id, f"{old['type']}:{old['total']} -> {invoice_type}:{total}"),
             )
+        invalidate_insights()
 
     def delete_invoice(self, invoice_id: int) -> None:
         with self.db.transaction() as conn:
@@ -218,6 +223,7 @@ class InvoiceService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','invoice',?,?)",
                 (invoice_id, f"{old['type']}:{old['total']}"),
             )
+        invalidate_insights()
 
     def _validate_and_prepare(
         self,

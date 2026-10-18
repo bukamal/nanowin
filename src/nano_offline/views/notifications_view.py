@@ -104,7 +104,15 @@ class NotificationCenter:
         """Reflect both *how many* alerts are unread and *how urgent* the
         worst of them is -- a red "3" reads very differently from an amber
         "3", and a lone urgent alert should stand out even among several
-        low-priority ones."""
+        low-priority ones.
+
+        Reads cached/recorded counts only; the rules engine is kicked off
+        on a throttled background thread so this per-navigation call never
+        freezes the UI (see NotificationService.sync_in_background)."""
+        try:
+            self.ctx.notifications.sync_in_background()
+        except Exception:
+            pass
         try:
             summary = self.ctx.notifications.unread_summary()
         except Exception:

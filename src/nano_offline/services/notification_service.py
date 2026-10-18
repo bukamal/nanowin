@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Callable
@@ -114,6 +116,14 @@ class NotificationService:
         # Kept as a plain callback (not an import) so the rules engine never
         # depends on the external layer -- no service import cycle.
         self._external_hook: Callable[[list[Alert]], None] | None = None
+        # Navigation-performance: the rules engine (sync -> generate_alerts)
+        # costs ~180ms on a mid-size shop (measured). It used to run on the
+        # UI thread on EVERY navigation through unread_summary(); the badge
+        # now only reads cheap counts, and the engine runs on a daemon
+        # thread, throttled to one pass per _SYNC_MIN_INTERVAL seconds.
+        self._sync_lock = threading.Lock()
+        self._sync_running = False
+        self._last_sync = 0.0
 
     # -- configuration --------------------------------------------------
     def get_config(self) -> dict:
@@ -410,8 +420,7 @@ class NotificationService:
                 cur = conn.execute(
                     """INSERT OR IGNORE INTO notification_log
                        (dedupe_key, rule_key, severity, title, body, entity_type, entity_id)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (
+                       VALUES (?,?,?,?,?,?,?)""",                    (
                         alert.dedupe_key,
                         alert.rule_key,
                         alert.severity,
@@ -437,8 +446,40 @@ class NotificationService:
         AppContext.create after both services exist)."""
         self._external_hook = hook
 
+    def sync_in_background(self, min_interval: float = 90.0) -> None:
+        """Run the rules engine off the UI thread, throttled.
+
+        Called on button-adjacent hot paths (every navigation refreshes the
+        bell badge). At most one pass runs at a time and at most one starts
+        per ``min_interval`` seconds, so a burst of navigations can never
+        stack up rules-engine work -- navigation stays instant while new
+        alerts still surface within the interval (the next badge refresh
+        reads what the engine recorded)."""
+        now = time.monotonic()
+        with self._sync_lock:
+            if self._sync_running or (now - self._last_sync) < float(min_interval):
+                return
+            self._sync_running = True
+
+        def _worker() -> None:
+            try:
+                self.sync()
+            except Exception:
+                # A failed rules pass must never crash a worker thread;
+                # the next navigation retries after the throttle window.
+                pass
+            finally:
+                with self._sync_lock:
+                    self._sync_running = False
+                    self._last_sync = time.monotonic()
+
+        threading.Thread(target=_worker, daemon=True, name="nano-alert-sync").start()
+
     def recent(self, limit: int = 30) -> list[dict]:
-        self.sync()
+        # Deliberate "show me the alerts" surface: refresh in the background
+        # so the panel opens immediately with what is already recorded; the
+        # newly computed rows appear the next time it is opened/refreshed.
+        self.sync_in_background(min_interval=0.0)
         with self.db.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM notification_log ORDER BY created_at DESC LIMIT ?",
@@ -447,7 +488,6 @@ class NotificationService:
             return [dict(r) for r in rows]
 
     def unread_count(self) -> int:
-        self.sync()
         with self.db.connect() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM notification_log WHERE read_at IS NULL"
@@ -459,8 +499,12 @@ class NotificationService:
         bell badge can reflect *how urgent* the pile-up is at a glance --
         e.g. showing red the moment even one urgent alert is unread -- 
         instead of a plain "something's unread" dot that looks the same
-        whether it's one low-priority insight or three overdue invoices."""
-        self.sync()
+        whether it's one low-priority insight or three overdue invoices.
+
+        Read-only and cheap (one grouped COUNT): the expensive rules pass
+        runs via ``sync_in_background()``, never here -- this method is on
+        the navigation hot path.
+        """
         with self.db.connect() as conn:
             rows = conn.execute(
                 "SELECT severity, COUNT(*) FROM notification_log WHERE read_at IS NULL GROUP BY severity"
