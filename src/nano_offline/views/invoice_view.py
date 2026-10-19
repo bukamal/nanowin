@@ -2038,8 +2038,14 @@ class InvoiceCenter:
             bgcolor=Colors.PRIMARY_BG,
         )
 
+        # A bounded viewport of its own: `expand` inside the sheet's scroll
+        # body collapsed the table to zero height on Flutter (the blank
+        # grey block users saw instead of the grid). Same fix as the
+        # quick-entry sheet: explicit height + scrolling sheet body.
+        grid_viewport = max(240, int(int(self.page.height or 800) * 0.88) - 420)
         lines_grid = DataGrid(
             columns=line_columns, rows=[], page=self.page,
+            viewport_height=grid_viewport,
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=set(hidden_state["keys"]),
             formatter=row_formatter,
@@ -2677,7 +2683,7 @@ class InvoiceCenter:
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     bulk_bar,
-                    ft.Container(lines_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
+                    ft.Container(lines_grid, height=grid_viewport, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
                     chooser_panel,
                     ft.Row(
                         [
@@ -2701,7 +2707,7 @@ class InvoiceCenter:
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
-                spacing=10, expand=True,
+                spacing=10, tight=True, scroll=ft.ScrollMode.AUTO,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
             width=sheet_w,

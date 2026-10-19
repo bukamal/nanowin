@@ -2440,8 +2440,16 @@ class ItemsCenter:
                 bgcolor=Colors.PRIMARY_BG,
             )
 
+            # The table needs its own bounded height to become a real
+            # viewport inside the sheet. Leaving it to `expand` inside a
+            # bottom-sheet scroll view let Flutter collapse it to zero
+            # (the "grey empty block" the table used to render as); the
+            # proven pattern from the invoice quick-entry sheet is an
+            # explicit viewport height with the sheet body scrolling.
+            grid_viewport = max(240, int(int(page.height or 800) * 0.85) - 330)
             bulk_grid = DataGrid(
                 columns=bulk_columns, rows=[], page=page,
+                viewport_height=grid_viewport,
                 row_height=36 if bulk_density_state["compact"] else 48,
                 hidden_keys=set(bulk_hidden_state["keys"]),
                 formatter=bulk_formatter,
@@ -2896,7 +2904,7 @@ class ItemsCenter:
                             spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         bulk_bar,
-                        ft.Container(bulk_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
+                        ft.Container(bulk_grid, height=grid_viewport, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
                         picker_panel,
                         ft.Row(
                             [
@@ -2907,7 +2915,7 @@ class ItemsCenter:
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                     ],
-                    spacing=10, expand=True,
+                    spacing=10, tight=True, scroll=ft.ScrollMode.AUTO,
                     horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
                 width=sheet_w,
