@@ -19,6 +19,7 @@ from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_marg
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import sound as sound_engine
+from nano_offline.core.voice_nlu import normalize_ar
 
 # A small fixed palette so category chips get a stable, distinguishable
 # color per category without needing a "color" column on the categories
@@ -45,6 +46,39 @@ WEIGHT_UNIT_HINTS = {
 # Comfortable receipt-rail width on desktop: narrow enough to leave the
 # catalog most of the screen, wide enough for name + qty stepper + line total.
 CART_RAIL_WIDTH = 380
+
+
+def _cart_key(item: dict, unit_id: int | None):
+    """Stable cart identity for one item *and* selling unit.
+
+    A carton barcode and the piece barcode of the same item are genuinely
+    different lines (different price per unit, different stock factor), so
+    they must not collapse into one row. Base-unit lines keep the plain
+    ``item_id`` key -- that is what every existing caller/test assumes.
+    """
+    item_id = int(item["id"])
+    if unit_id is None:
+        return item_id
+    base_unit_id = item.get("base_unit_id")
+    if base_unit_id is not None and int(unit_id) == int(base_unit_id):
+        return item_id
+    return (item_id, int(unit_id))
+
+
+def _cart_line_price(row: dict) -> float:
+    """Stored-USD price for one *selected unit* of a cart line.
+
+    ``unit_price`` is always per the row's own unit (piece or carton), so
+    the line total is simply ``qty × price``. When no explicit override was
+    recorded, the base unit falls back to the item's selling price; any
+    other unit has already been stamped with its own price at add time.
+    """
+    price = row.get("unit_price")
+    if price is not None:
+        return float(price)
+    item = row.get("item") or {}
+    factor = float(row.get("factor") or 1)
+    return float(item.get("selling_price") or 0) * factor
 
 
 class POSCenter:
@@ -103,9 +137,36 @@ class POSCenter:
         # Phase B: floating last-scan card + success overlay state
         self._last_scan_token: int = 0
         self._success_visible: bool = False
+        # Price-check mode (F7): scans show the price card instead of
+        # adding to the cart -- the "how much is this?" question a cashier
+        # gets a dozen times a day.
+        self._price_check_mode: bool = False
+        # One-step undo for destructive cart actions (remove/clear). Holds
+        # a deep copy of the cart before the action; F8 restores it.
+        self._undo_state: dict | None = None
+        self._esc_armed_at: float = 0.0
+        # Which currency the cashier is typing cash in. ``None`` follows the
+        # app's display currency; ``"USD"``/``"SYP"`` pin the other one so a
+        # shop that prices in SYP can still take dollars without leaving POS.
+        self._receive_currency: str | None = None
 
     def money(self, value: float) -> str:
         return currency.format_amount(value, self.ctx.settings)
+
+    def _receive_settings_obj(self):
+        """Settings view whose display currency is the cash-entry currency."""
+        if self._receive_currency is None:
+            return self.ctx.settings
+        settings = dict(self.ctx.settings.get_all())
+        settings[currency.DISPLAY_CURRENCY_KEY] = self._receive_currency
+        return settings
+
+    def _money_receive(self, value_usd: float) -> str:
+        settings = self._receive_settings_obj()
+        return currency.format_display_value(
+            currency.to_display(value_usd, currency.get_effective_rate(settings)),
+            settings,
+        )
 
     @staticmethod
     def _qty(value) -> str:
@@ -143,6 +204,13 @@ class POSCenter:
         try:
             if hasattr(self, "_prev_on_keyboard"):
                 self.page.on_keyboard_event = self._prev_on_keyboard
+        except Exception:
+            pass
+        try:
+            if getattr(self.ctx, "_pos_apply_voice", None) == self._apply_voice_command:
+                self.ctx._pos_apply_voice = getattr(self, "_prev_voice_apply", None)
+            if getattr(self.ctx, "_pos_cart_snapshot", None) == self._cart_snapshot:
+                self.ctx._pos_cart_snapshot = getattr(self, "_prev_voice_snapshot", None)
         except Exception:
             pass
 
@@ -327,15 +395,24 @@ class POSCenter:
         grid = ft.ResponsiveRow(spacing=10, run_spacing=10)
 
         def render_grid():
-            q = state["query"].strip().casefold()
+            raw_q = state["query"].strip()
+            q = normalize_ar(raw_q.casefold())
+            tokens = [t for t in q.split() if t]
             cat_id = state["category_id"]
             matched = []
             for item in items:
                 if cat_id is not None and item.get("category_id") != cat_id:
                     continue
-                if q and q not in str(item["name"]).casefold():
-                    continue
+                if q:
+                    name = normalize_ar(str(item["name"]).casefold())
+                    barcode = str(item.get("barcode") or "")
+                    if not (
+                        (tokens and all(t in name for t in tokens))
+                        or (raw_q and raw_q in barcode)
+                    ):
+                        continue
                 matched.append(item)
+            state["matched"] = matched
 
             # Best sellers are shown in the vertical rail now, so the grid is
             # a single flat result set (pos_catalog() still returns
@@ -357,6 +434,23 @@ class POSCenter:
             self.page.update()
 
         search_field.on_change = search_changed
+
+        def search_submit(_=None):
+            # Enter in the search box: when the Arabic-normalized query
+            # narrows the catalog to exactly one item, add it without
+            # reaching for the tile. Ambiguous queries keep the grid so the
+            # cashier picks by eye.
+            matched = state.get("matched") or []
+            if len(matched) == 1 and not self._price_check_mode:
+                self._add_item(int(matched[0]["id"]))
+                search_field.value = ""
+                state["query"] = ""
+                render_grid()
+                self.page.update()
+            elif len(matched) == 1:
+                self._show_price_check_card(matched[0], None, None, 1.0)
+
+        search_field.on_submit = search_submit
 
         def barcode_submit(e):
             code = (barcode_field.value or "").strip()
@@ -401,24 +495,36 @@ class POSCenter:
         checkout_btn = hero_button("دفع", icon=ft.Icons.PAYMENTS_OUTLINED)
 
         def total_amount() -> float:
-            return sum(float(row.get("unit_price") or row["item"]["selling_price"]) * float(row["qty"]) for row in self.cart.values())
+            return sum(_cart_line_price(row) * float(row["qty"]) for row in self.cart.values())
+
+        def _receive_settings():
+            """Settings view whose display currency matches the cash-entry mode.
+
+            The numpad always types in *some* currency; by default that is
+            the app's display currency. ``_receive_currency`` lets the
+            cashier flip to the other supported currency for this sale
+            without touching admin settings.
+            """
+            return self._receive_settings_obj()
 
         def received_amount() -> float:
-            # The cashier types the cash handed over in the currently displayed
-            # currency (SYP or USD) on the numpad; convert it to the stored USD
-            # unit so it can be compared against total_amount() (also USD).
+            # The cashier types the cash handed over in the currency shown
+            # on the numpad (display currency by default); convert it to the
+            # stored USD unit so it can be compared against total_amount()
+            # (also USD).
             try:
-                typed_syp = float(self.received_digits) if self.received_digits else None
+                typed = float(self.received_digits) if self.received_digits else None
             except ValueError:
-                typed_syp = None
-            if typed_syp is None:
+                typed = None
+            if typed is None:
                 return total_amount()
-            return currency.to_stored(typed_syp, currency.get_effective_rate(self.ctx.settings))
+            return currency.to_stored(typed, currency.get_effective_rate(_receive_settings()))
 
-        def remove_by_swipe(item_id: int):
-            self.cart.pop(item_id, None)
-            if item_id in self.cart_order:
-                self.cart_order.remove(item_id)
+        def remove_by_swipe(row_key):
+            self._remember_undo()
+            self.cart.pop(row_key, None)
+            if row_key in self.cart_order:
+                self.cart_order.remove(row_key)
             refresh_cart()
             self.page.update()
 
@@ -426,14 +532,16 @@ class POSCenter:
             total = total_amount()
             change = received_amount() - total
             if change >= 0:
-                change_text.value = f"الباقي للعميل: {self.money(change)}" if change > 0 else "المبلغ مضبوط بالتمام"
+                change_text.value = (
+                    f"الباقي للعميل: {self._money_receive(change)}" if change > 0 else "المبلغ مضبوط بالتمام"
+                )
                 change_text.color = Colors.SUCCESS_DARK
             elif self.customer_id:
                 # A shortfall is a valid credit sale once a customer is
                 # selected -- InvoiceService already records total-paid as
                 # a receivable on that customer (see _require_party_for_credit
                 # in invoice_service.py). This is not an error state.
-                change_text.value = f"دفعة جزئية — سيُسجَّل {self.money(-change)} على حساب العميل"
+                change_text.value = f"دفعة جزئية — سيُسجَّل {self._money_receive(-change)} على حساب العميل"
                 change_text.color = Colors.WARNING_DARK
             else:
                 # No customer means InvoiceService forces paid=total
@@ -442,7 +550,7 @@ class POSCenter:
                 # cash shortfall needs a stronger warning: the checkout
                 # will still go through as "fully paid" even though the
                 # cashier hasn't actually collected the full amount yet.
-                change_text.value = f"⚠️ ناقص {self.money(-change)} — لا يوجد عميل لتسجيل الباقي، اختر عميلًا أو أكمل المبلغ"
+                change_text.value = f"⚠️ ناقص {self._money_receive(-change)} — لا يوجد عميل لتسجيل الباقي، اختر عميلًا أو أكمل المبلغ"
                 change_text.color = Colors.DANGER_DARK
 
         def refresh_cart():
@@ -465,8 +573,8 @@ class POSCenter:
                 cw.visible = True
             total = total_amount()
             rows = []
-            for item_id in self.cart_order:
-                row = self.cart.get(item_id)
+            for row_key in self.cart_order:
+                row = self.cart.get(row_key)
                 if row is None:
                     continue
                 card = self._cart_row(row, on_change=lambda: (refresh_cart(), self.page.update()))
@@ -478,7 +586,7 @@ class POSCenter:
                 # it introduces no new destructive action.
                 rows.append(
                     ft.Dismissible(
-                        key=f"cart-{item_id}",
+                        key=f"cart-{row_key}",
                         content=card,
                         dismiss_direction=ft.DismissDirection.HORIZONTAL,
                         background=ft.Container(
@@ -489,7 +597,7 @@ class POSCenter:
                             content=ft.Row([ft.Text("حذف", color=Colors.WHITE, size=11, weight=ft.FontWeight.W_600), ft.Icon(ft.Icons.DELETE_OUTLINE, color=Colors.WHITE, size=18)], spacing=6, alignment=ft.MainAxisAlignment.END),
                             bgcolor=Colors.DANGER_DARK, border_radius=10, padding=ft.padding.symmetric(horizontal=14), alignment=ft.alignment.center_right,
                         ),
-                        on_dismiss=lambda _, iid=item_id: remove_by_swipe(iid),
+                        on_dismiss=lambda _, k=row_key: remove_by_swipe(k),
                     )
                 )
             cart_column.controls = rows if rows else [empty_state("السلة فارغة", icon=ft.Icons.SHOPPING_CART_OUTLINED, hint="امسح باركود أو اضغط على مادة للإضافة")]
@@ -498,7 +606,7 @@ class POSCenter:
             count_text.value = f"{len(self.cart_order)} بند" if self.cart_order else "0 بند"
             bottom_count_text.value = count_text.value
             self.received_digits = ""
-            received_display.value = self.money(total)
+            received_display.value = self._money_receive(total)
             _apply_change_text()
             checkout_btn.disabled = not self.cart_order
             render_quick_cash()
@@ -527,7 +635,11 @@ class POSCenter:
 
         # ---- numpad for amount received ---------------------------------
         def _sync_received_display():
-            received_display.value = self.money(received_amount()) if self.received_digits else self.money(total_amount())
+            received_display.value = (
+                self._money_receive(received_amount())
+                if self.received_digits
+                else self._money_receive(total_amount())
+            )
             _apply_change_text()
 
         def numpad_press(key: str):
@@ -569,8 +681,9 @@ class POSCenter:
             )
 
         def render_quick_cash():
-            total_displayed = currency.to_display(total_amount(), currency.get_effective_rate(self.ctx.settings))
-            is_usd = currency.get_display_currency(self.ctx.settings) == currency.DISPLAY_CURRENCY_USD
+            settings = _receive_settings()
+            total_displayed = currency.to_display(total_amount(), currency.get_effective_rate(settings))
+            is_usd = currency.get_display_currency(settings) == currency.DISPLAY_CURRENCY_USD
             steps = [1, 5, 10, 20, 50, 100] if is_usd else [1000, 5000, 10000, 25000, 50000, 100000]
             max_buttons = pos_settings.quick_cash_count(self.ctx.settings)
             buttons = [_quick_cash_button("المبلغ بالتمام", None)]
@@ -581,7 +694,7 @@ class POSCenter:
                     if val <= total_displayed or val in seen:
                         continue
                     seen.add(val)
-                    buttons.append(_quick_cash_button(currency.format_display_value(val, self.ctx.settings, with_symbol=False), val))
+                    buttons.append(_quick_cash_button(currency.format_display_value(val, settings, with_symbol=False), val))
                     if len(seen) == max_buttons:
                         break
             quick_cash_row.controls = buttons
@@ -608,8 +721,8 @@ class POSCenter:
         def undo_last(_=None):
             if not self.cart_order:
                 return
-            last_id = self.cart_order[-1]
-            row = self.cart.get(last_id)
+            last_key = self.cart_order[-1]
+            row = self.cart.get(last_key)
             if row is None:
                 self.cart_order.pop()
                 refresh_cart()
@@ -618,12 +731,15 @@ class POSCenter:
             if row["qty"] > 1:
                 row["qty"] -= 1
             else:
-                self.cart.pop(last_id, None)
+                self._remember_undo()
+                self.cart.pop(last_key, None)
                 self.cart_order.pop()
             refresh_cart()
             self.page.update()
 
-        def clear_cart(keep_customer: bool = False):
+        def clear_cart(keep_customer: bool = False, *, undoable: bool = True):
+            if undoable and self.cart_order:
+                self._remember_undo()
             self.cart = {}
             self.cart_order = []
             if not keep_customer:
@@ -697,7 +813,16 @@ class POSCenter:
                 return False
             try:
                 rows_list = [self.cart[i] for i in self.cart_order]
-                margin_issues = cart_margin_warnings(rows_list, self.ctx.settings)
+                # Margin checks compare a per-*base*-unit price with the
+                # item's cost, while cart prices are per selected unit.
+                margin_rows = [
+                    {
+                        **row,
+                        "unit_price": _cart_line_price(row) / max(float(row.get("factor") or 1), 1e-9),
+                    }
+                    for row in rows_list
+                ]
+                margin_issues = cart_margin_warnings(margin_rows, self.ctx.settings)
                 if margin_issues and not getattr(self, "_margin_override", False):
                     names = "، ".join(str(w.get("name") or "") for w in margin_issues[:3])
                     self.notify(
@@ -712,7 +837,9 @@ class POSCenter:
                         description=str(row["item"]["name"]),
                         item_id=int(row["item"]["id"]),
                         quantity=float(row["qty"]),
-                        unit_price=float(row.get("unit_price") or row["item"]["selling_price"]),
+                        unit_price=_cart_line_price(row),
+                        unit_id=row.get("unit_id"),
+                        conversion_factor=float(row.get("factor") or 1),
                     )
                     for row in rows_list
                 ]
@@ -726,6 +853,9 @@ class POSCenter:
                     paid_amount=paid,
                 )
                 change_amt = max(0.0, received - total)
+                # The sale is committed: an old one-step undo snapshot
+                # must never resurrect sold lines into the next sale.
+                self._undo_state = None
                 self._remember_recent_customer(self.customer_id)
                 if auto_print_switch.value and self.native_files is not None:
                     self.page.run_task(self._print_receipt, invoice_id)
@@ -835,6 +965,46 @@ class POSCenter:
                 )
 
             steps_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
+            currency_toggle_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
+
+            def render_currency_toggle():
+                app_currency = currency.get_display_currency(self.ctx.settings)
+                options = [currency.DISPLAY_CURRENCY_SYP, currency.DISPLAY_CURRENCY_USD]
+                if app_currency not in options:
+                    options.insert(0, app_currency)
+                active_currency = self._receive_currency or app_currency
+                chips = []
+                for code in options:
+                    active = code == active_currency
+                    label = "ل.س" if code == currency.DISPLAY_CURRENCY_SYP else "$"
+                    chips.append(
+                        ft.Container(
+                            ft.Text(label, size=12, weight=ft.FontWeight.BOLD,
+                                    color=Colors.WHITE if active else Colors.TEXT_MUTED),
+                            padding=ft.padding.symmetric(horizontal=14, vertical=6),
+                            bgcolor=Colors.PRIMARY if active else Colors.BACKGROUND_ALT,
+                            border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
+                            border_radius=16,
+                            ink=True,
+                            on_click=lambda _, c=code: switch_receive_currency(c),
+                        )
+                    )
+                currency_toggle_row.controls = chips
+
+            def switch_receive_currency(code: str):
+                app_currency = currency.get_display_currency(self.ctx.settings)
+                self._receive_currency = None if code == app_currency else code
+                # The digits were typed in the previous currency; resetting
+                # to "exact total" avoids silently reinterpreting 50 as $50
+                # when the cashier meant 50,000 ل.س.
+                self.received_digits = ""
+                render_currency_toggle()
+                render_quick_cash()
+                _sync_received_display()
+                try:
+                    body.update()
+                except Exception:
+                    self.page.update()
 
             def render_steps_row():
                 steps_row.controls = [
@@ -853,6 +1023,7 @@ class POSCenter:
                         ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                         ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
                         ft.Container(height=4),
+                        currency_toggle_row,
                         received_display,
                         change_text,
                         quick_cash_row,
@@ -867,9 +1038,41 @@ class POSCenter:
                     ])
                 elif n == 2:
                     step_label.value = "العميل (اختياري)"
+                    insight = ft.Container(height=0)
+                    if self.customer_id:
+                        customer = customer_map.get(self.customer_id)
+                        balance = float((customer or {}).get("balance") or 0)
+                        if customer is not None and abs(balance) > 0.005:
+                            owes = balance > 0
+                            insight = ft.Container(
+                                ft.Row(
+                                    [
+                                        ft.Icon(
+                                            ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED,
+                                            size=16,
+                                            color=Colors.WARNING_DARK if owes else Colors.SUCCESS_DARK,
+                                        ),
+                                        ft.Text(
+                                            (
+                                                f"على العميل {self.money(balance)}"
+                                                if owes
+                                                else f"له رصيد دائن {self.money(-balance)}"
+                                            ),
+                                            size=11,
+                                            weight=ft.FontWeight.W_600,
+                                            color=Colors.WARNING_DARK if owes else Colors.SUCCESS_DARK,
+                                        ),
+                                    ],
+                                    spacing=6,
+                                ),
+                                padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                                bgcolor=Colors.WARNING_BG if owes else Colors.SUCCESS_BG,
+                                border_radius=12,
+                            )
                     body.controls.extend([
                         ft.Text("اتركه فارغًا للبيع النقدي السريع", size=12, color=Colors.TEXT_SECONDARY),
                         customer_dd,
+                        insight,
                         recent_customers_row(),
                         auto_print_switch,
                         ft.Row(
@@ -889,7 +1092,7 @@ class POSCenter:
                                     ft.Text("الإجمالي", size=12, color=Colors.TEXT_SECONDARY),
                                     sheet_total_text,
                                     ft.Text("المستلم", size=12, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(self.money(received_amount()), size=20, weight=ft.FontWeight.BOLD),
+                                    ft.Text(self._money_receive(received_amount()), size=20, weight=ft.FontWeight.BOLD),
                                     change_text,
                                 ],
                                 spacing=4,
@@ -914,6 +1117,7 @@ class POSCenter:
                     self.page.update()
 
             render_steps_row()
+            render_currency_toggle()
             go_step(1)
             payment_sheet.content = ft.Container(
                 ft.Column(
@@ -971,6 +1175,73 @@ class POSCenter:
         # this column stays short even with several lines in the cart.
         hold_btn = ft.IconButton(icon=ft.Icons.PAUSE_CIRCLE_OUTLINED, tooltip="تعليق الفاتورة", on_click=hold_cart, icon_size=IconSize.HEADER)
         undo_btn = ft.IconButton(icon=ft.Icons.UNDO, tooltip="تراجع عن آخر إضافة", on_click=undo_last, icon_size=IconSize.HEADER)
+        price_check_btn = ft.IconButton(
+            icon=ft.Icons.PRICE_CHECK,
+            tooltip="فحص السعر (F7) — امسح دون إضافة للسلة",
+            on_click=lambda _: toggle_price_check(),
+            icon_size=IconSize.HEADER,
+        )
+        recall_btn = ft.IconButton(
+            icon=ft.Icons.REPLAY,
+            tooltip="إعادة آخر فاتورة إلى السلة",
+            on_click=lambda _: recall_last_sale(),
+            icon_size=IconSize.HEADER,
+        )
+
+        def toggle_price_check():
+            self._price_check_mode = not self._price_check_mode
+            price_check_btn.icon = (
+                ft.Icons.POINT_OF_SALE_OUTLINED if self._price_check_mode else ft.Icons.PRICE_CHECK
+            )
+            price_check_btn.icon_color = Colors.WARNING_DARK if self._price_check_mode else None
+            self.notify(
+                "وضع فحص السعر: امسح لعرض السعر فقط" if self._price_check_mode
+                else "وضع البيع: المسح يضيف للسلة"
+            )
+            self.page.update()
+
+        def recall_last_sale():
+            if self.cart_order:
+                self.notify("السلة غير فارغة — أفرغها أو علّقها أولًا", kind="warning")
+                return
+            try:
+                recent = self.ctx.invoices.list_invoices("sale", limit=1)
+                invoice = self.ctx.invoices.get_invoice(int(recent[0]["id"])) if recent else None
+            except Exception:
+                invoice = None
+            if not invoice:
+                self.notify("لا توجد فاتورة سابقة")
+                return
+            added = 0
+            missing = 0
+            for line in invoice.get("lines") or []:
+                item_id = line.get("item_id")
+                item = self.item_map.get(int(item_id)) if item_id is not None else None
+                if item is None:
+                    missing += 1
+                    continue
+                qty = float(line.get("quantity") or 0)
+                if qty <= 0:
+                    continue
+                unit_id = line.get("unit_id")
+                factor = float(line.get("conversion_factor") or 1)
+                self._add_item(
+                    int(item_id),
+                    qty,
+                    float(line.get("unit_price") or item["selling_price"]),
+                    unit_id=int(unit_id) if unit_id is not None else None,
+                    factor=factor,
+                )
+                added += 1
+            if invoice.get("customer_id"):
+                self.customer_id = int(invoice["customer_id"])
+                customer_dd.value = str(self.customer_id)
+                customer_changed()
+            note = "تم استرجاع آخر فاتورة" if added else "تعذّر استرجاع بنود آخر فاتورة"
+            if missing:
+                note += f" ({missing} مادة غير متوفرة)"
+            self.notify(note, kind="warning" if missing else None)
+            self.page.update()
 
         # Running total + pay action now live in a pinned footer *inside* the
         # cart (glued to the receipt they belong to) instead of a full-width
@@ -1004,6 +1275,7 @@ class POSCenter:
                         [
                             ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD, expand=True),
                             count_text,
+                            ft.Row([price_check_btn, recall_btn], spacing=0, tight=True),
                             hold_btn,
                             undo_btn,
                         ],
@@ -1192,8 +1464,17 @@ class POSCenter:
             try:
                 k = (e.key or "").strip().lower().replace(" ", "")
                 if k == "escape" or k == "esc":
-                    clear_cart()
-                    self.notify("تم تفريغ السلة")
+                    # Double-press guard: a single stray Esc must never
+                    # wipe a half-built cart. First press arms for 3s,
+                    # second press within that window clears (F8 restores).
+                    now = time.monotonic()
+                    if now - self._esc_armed_at <= 3.0:
+                        self._esc_armed_at = 0.0
+                        clear_cart()
+                        self.notify("تم تفريغ السلة — F8 للتراجع")
+                    else:
+                        self._esc_armed_at = now
+                        self.notify("اضغط Esc مرة أخرى خلال 3 ثوانٍ لتفريغ السلة")
                     self.page.update()
                     return
                 if k == "f2":
@@ -1204,6 +1485,13 @@ class POSCenter:
                     return
                 if k == "f4":
                     hold_cart(None)
+                    return
+                if k == "f7":
+                    toggle_price_check()
+                    return
+                if k == "f8":
+                    if not self._restore_undo():
+                        self.notify("لا يوجد إجراء للتراجع عنه")
                     return
                 if k == "enter" and (e.ctrl or e.meta):
                     checkout_btn.on_click(None)
@@ -1223,6 +1511,24 @@ class POSCenter:
         self._total_amount = total_amount
         self._received_amount = received_amount
         self._do_checkout = do_checkout
+
+        # Hands-free voice bridge: the voice session calls these two hooks
+        # when it is already on the POS screen (or navigates here and then
+        # replays the queued command, see _pending_voice_command).
+        self._prev_voice_apply = getattr(self.ctx, "_pos_apply_voice", None)
+        self._prev_voice_snapshot = getattr(self.ctx, "_pos_cart_snapshot", None)
+        try:
+            self.ctx._pos_apply_voice = self._apply_voice_command
+            self.ctx._pos_cart_snapshot = self._cart_snapshot
+        except Exception:
+            pass
+        pending = getattr(self.ctx, "_pending_voice_command", None)
+        if pending is not None:
+            try:
+                self.ctx._pending_voice_command = None
+            except Exception:
+                pass
+            self.page.run_task(self._apply_pending_voice, pending)
 
     # ------------------------------------------------------------------ #
     # Small UI helpers
@@ -1334,14 +1640,15 @@ class POSCenter:
         is_service = item["item_type"] == "خدمة"
         is_weighted = (not is_service) and self._is_weighted_item(item)
 
-        item_id = int(item["id"])
+        row_key = row.get("key", int(item["id"]))
 
         def change_qty(delta: float):
             new_qty = row["qty"] + delta
             if new_qty <= 0:
-                self.cart.pop(item_id, None)
-                if item_id in self.cart_order:
-                    self.cart_order.remove(item_id)
+                self._remember_undo()
+                self.cart.pop(row_key, None)
+                if row_key in self.cart_order:
+                    self.cart_order.remove(row_key)
             else:
                 row["qty"] = new_qty
             on_change()
@@ -1349,6 +1656,48 @@ class POSCenter:
         def set_qty(value: float):
             row["qty"] = value
             on_change()
+
+        def edit_qty(_=None) -> None:
+            # Tap the quantity to type an exact figure (e.g. 0.75 kg or 6
+            # cartons) instead of stepping the ± buttons ten times.
+            qty_field = SelectAllTextField(
+                label="الكمية",
+                value=self._qty(row["qty"]),
+                keyboard_type=ft.KeyboardType.NUMBER,
+                autofocus=True,
+            )
+
+            def apply(_=None) -> None:
+                try:
+                    value = float((qty_field.value or "").replace(",", "."))
+                except Exception:
+                    self.notify("قيمة غير صالحة", kind="error")
+                    return
+                if value <= 0:
+                    self._remember_undo()
+                    self.cart.pop(row_key, None)
+                    if row_key in self.cart_order:
+                        self.cart_order.remove(row_key)
+                else:
+                    row["qty"] = value
+                self.page.close(qty_sheet)
+                on_change()
+
+            qty_sheet = ft.BottomSheet(
+                content=ft.Container(),
+                is_scroll_controlled=True,
+                enable_drag=True,
+                maintain_bottom_view_insets_padding=True,
+            )
+            render_form_sheet(
+                self.page,
+                qty_sheet,
+                title=f"كمية {item['name']}",
+                fields=[qty_field],
+                on_close=lambda _: self.page.close(qty_sheet),
+                on_save=apply,
+            )
+            self.page.open(qty_sheet)
 
         def qty_shortcut(label: str, value: float) -> ft.Container:
             active = float(row["qty"] or 0) == value
@@ -1363,13 +1712,15 @@ class POSCenter:
             )
 
         def remove(_=None):
-            self.cart.pop(item_id, None)
-            if item_id in self.cart_order:
-                self.cart_order.remove(item_id)
+            self._remember_undo()
+            self.cart.pop(row_key, None)
+            if row_key in self.cart_order:
+                self.cart_order.remove(row_key)
             on_change()
 
-        line_unit_price = float(row.get("unit_price") or item["selling_price"])
+        line_unit_price = _cart_line_price(row)
         line_total = line_unit_price * float(row["qty"])
+        unit_label = self._cart_unit_label(row)
 
         def edit_price(_=None) -> None:
             # v0.9.6: tap the price line of a cart row to override that
@@ -1425,8 +1776,11 @@ class POSCenter:
 
         # Informational only (see item tile note above) -- InvoiceService
         # itself has no stock guard, so this never blocks checkout; it just
-        # lets the cashier catch it before printing the receipt.
-        exceeds_stock = (not is_service) and float(row["qty"]) > float(item.get("quantity") or 0)
+        # lets the cashier catch it before printing the receipt. Compare in
+        # *base* units so a carton line is checked against piece stock.
+        factor = float(row.get("factor") or 1)
+        base_qty = float(row["qty"]) * factor
+        exceeds_stock = (not is_service) and base_qty > float(item.get("quantity") or 0)
         warning_line = None
         if exceeds_stock:
             warning_line = ft.Text(
@@ -1434,9 +1788,11 @@ class POSCenter:
                 size=10, color=Colors.DANGER_DARK, weight=ft.FontWeight.W_600,
             )
 
-        # Phase B: margin badge (below cost) + qty badge on cart lines
+        # Phase B: margin badge (below cost) + qty badge on cart lines.
+        # Prices are stored per *selected unit*, so normalize to the base
+        # unit before comparing with the item's per-base-unit cost.
         margin_info = check_sale_margin(
-            unit_price_usd=line_unit_price,
+            unit_price_usd=line_unit_price / max(factor, 1e-9),
             item=item,
             settings=self.ctx.settings,
         )
@@ -1465,6 +1821,14 @@ class POSCenter:
         name_row_controls = [
             ft.Text(item["name"], size=12, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
         ]
+        if unit_label:
+            name_row_controls.append(
+                ft.Container(
+                    ft.Text(unit_label, size=9, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                    padding=ft.padding.symmetric(horizontal=6, vertical=2),
+                    bgcolor=Colors.PRIMARY_BG, border_radius=6,
+                )
+            )
         if badges:
             name_row_controls.append(ft.Row(badges, spacing=4, tight=True))
 
@@ -1506,7 +1870,13 @@ class POSCenter:
                                 spacing=1, expand=True,
                             ),
                             stepper_icon_button(ft.Icons.REMOVE_CIRCLE_OUTLINE, lambda _: change_qty(-1)),
-                            ft.Text(self._qty(row["qty"]), size=12, weight=ft.FontWeight.BOLD),
+                            ft.Container(
+                                ft.Text(self._qty(row["qty"]), size=12, weight=ft.FontWeight.BOLD),
+                                padding=ft.padding.symmetric(horizontal=4, vertical=2),
+                                ink=True,
+                                tooltip="اضغط لكتابة الكمية",
+                                on_click=edit_qty,
+                            ),
                             stepper_icon_button(ft.Icons.ADD_CIRCLE_OUTLINE, lambda _: change_qty(1)),
                             stepper_icon_button(ft.Icons.CLOSE, remove, danger=True),
                         ],
@@ -1536,15 +1906,36 @@ class POSCenter:
     # Cart mutation
     # ------------------------------------------------------------------ #
 
-    def _add_item(self, item_id: int, qty_delta: float = 1.0, unit_price: float | None = None) -> None:
+    def _add_item(
+        self,
+        item_id: int,
+        qty_delta: float = 1.0,
+        unit_price: float | None = None,
+        *,
+        unit_id: int | None = None,
+        factor: float = 1.0,
+    ) -> None:
         item = self.item_map.get(item_id)
         if item is None:
             return
-        row = self.cart.get(item_id)
+        # Unit-aware identity: the same item sold by the piece and by the
+        # carton are two distinct lines (different price per unit and
+        # different stock factor), not one merged row.
+        if unit_id is not None and int(unit_id) == int(item.get("base_unit_id") or 0):
+            unit_id = None
+        key = _cart_key(item, unit_id)
+        row = self.cart.get(key)
         is_repeat = row is not None
         if row is None:
-            self.cart[item_id] = {"item": item, "qty": qty_delta, "unit_price": unit_price}
-            self.cart_order.append(item_id)
+            self.cart[key] = {
+                "key": key,
+                "item": item,
+                "qty": qty_delta,
+                "unit_price": unit_price,
+                "unit_id": unit_id,
+                "factor": float(factor or 1.0),
+            }
+            self.cart_order.append(key)
             new_qty = qty_delta
         else:
             row["qty"] += qty_delta
@@ -1555,6 +1946,221 @@ class POSCenter:
         self._refresh_cart()
         self._show_last_scan_card(item, new_qty, unit_price=unit_price, is_repeat=is_repeat)
         self.page.update()
+
+    def _cart_unit_label(self, row: dict) -> str | None:
+        """«كرتونة ×12» for a non-base unit line; ``None`` for base units."""
+        unit_id = row.get("unit_id")
+        factor = float(row.get("factor") or 1)
+        if unit_id is None or factor == 1:
+            return None
+        try:
+            unit = next(
+                (u for u in self.ctx.items.units(int(row["item"]["id"])) if int(u["id"]) == int(unit_id)),
+                None,
+            )
+        except Exception:
+            unit = None
+        name = str((unit or {}).get("name") or "وحدة")
+        return f"{name} ×{self._qty(factor)}"
+
+    # ------------------------------------------------------------------ #
+    # Undo safety net / price-check mode
+    # ------------------------------------------------------------------ #
+
+    def _remember_undo(self) -> None:
+        """Snapshot the cart before a destructive action (remove / clear).
+
+        Kept deliberately tiny and in-memory only: one level, enough for
+        the «تراجع» toast or F8 to bring back an accidentally removed line
+        within the current sale. Checkout clears it.
+        """
+        if not self.cart_order:
+            return
+        self._undo_state = {
+            "cart": copy.deepcopy(self.cart),
+            "order": list(self.cart_order),
+        }
+
+    def _restore_undo(self) -> bool:
+        state = self._undo_state
+        if not state:
+            return False
+        self.cart = state["cart"]
+        self.cart_order = list(state["order"])
+        self._undo_state = None
+        self._refresh_cart()
+        self.notify("تم التراجع")
+        self.page.update()
+        return True
+
+    def _voice_find_item(self, data: dict) -> dict | None:
+        try:
+            item_id = int(data.get("item_id") or 0)
+        except Exception:
+            item_id = 0
+        if item_id:
+            item = self.item_map.get(item_id)
+            if item is not None:
+                return item
+        name = normalize_ar(str(data.get("name") or "").strip().casefold())
+        if not name:
+            return None
+        for item in self.item_map.values():
+            if normalize_ar(str(item.get("name") or "").casefold()) == name:
+                return item
+        for item in self.item_map.values():
+            if name in normalize_ar(str(item.get("name") or "").casefold()):
+                return item
+        return None
+
+    async def _apply_pending_voice(self, pending) -> None:
+        # Deferred by one tick so the screen is fully attached before the
+        # queued voice command mutates the cart (voice_session.navigate()
+        # hands control back before the shell rebuilds the POS page).
+        await asyncio.sleep(0)
+        try:
+            self._apply_voice_command(pending)
+        except Exception:
+            pass
+
+    def _cart_snapshot(self) -> dict:
+        lines = []
+        for key in self.cart_order:
+            row = self.cart.get(key)
+            if row is None:
+                continue
+            lines.append({"name": row["item"].get("name"), "qty": float(row["qty"] or 0)})
+        total_fn = getattr(self, "_total_amount", None)
+        total = float(total_fn()) if callable(total_fn) else 0.0
+        return {"count": len(lines), "total": total, "lines": lines}
+
+    def _apply_voice_command(self, result) -> None:
+        """Bridge for the hands-free voice session (see voice_session.py).
+
+        The session resolves spoken item names / quantities and hands the
+        resulting action here; this is the only place POS mutates its cart
+        for voice, so every path keeps the same undo and refresh behavior
+        as a tap or a scan.
+        """
+        action = getattr(result, "action", "")
+        data = getattr(result, "data", {}) or {}
+        if action == "pos_add":
+            item = self._voice_find_item(data)
+            if item is not None:
+                self._add_item(int(item["id"]), float(data.get("qty") or 1))
+            return
+        if action == "pos_add_many":
+            for entry in data.get("items") or []:
+                item = self._voice_find_item(entry)
+                if item is not None:
+                    self._add_item(int(item["id"]), float(entry.get("qty") or 1))
+            return
+        if action == "pos_set_qty":
+            qty = float(data.get("qty") or 0)
+            item = self._voice_find_item(data)
+            key = _cart_key(item, None) if item is not None else None
+            if key not in self.cart and self.cart_order:
+                key = self.cart_order[-1]
+            row = self.cart.get(key)
+            if row is None:
+                return
+            if qty <= 0:
+                self._remember_undo()
+                self.cart.pop(key, None)
+                if key in self.cart_order:
+                    self.cart_order.remove(key)
+            else:
+                row["qty"] = qty
+            self._refresh_cart()
+            self.page.update()
+            return
+        if action == "pos_remove_last":
+            if self.cart_order:
+                self._remember_undo()
+                key = self.cart_order.pop()
+                self.cart.pop(key, None)
+                self._refresh_cart()
+                self.page.update()
+            return
+        if action == "pos_clear":
+            clear = getattr(self, "_clear_cart", None)
+            if callable(clear):
+                clear()
+                self._refresh_cart()
+                self.page.update()
+            return
+        if action == "pos_pay":
+            checkout = getattr(self, "_checkout_btn", None)
+            if checkout is not None:
+                checkout.on_click(None)
+
+    def _show_price_check_card(self, item: dict, unit_price: float | None, unit_id: int | None, factor: float) -> None:
+        """F7 mode: scanning shows the price, it does NOT touch the cart."""
+        overlay = getattr(self, "_last_scan_overlay", None)
+        price = float(unit_price if unit_price is not None else item.get("selling_price") or 0)
+        stock = item.get("quantity")
+        subtitle_bits = [self.money(price)]
+        if unit_id is not None and factor != 1:
+            try:
+                unit = next(
+                    (u for u in self.ctx.items.units(int(item["id"])) if int(u["id"]) == int(unit_id)),
+                    None,
+                )
+            except Exception:
+                unit = None
+            subtitle_bits.append(f"{str((unit or {}).get('name') or 'وحدة')} ×{self._qty(factor)}")
+        subtitle_bits.append(f"المتوفر: {self._qty(stock)}")
+        if overlay is not None:
+            self._last_scan_token += 1
+            token = self._last_scan_token
+            overlay.content = ft.Container(
+                ft.Row(
+                    [
+                        ft.Container(
+                            ft.Icon(ft.Icons.PRICE_CHECK, color=Colors.WHITE, size=26),
+                            width=44, height=44, border_radius=12,
+                            bgcolor=Colors.PRIMARY, alignment=ft.alignment.center,
+                        ),
+                        ft.Column(
+                            [
+                                ft.Text(str(item.get("name") or ""), size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                ft.Text(" · ".join(subtitle_bits), size=12, color=Colors.TEXT_SECONDARY),
+                            ],
+                            spacing=2, expand=True,
+                        ),
+                    ],
+                    spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.symmetric(horizontal=16, vertical=12),
+                bgcolor=Colors.PRIMARY_BG,
+                border=ft.border.all(1.5, Colors.PRIMARY),
+                border_radius=16,
+                shadow=Shadow.MD,
+                width=340,
+            )
+            overlay.visible = True
+            overlay.opacity = 1
+            try:
+                overlay.update()
+            except Exception:
+                pass
+
+            async def _hide_after_delay():
+                await asyncio.sleep(2.2)
+                if token != self._last_scan_token:
+                    return
+                overlay.visible = False
+                overlay.opacity = 0
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+            self.page.run_task(_hide_after_delay)
+        self.notify(
+            f"{item.get('name')}: {self.money(price)} · المتوفر {self._qty(stock)}",
+            sound_kind="scan",
+        )
 
     def _show_last_scan_card(self, item: dict, qty: float, unit_price: float | None = None, is_repeat: bool = False) -> None:
         """Phase B: floating «آخر مسح» card — appears ~1.5s then fades away."""
@@ -1648,7 +2254,7 @@ class POSCenter:
                 f"تم البيع بنجاح — فاتورة #{invoice_id}"
                 + (f" · الباقي {self.money(change)}" if change > 0 else "")
             )
-            clear_cart_fn()
+            clear_cart_fn(undoable=False)
             refresh_cart_fn()
             refresh_today_fn()
             self.page.update()
@@ -1661,7 +2267,7 @@ class POSCenter:
             last.opacity = 0
 
         def start_new_sale(_=None):
-            clear_cart_fn()
+            clear_cart_fn(undoable=False)
             refresh_cart_fn()
             refresh_today_fn()
             overlay.visible = False
@@ -1783,16 +2389,27 @@ class POSCenter:
         # ItemRepository.find_by_barcode.
         qty_delta = 1.0
         unit_price = None
+        unit_id = None
+        factor = 1.0
         matched_unit_id = found.get("matched_unit_id")
         if matched_unit_id:
             unit_row = next(
                 (u for u in self.ctx.items.units(item_id) if int(u["id"]) == int(matched_unit_id)), None
             )
             if unit_row:
-                qty_delta = float(unit_row.get("conversion_factor") or 1)
+                # The unit barcode buys ONE unit of that unit (a carton),
+                # priced per that unit -- not N base pieces at the carton
+                # price. ``factor`` carries the stock conversion to the
+                # invoice line; ``qty`` stays 1 so the line total is the
+                # carton price, exactly like the invoice editor.
+                unit_id = int(matched_unit_id)
+                factor = float(unit_row.get("conversion_factor") or 1)
                 _spu = unit_row.get("selling_price")
-                if _spu not in (None, ""):
-                    unit_price = float(_spu)
+                unit_price = (
+                    float(_spu)
+                    if _spu not in (None, "")
+                    else float(found.get("selling_price") or 0) * factor
+                )
         # Real haptic feedback on scan would still need a native platform
         # channel added to the flet_native_files extension (Dart/Kotlin/
         # Swift) -- out of reach here with no Flutter toolchain or device to
@@ -1809,12 +2426,15 @@ class POSCenter:
         # below still picks how much on-screen detail this toast shows --
         # independent of the "الصوت" tab's own settings for whether/how
         # loud each tone kind plays.
+        if self._price_check_mode:
+            self._show_price_check_card(found, unit_price, unit_id, factor)
+            return
         if barcode_settings.scan_feedback_mode(self.ctx.settings) == "brief":
             self.notify("✔", sound_kind="scan")
         else:
-            qty_note = f" × {self._qty(qty_delta)}" if qty_delta != 1 else ""
+            qty_note = f" × {self._qty(factor)}" if unit_id is not None and factor != 1 else ""
             self.notify(f"✔ أُضيف: {found['name']}{qty_note}", sound_kind="scan")
-        self._add_item(item_id, qty_delta, unit_price)
+        self._add_item(item_id, qty_delta, unit_price, unit_id=unit_id, factor=factor)
 
     def _offer_create_item(self, code: str) -> None:
         # A scan that matched nothing gets its own dedicated tone
