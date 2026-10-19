@@ -15,7 +15,10 @@ Every one of those files is generated deterministically from the master by
 `tools/generate_brand_assets.py` (`python3 tools/generate_brand_assets.py`),
 so the mark cannot drift between Windows/Android/iOS/web/macOS again. To
 rebrand, replace `branding/source/brand.png` and re-run the script — do not
-hand-edit the individual PNGs.
+hand-edit the individual PNGs. The generator keys the master's flat paper
+background to transparency for launcher icons (Windows/Android/web) so the
+mark sits cleanly on taskbars and adaptive-icon backdrops; iOS/macOS tiles,
+splash artwork and the in-app pngs keep the master as-is.
 
 ## Brand Palette
 The app theme (`src/nano_offline/core/theme.py`) is the single source of truth.
