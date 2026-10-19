@@ -2369,49 +2369,389 @@ class ItemsCenter:
             page.open(sheet)
 
         def open_bulk_add_sheet(_=None) -> None:
-            """Add many items as a spreadsheet: type rows, then save once.
+            """Comprehensive multi-item entry: a full table in a wide sheet.
 
-            Reuses the same :class:`DataGrid` as the list, so the
-            interaction (arrows / Tab / Enter / type-to-replace) is
-            identical to browsing the list. Category, unit and type apply
-            to every row at once -- the same "column default" pattern a
-            paper intake sheet uses -- while name/prices/qty/barcode are
-            entered per row.
+            Every column is editable per row (name, barcode, category, unit,
+            type, prices, quantity) and the grid carries the table toolkit:
+            column visibility, density, sorting, multi-select with batch
+            duplicate/delete, per-row menu, CSV export and live footer
+            totals. The selectors above the grid act as defaults stamped
+            onto each new row ("تطبيق على الكل" stamps the whole sheet).
+            Saving is one batch; on a partial failure the rows that did save
+            are removed from the grid so a retry never re-creates them.
             """
             cat_options = [(str(c["id"]), c["name"]) for c in categories]
             unit_options = [(str(u["id"]), u["name"]) for u in units]
             default_unit = str(units[0]["id"]) if units else None
+            cat_map = {str(c["id"]): c["name"] for c in categories}
+            unit_map = {str(u["id"]): u["name"] for u in units}
+
+            bulk_hidden_state = {"keys": set(filter(None, ctx.settings.get("ui.bulk_add_hidden_columns", "").split(",")))}
+            bulk_density_state = {"compact": ctx.settings.get("ui.bulk_add_density", "comfortable") == "compact"}
+            picker_state = {"row": -1, "key": ""}
 
             type_sel = SearchSelect(
-                label="النوع", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")],
+                label="النوع الافتراضي", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")],
                 value="مخزون", allow_clear=False,
             )
-            cat_sel = SearchSelect(label="التصنيف", choices=cat_options, value=None)
+            cat_sel = SearchSelect(label="التصنيف الافتراضي", choices=cat_options, value=None)
             unit_sel = SearchSelect(
-                label="الوحدة الأساسية", choices=unit_options,
+                label="الوحدة الافتراضية", choices=unit_options,
                 value=default_unit, allow_clear=False,
             )
 
             bulk_columns = [
-                GridColumn("name", "الاسم", editable=True),
+                GridColumn("name", "الاسم", editable=True, tooltip="اسم المادة أو الخدمة"),
+                GridColumn("barcode", "الباركود", width=150, editable=True, tooltip="الباركود الأساسي (اختياري)"),
+                GridColumn("category_id", "التصنيف", width=140, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للاختيار"),
+                GridColumn("item_type", "النوع", width=100, align="center", editable=True, kind="picker", tooltip="مخزون يُتابع بالمخزون، وخدمة لا"),
+                GridColumn("base_unit_id", "الوحدة", width=110, editable=True, kind="picker", tooltip="الوحدة الأساسية للبيع والشراء"),
+                GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True, tooltip="الكمية الافتتاحية (للمخزون فقط)"),
                 GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
                 GridColumn("selling_price", "سعر البيع", width=120, align="end", kind="money", editable=True),
-                GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True),
-                GridColumn("barcode", "الباركود", width=150, editable=True),
+                GridColumn("_status", "الحالة", width=110, align="center", sortable=False, tooltip="جاهز للحفظ / ناقص الاسم"),
             ]
+
+            def bulk_formatter(col: GridColumn, value, row: dict):
+                if col.key == "category_id":
+                    return cat_map.get(str(value)) if value else "بلا تصنيف"
+                if col.key == "base_unit_id":
+                    return unit_map.get(str(value)) if value else None
+                if col.key == "item_type":
+                    return value or "مخزون"
+                if col.key == "_status":
+                    if str(row.get("name") or "").strip():
+                        return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
+                    return ("ناقص الاسم", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
+                return None
+
+            def bulk_row_bg(row: dict) -> str | None:
+                """Flag rows whose barcode duplicates another row's in the draft."""
+                code = str(row.get("barcode") or "").strip()
+                if not code:
+                    return None
+                copies = sum(1 for other in bulk_grid.rows if str(other.get("barcode") or "").strip() == code)
+                return Colors.DANGER_BG if copies > 1 else None
+
+            bulk_bar = ft.Container(
+                visible=False,
+                padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                border_radius=Radius.SM,
+                bgcolor=Colors.PRIMARY_BG,
+            )
+
             bulk_grid = DataGrid(
                 columns=bulk_columns, rows=[], page=page,
+                row_height=36 if bulk_density_state["compact"] else 48,
+                hidden_keys=set(bulk_hidden_state["keys"]),
+                formatter=bulk_formatter,
+                row_bg=bulk_row_bg,
                 on_cell_commit=lambda *_: refresh_bulk_footer(),
+                on_pick=lambda row_index, col: open_bulk_picker(row_index, col),
+                on_sort=lambda key, direction: apply_bulk_sort(key, direction),
+                on_row_menu=lambda row: bulk_row_menu(row),
+                selectable=True,
+                on_selection_change=lambda rows: render_bulk_selection(rows),
                 empty_text="اضغط «سطر جديد» لبدء الإدخال",
             )
-            def refresh_bulk_footer() -> None:
-                """Show how many rows are ready to save, so a long sheet stays clear."""
-                ready = sum(1 for row in bulk_grid.rows if str(row.get("name") or "").strip())
-                bulk_grid.set_footer({"name": f"{ready} مادة جاهزة للحفظ"} if ready else None)
 
-            for _ in range(3):
-                bulk_grid.add_row()
-            refresh_bulk_footer()
+            def bulk_stats() -> dict:
+                ready, qty_total, buy_total, sell_total = 0, 0.0, 0.0, 0.0
+                for row in bulk_grid.rows:
+                    if not str(row.get("name") or "").strip():
+                        continue
+                    ready += 1
+                    if str(row.get("item_type") or "مخزون") == "مخزون":
+                        qty_total += float(row.get("quantity") or 0)
+                    buy_total += float(row.get("purchase_price") or 0)
+                    sell_total += float(row.get("selling_price") or 0)
+                return {"ready": ready, "total": len(bulk_grid.rows), "qty": qty_total, "buy": buy_total, "sell": sell_total}
+
+            def refresh_bulk_footer() -> None:
+                """Live summary: rows ready to save plus quantity/value totals."""
+                stats = bulk_stats()
+                if not bulk_grid.rows:
+                    bulk_grid.set_footer(None)
+                    return
+                bulk_grid.set_footer({
+                    "name": f"{stats['ready']} جاهز من {stats['total']} صف",
+                    "quantity": qty_fmt(stats["qty"]) if stats["qty"] else "",
+                    "purchase_price": money(stats["buy"]) if stats["buy"] else "",
+                    "selling_price": money(stats["sell"]) if stats["sell"] else "",
+                })
+
+            def default_id(selector) -> int | None:
+                try:
+                    return int(selector.value) if selector.value else None
+                except (TypeError, ValueError):
+                    return None
+
+            def row_defaults() -> dict:
+                return {
+                    "item_type": type_sel.value or "مخزون",
+                    "category_id": default_id(cat_sel) or "",
+                    "base_unit_id": default_id(unit_sel) or "",
+                }
+
+            def add_blank(_=None) -> None:
+                bulk_grid.add_row(row_defaults())
+                refresh_bulk_footer()
+
+            def duplicate_rows(rows: list[dict]) -> None:
+                for row in rows:
+                    data = {k: v for k, v in row.items() if k != "_status"}
+                    bulk_grid.add_row(data)
+                if rows:
+                    refresh_bulk_footer()
+
+            def delete_row(target: dict) -> None:
+                for index, row in enumerate(bulk_grid.rows):
+                    if row == target:
+                        bulk_grid.remove_row(index)
+                        break
+                refresh_bulk_footer()
+
+            def bulk_row_menu(row: dict) -> list:
+                return [
+                    ("تكرار الصف", ft.Icons.CONTENT_COPY_OUTLINED, lambda r=row: duplicate_rows([dict(r)])),
+                    ("حذف الصف", ft.Icons.DELETE_OUTLINE, lambda r=row: delete_row(r)),
+                ]
+
+            def remove_selected_rows() -> None:
+                selected = bulk_grid.selected_rows()
+                if not selected:
+                    return
+                rows_now = bulk_grid.rows
+                doomed: list[int] = []
+                for wanted in selected:
+                    for index, row in enumerate(rows_now):
+                        if index not in doomed and row == wanted:
+                            doomed.append(index)
+                            break
+                for index in sorted(doomed, reverse=True):
+                    bulk_grid.remove_row(index)
+                refresh_bulk_footer()
+
+            def render_bulk_selection(rows: list[dict]) -> None:
+                if not rows:
+                    bulk_bar.visible = False
+                    bulk_bar.content = None
+                else:
+                    bulk_bar.content = ft.Row(
+                        [
+                            ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                            ft.Text(f"تم تحديد {len(rows)} صف", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                            ft.Container(expand=True),
+                            ft.OutlinedButton("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows))),
+                            ft.OutlinedButton(
+                                "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                                style=ft.ButtonStyle(color=Colors.DANGER),
+                                on_click=lambda _=None: remove_selected_rows(),
+                            ),
+                            ft.TextButton("إلغاء التحديد", on_click=lambda _=None: bulk_grid.clear_selection()),
+                        ],
+                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                    bulk_bar.visible = True
+                try:
+                    bulk_bar.update()
+                except Exception:
+                    pass
+
+            def apply_bulk_sort(key, direction) -> None:
+                if key:
+                    def sort_value(row: dict):
+                        value = row.get(key)
+                        if key in ("quantity", "purchase_price", "selling_price"):
+                            try:
+                                return float(value or 0)
+                            except (TypeError, ValueError):
+                                return 0.0
+                        return str(value or "")
+
+                    bulk_grid.set_rows(sorted(bulk_grid.rows, key=sort_value, reverse=direction == "desc"))
+                refresh_bulk_footer()
+
+            def bulk_toggle_column(key: str) -> None:
+                if key in bulk_hidden_state["keys"]:
+                    bulk_hidden_state["keys"].discard(key)
+                else:
+                    bulk_hidden_state["keys"].add(key)
+                ctx.settings.set("ui.bulk_add_hidden_columns", ",".join(sorted(bulk_hidden_state["keys"])))
+                bulk_grid.set_hidden_keys(bulk_hidden_state["keys"])
+                page.update()
+
+            def bulk_toggle_density(_=None) -> None:
+                compact = not bulk_density_state["compact"]
+                bulk_density_state["compact"] = compact
+                bulk_grid.set_row_height(36 if compact else 48)
+                bulk_density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+                bulk_density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+                ctx.settings.set("ui.bulk_add_density", "compact" if compact else "comfortable")
+                page.update()
+
+            async def bulk_export_csv(_=None) -> None:
+                rows = [row for row in bulk_grid.rows if str(row.get("name") or "").strip()]
+                if not rows:
+                    notify("لا توجد صفوف جاهزة للتصدير", kind="warning")
+                    return
+                if self.native_files is None:
+                    notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                    return
+                try:
+                    path = Path(tempfile.gettempdir()) / f"nano_bulk_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                        writer = _csv.writer(fh)
+                        writer.writerow(["الاسم", "الباركود", "التصنيف", "النوع", "الوحدة", "الكمية", "سعر الشراء", "سعر البيع"])
+                        for row in rows:
+                            writer.writerow([
+                                row.get("name") or "",
+                                row.get("barcode") or "",
+                                cat_map.get(str(row.get("category_id") or "")) or "",
+                                row.get("item_type") or "مخزون",
+                                unit_map.get(str(row.get("base_unit_id") or "")) or "",
+                                row.get("quantity") or 0,
+                                row.get("purchase_price") or 0,
+                                row.get("selling_price") or 0,
+                            ])
+                    await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير مسودة الإدخال")
+                    notify("تم تجهيز ملف CSV للصفوف الجاهزة")
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+
+            def bulk_choices(key: str) -> list[tuple]:
+                if key == "category_id":
+                    return [(None, "بلا تصنيف")] + [(int(c["id"]), c["name"]) for c in categories]
+                if key == "base_unit_id":
+                    return [(int(u["id"]), u["name"]) for u in units]
+                if key == "item_type":
+                    return [("مخزون", "مخزون"), ("خدمة", "خدمة")]
+                return []
+
+            def render_bulk_picker(_=None) -> None:
+                term = (picker_search.value or "").strip()
+                current = ""
+                if 0 <= picker_state["row"] < len(bulk_grid.rows):
+                    row_now = bulk_grid.row_at(picker_state["row"]) or {}
+                    current = str(row_now.get(picker_state["key"]) or "")
+                choices = bulk_choices(picker_state["key"])
+                if term:
+                    choices = [choice for choice in choices if term in str(choice[1])]
+                results: list[ft.Control] = []
+                for value, label in choices[:60]:
+                    chosen = current == str(value if value is not None else "")
+                    results.append(
+                        ft.Container(
+                            ft.Row(
+                                [
+                                    ft.Icon(
+                                        ft.Icons.CHECK_ROUNDED if chosen else ft.Icons.CIRCLE_OUTLINED,
+                                        size=16, color=Colors.PRIMARY if chosen else Colors.TEXT_FAINT,
+                                    ),
+                                    ft.Text(str(label), size=12.5),
+                                ],
+                                spacing=8,
+                            ),
+                            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                            border_radius=Radius.SM,
+                            bgcolor=Colors.PRIMARY_BG if chosen else None,
+                            on_click=lambda _, v=value: choose_bulk_value(v),
+                            ink=True,
+                        )
+                    )
+                if not results:
+                    results.append(ft.Container(ft.Text("لا نتائج مطابقة", size=12, color=Colors.TEXT_SECONDARY), padding=10))
+                picker_list.controls = results
+                try:
+                    picker_list.update()
+                except Exception:
+                    pass
+
+            def open_bulk_picker(row_index: int, col: GridColumn) -> None:
+                bulk_grid.disarm()
+                picker_state["row"] = row_index
+                picker_state["key"] = col.key
+                picker_title.value = f"اختيار {col.label}"
+                picker_search.value = ""
+                render_bulk_picker()
+                picker_panel.visible = True
+                page.update()
+                try:
+                    picker_search.focus()
+                except Exception:
+                    pass
+
+            def close_bulk_picker(_=None) -> None:
+                picker_panel.visible = False
+                bulk_grid.arm()
+                try:
+                    picker_panel.update()
+                except Exception:
+                    pass
+
+            def choose_bulk_value(value) -> None:
+                row_index = picker_state["row"]
+                key = picker_state["key"]
+                if 0 <= row_index < len(bulk_grid.rows):
+                    bulk_grid.set_cell(row_index, key, "" if value is None else value)
+                picker_panel.visible = False
+                picker_search.value = ""
+                bulk_grid.arm()
+                try:
+                    picker_panel.update()
+                except Exception:
+                    pass
+                refresh_bulk_footer()
+
+            def apply_defaults_to_all(_=None) -> None:
+                defaults = row_defaults()
+                for index, row in enumerate(bulk_grid.rows):
+                    for key, value in defaults.items():
+                        if str(row.get(key) or "") != str(value or ""):
+                            bulk_grid.set_cell(index, key, value, notify=False)
+                refresh_bulk_footer()
+                notify("تم تطبيق الافتراضيات على كل الصفوف")
+
+            def save_all(_=None) -> None:
+                type_default = type_sel.value or "مخزون"
+                created_indices: list[int] = []
+                errors: list[str] = []
+                for index, row in enumerate(bulk_grid.rows):
+                    name = str(row.get("name") or "").strip()
+                    if not name:
+                        continue
+                    try:
+                        ctx.items.create(
+                            name=name,
+                            category_id=int(row["category_id"]) if row.get("category_id") else None,
+                            item_type=str(row.get("item_type") or type_default),
+                            purchase_price=row.get("purchase_price") or 0,
+                            selling_price=row.get("selling_price") or 0,
+                            quantity=row.get("quantity") or 0,
+                            base_unit_id=int(row["base_unit_id"]) if row.get("base_unit_id") else None,
+                            barcode=str(row.get("barcode") or "").strip() or None,
+                        )
+                        created_indices.append(index)
+                    except Exception as exc:
+                        errors.append(f"{name}: {exc}")
+                # Drop the rows that did save; a retry can then only ever
+                # process the ones that failed (no duplicate-barcode loops).
+                for index in sorted(created_indices, reverse=True):
+                    bulk_grid.remove_row(index)
+                refresh_bulk_footer()
+                if not created_indices and not errors:
+                    notify("لا توجد صفوف للحفظ", kind="error")
+                    return
+                if created_indices:
+                    notify(f"تمت إضافة {len(created_indices)} مادة", sound_kind="success")
+                if errors:
+                    # Keep the sheet open so the user can fix the offending
+                    # rows; a bad barcode is the common case.
+                    notify(errors[0] if len(errors) == 1 else f"تعذّر حفظ {len(errors)} مادة: {errors[0]}", kind="error")
+                    page.update()
+                    return
+                close()
+                refresh()
 
             # While one of the header selectors has focus, its field eats
             # Backspace/Enter -- the grid must not also act on those keys
@@ -2430,7 +2770,24 @@ class ItemsCenter:
             for _selector in (type_sel, cat_sel, unit_sel):
                 _disarm_on_focus(_selector)
 
-            sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+            for _ in range(3):
+                bulk_grid.add_row(row_defaults())
+            refresh_bulk_footer()
+
+            # A wide, tall sheet: the table is the point, so it gets the
+            # full workbench width instead of the narrow default column.
+            page_w = int(page.width or 1280)
+            page_h = int(page.height or 800)
+            sheet_w = max(360, page_w - 32)
+            sheet_h = max(420, int(page_h * 0.85))
+
+            sheet = ft.BottomSheet(
+                content=ft.Container(),
+                is_scroll_controlled=True,
+                enable_drag=True,
+                maintain_bottom_view_insets_padding=True,
+                size_constraints=ft.BoxConstraints(min_width=sheet_w, max_width=sheet_w),
+            )
             # Drag-dismissing the sheet never runs close(); restore the list
             # grid's keyboard handler here too, or the list loses arrow/Enter
             # navigation until the next navigation event.
@@ -2442,51 +2799,60 @@ class ItemsCenter:
                 page.close(sheet)
                 grid.attach()
 
-            def add_blank(_=None):
-                bulk_grid.add_row()
-
-            def default_id(selector) -> int | None:
-                try:
-                    return int(selector.value) if selector.value else None
-                except (TypeError, ValueError):
-                    return None
-
-            def save_all(_=None):
-                item_type = type_sel.value or "مخزون"
-                category_id = default_id(cat_sel)
-                base_unit_id = default_id(unit_sel)
-                created = 0
-                errors: list[str] = []
-                for row in bulk_grid.rows:
-                    name = str(row.get("name") or "").strip()
-                    if not name:
-                        continue
-                    try:
-                        ctx.items.create(
-                            name=name,
-                            category_id=category_id,
-                            item_type=item_type,
-                            purchase_price=row.get("purchase_price") or 0,
-                            selling_price=row.get("selling_price") or 0,
-                            quantity=row.get("quantity") or 0,
-                            base_unit_id=base_unit_id,
-                            barcode=str(row.get("barcode") or "").strip() or None,
-                        )
-                        created += 1
-                    except Exception as exc:
-                        errors.append(f"{name}: {exc}")
-                if created:
-                    notify(f"تمت إضافة {created} مادة")
-                if errors:
-                    # Keep the sheet open so the user can fix the offending
-                    # rows; a bad barcode is the common case.
-                    notify(errors[0] if len(errors) == 1 else f"تعذّر حفظ {len(errors)} مادة: {errors[0]}", kind="error")
-                    return
-                if not created:
-                    notify("لا توجد صفوف للحفظ", kind="error")
-                    return
-                close()
-                refresh()
+            bulk_columns_button = ft.PopupMenuButton(
+                icon=ft.Icons.VIEW_COLUMN,
+                tooltip="إظهار/إخفاء الأعمدة",
+                items=[
+                    ft.PopupMenuItem(
+                        text=col.label,
+                        checked=col.key not in bulk_hidden_state["keys"],
+                        on_click=lambda _, k=col.key: bulk_toggle_column(k),
+                    )
+                    for col in bulk_columns
+                ],
+            )
+            bulk_density_button = ft.IconButton(
+                icon=ft.Icons.DENSITY_SMALL if bulk_density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+                tooltip="عرض مريح" if bulk_density_state["compact"] else "عرض مضغوط",
+                on_click=bulk_toggle_density,
+            )
+            bulk_export_button = ft.IconButton(
+                icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+                tooltip="تصدير الصفوف الجاهزة CSV",
+                on_click=bulk_export_csv,
+            )
+            picker_title = ft.Text("اختيار", size=12, weight=ft.FontWeight.BOLD)
+            picker_search = ft.TextField(
+                hint_text="بحث…", dense=True, text_size=12, prefix_icon=ft.Icons.SEARCH,
+                border_radius=Radius.SM,
+                content_padding=ft.padding.symmetric(horizontal=10, vertical=8),
+            )
+            picker_search.on_change = render_bulk_picker
+            picker_search.on_focus = lambda _: bulk_grid.disarm()
+            picker_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=132)
+            picker_panel = ft.Container(
+                ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=Colors.PRIMARY),
+                                picker_title,
+                                ft.Container(expand=True),
+                                ft.IconButton(ft.Icons.CLOSE, icon_size=IconSize.INLINE, tooltip="إغلاق", on_click=close_bulk_picker),
+                            ],
+                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        picker_search,
+                        picker_list,
+                    ],
+                    spacing=6, tight=True,
+                ),
+                visible=False,
+                padding=10,
+                border=ft.border.all(1, Colors.BORDER),
+                border_radius=Radius.MD,
+                bgcolor=Colors.BACKGROUND_ALT,
+            )
 
             sheet.content = ft.Container(
                 ft.Column(
@@ -2497,8 +2863,8 @@ class ItemsCenter:
                                 _icon_bubble(ft.Icons.VIEW_LIST_OUTLINED, color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG),
                                 ft.Column(
                                     [
-                                        ft.Text("إضافة سريعة (جدول)", size=17, weight=ft.FontWeight.BOLD),
-                                        ft.Text("أدخل عدة مواد في جدول ثم احفظها دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
+                                        ft.Text("إضافة شاملة (جدول)", size=17, weight=ft.FontWeight.BOLD),
+                                        ft.Text("كل الحقول في جدول متكامل: أعمدة قابلة للإظهار والترتيب والتصدير، وأسطر تُكرر أو تُحذف، ثم احفظ الكل دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
                                     ],
                                     spacing=1, expand=True,
                                 ),
@@ -2506,27 +2872,47 @@ class ItemsCenter:
                             ],
                             spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Row([type_sel, cat_sel, unit_sel], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Row(
+                            [
+                                ft.Text("افتراضيات الصف الجديد", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                                ft.Container(type_sel, width=150),
+                                ft.Container(cat_sel, width=210),
+                                ft.Container(unit_sel, width=190),
+                                ft.OutlinedButton("تطبيق على الكل", icon=ft.Icons.DONE_ALL_ROUNDED, on_click=apply_defaults_to_all),
+                                ft.Container(expand=True),
+                            ],
+                            spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                         ft.Row(
                             [
                                 ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
-                                ft.Text("حدّد خلية ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY, expand=True),
+                                ft.OutlinedButton("تكرار الأخير", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(bulk_grid.rows[-1:] if bulk_grid.rows else [])),
+                                ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
+                                ft.Container(expand=True),
+                                bulk_columns_button,
+                                bulk_density_button,
+                                bulk_export_button,
                             ],
-                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Container(bulk_grid, height=260, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
+                        bulk_bar,
+                        ft.Container(bulk_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
+                        picker_panel,
                         ft.Row(
                             [
+                                ft.Text("الحفظ يتجاهل الصفوف بلا اسم", size=10, color=Colors.TEXT_SECONDARY),
                                 ft.Container(expand=True),
                                 ft.FilledButton("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all),
                             ],
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                     ],
-                    spacing=12, tight=True, scroll=ft.ScrollMode.AUTO,
+                    spacing=10, expand=True,
                     horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
+                width=sheet_w,
+                height=sheet_h,
+                padding=ft.padding.only(left=18, right=18, top=12, bottom=16),
                 bgcolor=Colors.WHITE,
                 border_radius=ft.border_radius.only(top_left=28, top_right=28),
                 shadow=Shadow.LG,
@@ -2925,7 +3311,7 @@ class ItemsCenter:
         if self.on_context_actions is not None:
             self.on_context_actions([
                 RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: open_item_editor()),
-                RibbonAction("bulk_add", "إضافة سريعة (جدول)", ft.Icons.VIEW_LIST_OUTLINED, on_click=lambda _=None: open_bulk_add_sheet()),
+                RibbonAction("bulk_add", "إضافة شاملة (جدول)", ft.Icons.VIEW_LIST_OUTLINED, on_click=lambda _=None: open_bulk_add_sheet()),
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),
