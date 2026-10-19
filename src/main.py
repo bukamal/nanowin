@@ -519,7 +519,17 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_purchase()),
             RibbonAction("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: open_verify_invoice()),
         ]
-        if key in ("dashboard", "items", "invoices"):
+        if key == "invoices":
+            # The invoices section adds one more surface on top of the shared
+            # invoice actions: the comprehensive single-sheet table entry
+            # (sale or purchase) with the full DataGrid toolkit.
+            return invoice_actions + [
+                RibbonAction(
+                    "table_invoice", "فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED,
+                    on_click=lambda _=None: invoice_center.show_table_invoice_sheet(),
+                ),
+            ]
+        if key in ("dashboard", "items"):
             return invoice_actions
         if key == "finance":
             return [

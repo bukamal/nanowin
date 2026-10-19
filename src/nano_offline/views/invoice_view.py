@@ -1884,6 +1884,835 @@ class InvoiceCenter:
         self.page.open(sheet)
         step["opened"] = True
 
+    def show_table_invoice_sheet(self, invoice_type: str | None = None) -> None:
+        """Comprehensive invoice entry: one wide table sheet for sale/purchase.
+
+        Same table language as the materials bulk-entry sheet: the full grid
+        toolkit (column visibility, density, sorting, multi-select with batch
+        duplicate/delete, per-row menu, CSV export and live footer totals)
+        plus a per-line unit picker with the page editor's smart price chain
+        (per-unit override, else base price x factor). Saving reuses the
+        wizard's exact rules: the same ``InvoiceLineInput`` shape and the
+        same margin guard before ``create_invoice``.
+        """
+        invoice_type = invoice_type if invoice_type in ("sale", "purchase") else "sale"
+        self.invoice_type = invoice_type
+        settings = self.ctx.settings
+        rate = currency.get_effective_rate(settings)
+        customers = self.ctx.customers.list()
+        suppliers = self.ctx.suppliers.list()
+        items = self.ctx.items.list()
+        item_map = {int(i["id"]): i for i in items}
+        previous_key_handler = getattr(self.page, "on_keyboard_event", None)
+
+        def _safe_update(control) -> None:
+            try:
+                control.update()
+            except Exception:
+                pass
+
+        hidden_state = {"keys": set(filter(None, settings.get("ui.table_invoice_hidden_columns", "").split(",")))}
+        density_state = {"compact": settings.get("ui.table_invoice_density", "comfortable") == "compact"}
+        picker_state = {"row": None, "key": None}
+
+        # ------------------------------------------------------------- header
+        type_dd = SegmentedToggle(
+            options=[
+                SegmentOption("sale", "بيع", ft.Icons.TRENDING_UP),
+                SegmentOption("purchase", "شراء", ft.Icons.TRENDING_DOWN),
+            ],
+            value=invoice_type,
+        )
+        party_dd = SearchSelect(label="العميل")
+        party_insight = ft.Container(visible=False)
+        invoice_date = SmartDateField(label="التاريخ", value=date.today().isoformat())
+        reference = SelectAllTextField(label="المرجع")
+        notes = SelectAllTextField(label="ملاحظات", multiline=True, min_lines=1, max_lines=2)
+
+        def party_options() -> None:
+            is_sale = (type_dd.value or "sale") == "sale"
+            source = customers if is_sale else suppliers
+            party_dd.label = "العميل" if is_sale else "المورد"
+            party_dd.set_choices([(str(p["id"]), p["name"]) for p in source])
+            if party_dd.value and not any(str(p["id"]) == party_dd.value for p in source):
+                party_dd.value = None
+
+        def update_party_insight() -> None:
+            is_sale = (type_dd.value or "sale") == "sale"
+            text = self._party_insight_text(is_sale, int(party_dd.value)) if party_dd.value else None
+            if not text:
+                party_insight.visible = False
+                _safe_update(party_insight)
+                return
+            party_insight.content = ft.Row(
+                [
+                    ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=15, color=Colors.PRIMARY),
+                    ft.Text(text, size=11, color=Colors.PRIMARY_DARK, expand=True),
+                ],
+                spacing=8,
+            )
+            party_insight.padding = ft.padding.symmetric(horizontal=10, vertical=8)
+            party_insight.bgcolor = Colors.PRIMARY_BG
+            party_insight.border = ft.border.all(1, Colors.PRIMARY_BORDER)
+            party_insight.border_radius = 10
+            party_insight.visible = True
+            _safe_update(party_insight)
+
+        # ------------------------------------------------- lines: units/prices
+        def _units_of(item_id: int) -> list[dict]:
+            try:
+                return self.ctx.items.units(int(item_id))
+            except Exception:
+                return []
+
+        def _unit_label(unit_row: dict) -> str:
+            return f"{unit_row.get('name')} × {self._qty(unit_row.get('conversion_factor'))}"
+
+        def _unit_price_display(item_row: dict, unit_row: dict | None) -> float:
+            """Same smart chain as the page editor: per-unit override wins,
+            else base price x the unit's factor."""
+            key = "purchase_price" if (type_dd.value or "sale") == "purchase" else "selling_price"
+            if unit_row is not None:
+                override = unit_row.get(key)
+                if override not in (None, ""):
+                    return round(currency.to_display(float(override), rate), 2)
+            base = currency.to_display(float(item_row.get(key) or 0), rate)
+            factor = float((unit_row or {}).get("conversion_factor") or 1)
+            return round(base * factor, 2)
+
+        def row_formatter(col, value, row):
+            if col.key == "item":
+                if not value:
+                    return "— اختر مادة —"
+                item_row = item_map.get(int(value))
+                return item_row["name"] if item_row else "—"
+            if col.key == "unit":
+                if not value or not row.get("item"):
+                    return None
+                unit_row = next(
+                    (u for u in _units_of(int(row["item"])) if int(u["id"]) == int(value)),
+                    None,
+                )
+                return _unit_label(unit_row) if unit_row else None
+            if col.key == "price":
+                return currency.format_plain(value) if value else ""
+            if col.key == "_total":
+                try:
+                    total = float(row.get("qty") or 0) * float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    total = 0.0
+                return currency.format_plain(round(total, 2)) if total else ""
+            if col.key == "_status":
+                if not row.get("item"):
+                    return ("بلا مادة", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
+                try:
+                    qty = float(row.get("qty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0.0
+                if qty <= 0:
+                    return ("كمية غير صالحة", Colors.DANGER_DARKER, Colors.DANGER_BG)
+                try:
+                    price = float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    price = 0.0
+                if price < 0:
+                    return ("سعر غير صالح", Colors.DANGER_DARKER, Colors.DANGER_BG)
+                if price == 0:
+                    return ("بلا سعر", Colors.ORANGE_DARK, Colors.WARNING_BG_ALT)
+                return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
+            return None
+
+        line_columns = [
+            GridColumn("item", "المادة", editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للاختيار"),
+            GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="وحدة البند — تغيّر معامل التحويل والسعر"),
+            GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
+            GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
+            GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
+            GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
+        ]
+
+        bulk_bar = ft.Container(
+            visible=False,
+            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            border_radius=Radius.SM,
+            bgcolor=Colors.PRIMARY_BG,
+        )
+
+        lines_grid = DataGrid(
+            columns=line_columns, rows=[], page=self.page,
+            row_height=36 if density_state["compact"] else 48,
+            hidden_keys=set(hidden_state["keys"]),
+            formatter=row_formatter,
+            on_cell_commit=lambda *_: refresh_summary(),
+            on_pick=lambda row_index, col: open_picker(row_index, col),
+            on_sort=lambda key, direction: apply_lines_sort(key, direction),
+            on_row_menu=lambda row: lines_row_menu(row),
+            selectable=True,
+            on_selection_change=lambda rows: render_lines_selection(rows),
+            empty_text="اضغط «سطر جديد» أو «مسح باركود»",
+        )
+
+        # ------------------------------------------------------------ chooser
+        chooser_search = SelectAllTextField(
+            label="ابحث في النتائج", hint_text="الاسم أو الباركود",
+            prefix_icon=ft.Icons.SEARCH, dense=True,
+        )
+        chooser_title = ft.Text("اختيار", size=12, weight=ft.FontWeight.BOLD)
+        chooser_results = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO, height=150)
+
+        def chooser_card(primary: str, secondary: str, price_text: str, on_click) -> ft.Container:
+            return ft.Container(
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text(primary, size=13, weight=ft.FontWeight.W_600),
+                                ft.Text(secondary, size=9, color=Colors.TEXT_SECONDARY),
+                            ],
+                            spacing=1, expand=True,
+                        ),
+                        ft.Text(price_text, size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=9, border=ft.border.all(1, Colors.BORDER), border_radius=10,
+                bgcolor=Colors.WHITE, ink=True, on_click=on_click,
+            )
+
+        def render_chooser(term: str = "") -> None:
+            term = (term or "").strip().lower()
+            cards: list[ft.Control] = []
+            if picker_state["key"] == "unit":
+                row = lines_grid.row_at(picker_state["row"]) or {}
+                item_row = item_map.get(int(row.get("item") or 0)) if row.get("item") else None
+                for unit_row in (_units_of(int(row["item"])) if item_row else []):
+                    label = _unit_label(unit_row)
+                    if term and term not in label.lower():
+                        continue
+                    cards.append(
+                        chooser_card(
+                            label, "وحدة البند",
+                            currency.format_plain(_unit_price_display(item_row, unit_row)),
+                            lambda _, u=unit_row: choose_unit(u),
+                        )
+                    )
+            else:
+                for item_row in items:
+                    haystack = f"{item_row.get('name', '')} {item_row.get('barcode', '')}".lower()
+                    if term and term not in haystack:
+                        continue
+                    cards.append(
+                        chooser_card(
+                            item_row["name"],
+                            item_row.get("barcode") or "بلا باركود",
+                            currency.format_plain(_unit_price_display(item_row, None)),
+                            lambda _, i=item_row: choose_item(i),
+                        )
+                    )
+                    if len(cards) >= 40:
+                        break
+            if not cards:
+                cards = [ft.Text("لا توجد نتائج", size=11, color=Colors.TEXT_SECONDARY)]
+            chooser_results.controls = cards
+            _safe_update(chooser_results)
+
+        chooser_search.on_change = lambda e: render_chooser(e.control.value)
+        chooser_panel = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=Colors.PRIMARY),
+                            chooser_title,
+                            ft.Container(expand=True),
+                            ft.IconButton(ft.Icons.CLOSE, icon_size=16, tooltip="إغلاق", on_click=lambda _=None: hide_chooser()),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    chooser_search,
+                    chooser_results,
+                ],
+                spacing=6, tight=True,
+            ),
+            visible=False,
+            padding=10,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.MD,
+            bgcolor=Colors.BACKGROUND_ALT,
+        )
+
+        def hide_chooser() -> None:
+            picker_state["row"] = None
+            chooser_panel.visible = False
+            lines_grid.arm()
+            _safe_update(chooser_panel)
+
+        def open_picker(index: int, col: GridColumn) -> None:
+            picker_state["row"] = index
+            picker_state["key"] = col.key
+            chooser_title.value = "اختيار المادة" if col.key == "item" else "اختيار الوحدة"
+            chooser_search.value = ""
+            render_chooser("")
+            chooser_panel.visible = True
+            # While the chooser's search box has focus it owns the keys.
+            lines_grid.disarm()
+            _safe_update(chooser_panel)
+            try:
+                chooser_search.focus()
+            except Exception:
+                pass
+
+        def fill_line_defaults(index: int, item_id: int) -> None:
+            """After an item is picked: choose its base unit and stamp the
+            unit-aware default price (only touches blank cells)."""
+            item_row = item_map.get(int(item_id))
+            if item_row is None:
+                return
+            row = lines_grid.row_at(index) or {}
+            units = _units_of(item_id)
+            unit_row = None
+            if row.get("unit"):
+                unit_row = next((u for u in units if int(u["id"]) == int(row["unit"])), None)
+            if unit_row is None:
+                unit_row = units[0] if units else None
+            if unit_row is not None:
+                lines_grid.set_cell(index, "unit", int(unit_row["id"]))
+            if not row.get("qty"):
+                lines_grid.set_cell(index, "qty", 1)
+            lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
+
+        def choose_item(item_row: dict) -> None:
+            index = picker_state["row"]
+            if index is None:
+                return
+            item_id = int(item_row["id"])
+            lines_grid.set_cell(index, "item", item_id)
+            fill_line_defaults(index, item_id)
+            hide_chooser()
+            refresh_summary()
+
+        def choose_unit(unit_row: dict) -> None:
+            index = picker_state["row"]
+            if index is None:
+                return
+            lines_grid.set_cell(index, "unit", int(unit_row["id"]))
+            row = lines_grid.row_at(index) or {}
+            item_row = item_map.get(int(row.get("item") or 0))
+            if item_row is not None:
+                lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
+            hide_chooser()
+            refresh_summary()
+
+        def add_blank(_=None) -> None:
+            lines_grid.add_row({"qty": 1})
+            refresh_summary()
+
+        def add_or_bump_row(item_id: int) -> str:
+            for index, row in enumerate(lines_grid.rows):
+                if row.get("item") and int(row["item"]) == item_id:
+                    try:
+                        qty = float(row.get("qty") or 0) + 1
+                    except (TypeError, ValueError):
+                        qty = 1.0
+                    lines_grid.set_cell(index, "qty", qty)
+                    refresh_summary()
+                    return "bumped"
+            index = lines_grid.add_row({"qty": 1})
+            lines_grid.set_cell(index, "item", item_id)
+            fill_line_defaults(index, item_id)
+            refresh_summary()
+            return "added"
+
+        async def scan_line(_=None) -> None:
+            if self.native_files is None:
+                self.notify("مسح الباركود غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                code = await self.native_files.scan_barcode()
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+                return
+            if not code:
+                return
+            found = self.ctx.items.find_by_barcode(code)
+            if not found:
+                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                return
+            status = add_or_bump_row(int(found["id"]))
+            if barcode_settings.scan_feedback_mode(settings) == "brief":
+                self.notify("✔", kind="success", sound_kind="scan")
+            elif status == "bumped":
+                self.notify(f"✔ زيدت الكمية: {found['name']}", kind="success", sound_kind="scan")
+            else:
+                self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+
+        # -------------------------------------------------- selection / menu
+        def duplicate_rows(rows: list[dict]) -> None:
+            for row in rows:
+                if not row.get("item"):
+                    continue
+                index = lines_grid.add_row({
+                    "qty": row.get("qty") or 1,
+                    "price": row.get("price"),
+                })
+                lines_grid.set_cell(index, "item", int(row["item"]))
+                if row.get("unit"):
+                    lines_grid.set_cell(index, "unit", int(row["unit"]))
+            if rows:
+                refresh_summary()
+
+        def delete_row(target: dict) -> None:
+            for index, row in enumerate(lines_grid.rows):
+                if row == target:
+                    lines_grid.remove_row(index)
+                    break
+            refresh_summary()
+
+        def lines_row_menu(row: dict) -> list:
+            return [
+                ("تكرار السطر", ft.Icons.CONTENT_COPY_OUTLINED, lambda r=row: duplicate_rows([dict(r)])),
+                ("حذف السطر", ft.Icons.DELETE_OUTLINE, lambda r=row: delete_row(r)),
+            ]
+
+        def remove_selected_rows() -> None:
+            selected = lines_grid.selected_rows()
+            if not selected:
+                return
+            rows_now = lines_grid.rows
+            doomed: list[int] = []
+            for wanted in selected:
+                for index, row in enumerate(rows_now):
+                    if index not in doomed and row == wanted:
+                        doomed.append(index)
+                        break
+            for index in sorted(doomed, reverse=True):
+                lines_grid.remove_row(index)
+            refresh_summary()
+
+        def render_lines_selection(rows: list[dict]) -> None:
+            if not rows:
+                bulk_bar.visible = False
+                bulk_bar.content = None
+            else:
+                bulk_bar.content = ft.Row(
+                    [
+                        ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                        ft.Text(f"تم تحديد {len(rows)} سطر", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                        ft.Container(expand=True),
+                        ft.OutlinedButton("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows))),
+                        ft.OutlinedButton(
+                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
+                            style=ft.ButtonStyle(color=Colors.DANGER),
+                            on_click=lambda _=None: remove_selected_rows(),
+                        ),
+                        ft.TextButton("إلغاء التحديد", on_click=lambda _=None: lines_grid.clear_selection()),
+                    ],
+                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                bulk_bar.visible = True
+            _safe_update(bulk_bar)
+
+        def apply_lines_sort(key, direction) -> None:
+            if key:
+                def sort_value(row: dict):
+                    value = row.get(key)
+                    if key in ("qty", "price", "_total"):
+                        try:
+                            if key == "_total":
+                                return float(row.get("qty") or 0) * float(row.get("price") or 0)
+                            return float(value or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    if key == "item":
+                        item_row = item_map.get(int(value or 0))
+                        return str((item_row or {}).get("name") or "")
+                    return str(value or "")
+
+                lines_grid.set_rows(sorted(lines_grid.rows, key=sort_value, reverse=direction == "desc"))
+            refresh_summary()
+
+        def toggle_column(key: str) -> None:
+            if key in hidden_state["keys"]:
+                hidden_state["keys"].discard(key)
+            else:
+                hidden_state["keys"].add(key)
+            settings.set("ui.table_invoice_hidden_columns", ",".join(sorted(hidden_state["keys"])))
+            lines_grid.set_hidden_keys(hidden_state["keys"])
+            self.page.update()
+
+        def toggle_density(_=None) -> None:
+            compact = not density_state["compact"]
+            density_state["compact"] = compact
+            lines_grid.set_row_height(36 if compact else 48)
+            density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+            density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+            settings.set("ui.table_invoice_density", "compact" if compact else "comfortable")
+            self.page.update()
+
+        async def export_csv(_=None) -> None:
+            rows = [row for row in lines_grid.rows if row.get("item")]
+            if not rows:
+                self.notify("لا توجد بنود جاهزة للتصدير", kind="warning")
+                return
+            if self.native_files is None:
+                self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_table_invoice_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    writer = _csv.writer(fh)
+                    writer.writerow(["المادة", "الوحدة", "الكمية", "السعر", "الإجمالي"])
+                    for row in rows:
+                        item_row = item_map.get(int(row["item"])) or {}
+                        unit_row = next(
+                            (u for u in _units_of(int(row["item"])) if int(u["id"]) == int(row.get("unit") or 0)),
+                            None,
+                        )
+                        try:
+                            total = float(row.get("qty") or 0) * float(row.get("price") or 0)
+                        except (TypeError, ValueError):
+                            total = 0.0
+                        writer.writerow([
+                            item_row.get("name") or "",
+                            _unit_label(unit_row) if unit_row else "",
+                            row.get("qty") or 0,
+                            row.get("price") or 0,
+                            round(total, 2),
+                        ])
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير بنود الفاتورة")
+                self.notify("تم تجهيز ملف CSV للبنود الجاهزة")
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        # ------------------------------------------------------ payment / save
+        paid = SmartAmountField(
+            label=currency.amount_field_label("الدفعة الأولى", settings),
+            value="0",
+            on_change=lambda e: refresh_summary(),
+        )
+        lines_summary_text = ft.Text("لا بنود بعد", size=10, color=Colors.TEXT_SECONDARY)
+        total_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD)
+        remaining_text = ft.Text("0", size=16, weight=ft.FontWeight.BOLD)
+
+        def rows_total_display() -> float:
+            total = 0.0
+            for row in lines_grid.rows:
+                if not row.get("item"):
+                    continue
+                try:
+                    total += float(row.get("qty") or 0) * float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    continue
+            return total
+
+        def refresh_summary(_=None) -> None:
+            total = rows_total_display()
+            count = sum(1 for row in lines_grid.rows if row.get("item"))
+            qty_total = 0.0
+            for row in lines_grid.rows:
+                if not row.get("item"):
+                    continue
+                try:
+                    qty_total += float(row.get("qty") or 0)
+                except (TypeError, ValueError):
+                    continue
+            if count:
+                lines_grid.set_footer({
+                    "item": f"{count} بند",
+                    "qty": self._qty(qty_total),
+                    "_total": currency.format_plain(round(total, 2)),
+                })
+            else:
+                lines_grid.set_footer(None)
+            lines_summary_text.value = f"{count} بند" if count else "لا بنود بعد"
+            # Anonymous invoices are cash by definition (same rule the wizard
+            # and the accounting service enforce): no party -> paid == total.
+            cash_without_party = not bool(party_dd.value)
+            paid.disabled = cash_without_party
+            paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
+            if cash_without_party:
+                paid.value = currency.format_plain(total)
+                paid_value = total
+            else:
+                try:
+                    paid_value = float(paid.value or 0)
+                except Exception:
+                    paid_value = 0.0
+            total_text.value = currency.format_display_value(total, settings)
+            remaining_text.value = currency.format_display_value(max(0.0, total - paid_value), settings)
+            remaining_text.color = Colors.SUCCESS if total - paid_value <= 1e-9 else Colors.ORANGE
+            quick_chips.visible = not cash_without_party
+            _safe_update(lines_summary_text)
+            _safe_update(paid)
+            _safe_update(total_text)
+            _safe_update(remaining_text)
+            _safe_update(quick_chips)
+
+        def quick_pay(ratio: float) -> None:
+            paid.value = currency.format_plain(round(rows_total_display() * ratio, 2))
+            _safe_update(paid)
+            refresh_summary()
+
+        def quick_pay_chip(label: str, ratio: float, icon) -> ft.Container:
+            return ft.Container(
+                ft.Row([ft.Icon(icon, size=14, color=Colors.PRIMARY), ft.Text(label, size=11, weight=ft.FontWeight.W_600)], spacing=5),
+                padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                border=ft.border.all(1, Colors.PRIMARY), border_radius=12,
+                bgcolor=Colors.WHITE, ink=True,
+                on_click=lambda _: quick_pay(ratio),
+            )
+
+        quick_chips = ft.Row(
+            [
+                quick_pay_chip("دفعة كاملة", 1.0, ft.Icons.CHECK_CIRCLE_OUTLINE),
+                quick_pay_chip("النصف", 0.5, ft.Icons.PERCENT),
+                quick_pay_chip("بدون دفعة", 0.0, ft.Icons.MONEY_OFF_OUTLINED),
+            ],
+            spacing=6, wrap=True,
+        )
+
+        def build_inputs() -> list[InvoiceLineInput]:
+            inputs: list[InvoiceLineInput] = []
+            for idx, row in enumerate(lines_grid.rows, start=1):
+                if not row.get("item"):
+                    continue
+                item_id = int(row["item"])
+                try:
+                    qty = float(row.get("qty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0.0
+                if qty <= 0:
+                    raise ValueError(f"كمية البند {idx} غير صحيحة")
+                try:
+                    unit_price = (
+                        currency.parse_display_input(str(row.get("price")), settings)
+                        if row.get("price") not in (None, "")
+                        else 0.0
+                    )
+                except Exception as exc:
+                    raise ValueError(f"سعر البند {idx} غير صحيح") from exc
+                units = _units_of(item_id)
+                unit_row = None
+                if row.get("unit"):
+                    unit_row = next((u for u in units if int(u["id"]) == int(row["unit"])), None)
+                if unit_row is None:
+                    unit_row = units[0] if units else None
+                inputs.append(
+                    InvoiceLineInput(
+                        description="",
+                        item_id=item_id,
+                        unit_id=int(unit_row["id"]) if unit_row else None,
+                        conversion_factor=float((unit_row or {}).get("conversion_factor") or 1),
+                        quantity=qty,
+                        unit_price=unit_price,
+                    )
+                )
+            if not inputs:
+                raise ValueError("أدخل مادة وكمية على الأقل")
+            return inputs
+
+        def save(_=None) -> None:
+            try:
+                inputs = build_inputs()
+                if (type_dd.value or "sale") == "sale" and not getattr(self, "_margin_override", False):
+                    warnings = self._sale_margin_warnings(inputs, item_map)
+                    if warnings:
+                        self._margin_override = True
+                        self.notify(warnings[0] + " — احفظ مرة أخرى للتأكيد", kind="warning")
+                        return
+                self._margin_override = False
+                is_sale = (type_dd.value or "sale") == "sale"
+                saved_id = self.ctx.invoices.create_invoice(
+                    invoice_type=type_dd.value or "sale",
+                    lines=inputs,
+                    customer_id=int(party_dd.value) if (is_sale and party_dd.value) else None,
+                    supplier_id=int(party_dd.value) if (not is_sale and party_dd.value) else None,
+                    invoice_date=(invoice_date.value or "").strip(),
+                    reference=reference.value,
+                    notes=notes.value,
+                    paid_amount=currency.parse_display_input(paid.value, settings),
+                )
+                close()
+                self.notify(f"تم حفظ الفاتورة #{saved_id}", sound_kind="save")
+                self.show_center()
+                if is_sale:
+                    # Same PHASE10 refresh the wizard/page editor trigger.
+                    refresh_home_widget(self.page, self.native_files, self.ctx.dashboard, self.ctx.settings)
+                if self.on_saved:
+                    self.on_saved()
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        def type_changed(_=None) -> None:
+            self.invoice_type = type_dd.value or "sale"
+            party_options()
+            is_sale = self.invoice_type == "sale"
+            icon_bubble.content = ft.Icon(ft.Icons.TRENDING_UP if is_sale else ft.Icons.TRENDING_DOWN, color=Colors.SUCCESS if is_sale else Colors.PURPLE, size=22)
+            icon_bubble.bgcolor = Colors.SUCCESS_BG if is_sale else Colors.PURPLE_BG
+            # Prices are invoice-type dependent; refill selected rows with the
+            # unit-aware default -- exactly what the page editor's type
+            # change does.
+            for index, row in enumerate(lines_grid.rows):
+                if not row.get("item"):
+                    continue
+                item_row = item_map.get(int(row["item"]))
+                if item_row is None:
+                    continue
+                units = _units_of(int(row["item"]))
+                unit_row = next((u for u in units if int(u["id"]) == int(row.get("unit") or 0)), None)
+                if unit_row is None:
+                    unit_row = units[0] if units else None
+                lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
+            update_party_insight()
+            refresh_summary()
+
+        type_dd.on_change = type_changed
+        party_dd.on_change = lambda e: (update_party_insight(), refresh_summary())
+
+        # ---------------------------------------------------------- controls
+        columns_button = ft.PopupMenuButton(
+            icon=ft.Icons.VIEW_COLUMN,
+            tooltip="إظهار/إخفاء الأعمدة",
+            items=[
+                ft.PopupMenuItem(
+                    text=col.label,
+                    checked=col.key not in hidden_state["keys"],
+                    on_click=lambda _, k=col.key: toggle_column(k),
+                )
+                for col in line_columns
+            ],
+        )
+        density_button = ft.IconButton(
+            icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+            tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",
+            on_click=toggle_density,
+        )
+        export_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
+            tooltip="تصدير البنود الجاهزة CSV",
+            on_click=export_csv,
+        )
+        icon_bubble = ft.Container(
+            ft.Icon(ft.Icons.TRENDING_UP, color=Colors.SUCCESS, size=22),
+            width=44, height=44, alignment=ft.alignment.center,
+            bgcolor=Colors.SUCCESS_BG, border_radius=14,
+        )
+
+        # A wide, tall sheet: the table is the point, so it gets the full
+        # workbench width instead of the narrow default column.
+        page_w = int(self.page.width or 1280)
+        page_h = int(self.page.height or 800)
+        sheet_w = max(360, page_w - 32)
+        sheet_h = max(460, int(page_h * 0.88))
+
+        sheet = ft.BottomSheet(
+            content=ft.Container(),
+            is_scroll_controlled=True,
+            enable_drag=True,
+            maintain_bottom_view_insets_padding=True,
+            size_constraints=ft.BoxConstraints(min_width=sheet_w, max_width=sheet_w),
+        )
+
+        def close(_=None) -> None:
+            # The grid took over the page's keyboard handler when built;
+            # hand it back so the shell's shortcuts (and the list grid's
+            # arrow/Enter navigation) keep working.
+            self.page.close(sheet)
+            self.page.on_keyboard_event = previous_key_handler
+
+        sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
+
+        # ----------------------------------------------------------- initial
+        party_options()
+        for _ in range(3):
+            lines_grid.add_row({"qty": 1})
+        update_party_insight()
+        refresh_summary()
+
+        sheet.content = ft.Container(
+            ft.Column(
+                [
+                    ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                    ft.Row(
+                        [
+                            icon_bubble,
+                            ft.Column(
+                                [
+                                    ft.Text("فاتورة شاملة (جدول)", size=17, weight=ft.FontWeight.BOLD),
+                                    ft.Text("بيع أو شراء: كل البيانات والبنود في جدول واحد، ثم احفظ مباشرة", size=11, color=Colors.TEXT_SECONDARY),
+                                ],
+                                spacing=1, expand=True,
+                            ),
+                            header_close_button(close),
+                        ],
+                        spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Column([ft.Text("نوع الفاتورة", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd], spacing=4, tight=True),
+                            ft.Container(party_dd, width=240),
+                            ft.Container(invoice_date, width=180),
+                            ft.Container(reference, width=220),
+                            ft.Container(expand=True),
+                        ],
+                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Container(party_insight, expand=True),
+                            ft.Container(notes, width=320),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
+                            ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line),
+                            ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Container(expand=True),
+                            columns_button,
+                            density_button,
+                            export_button,
+                        ],
+                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    bulk_bar,
+                    ft.Container(lines_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
+                    chooser_panel,
+                    ft.Row(
+                        [
+                            lines_summary_text,
+                            ft.Container(expand=True),
+                            ft.Text("إجمالي الفاتورة", size=11, color=Colors.TEXT_SECONDARY),
+                            total_text,
+                            ft.Container(width=14),
+                            ft.Text("المتبقي", size=11, color=Colors.TEXT_SECONDARY),
+                            remaining_text,
+                        ],
+                        spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            quick_chips,
+                            ft.Container(expand=True),
+                            ft.Container(paid, width=220),
+                            ft.FilledButton("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                        ],
+                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=10, expand=True,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
+            width=sheet_w,
+            height=sheet_h,
+            padding=ft.padding.only(left=18, right=18, top=12, bottom=16),
+            bgcolor=Colors.WHITE,
+            border_radius=ft.border_radius.only(top_left=28, top_right=28),
+            shadow=Shadow.LG,
+        )
+        self.page.open(sheet)
+
     def show_editor(
         self,
         invoice_id: int | None = None,
