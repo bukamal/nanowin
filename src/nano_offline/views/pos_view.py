@@ -222,7 +222,7 @@ class POSCenter:
                         bgcolor=Colors.WHITE,
                         border=ft.border.all(1, Colors.BORDER),
                         border_radius=16,
-                        on_click=lambda _, i=item_id: self._add_item(i),
+                        on_click=lambda _, i=int(item["id"]): self._add_item(i),
                         ink=True,
                     )
                 )
@@ -1264,7 +1264,6 @@ class POSCenter:
         """A quick-add row in the rail's best-seller list: name + price on
         the left, a subtle add affordance on the right -- one tap drops it
         straight into the cart."""
-        item_id = int(item["id"])
         is_service = item["item_type"] == "خدمة"
         return ft.Container(
             ft.Row(
@@ -1292,7 +1291,6 @@ class POSCenter:
         )
 
     def _item_tile(self, item: dict) -> ft.Container:
-        item_id = int(item["id"])
         is_service = item["item_type"] == "خدمة"
         qty_badge = None
         out_of_stock = False
@@ -1328,14 +1326,15 @@ class POSCenter:
             border_radius=Radius.MD,
             ink=True,
             col={"xs": 6, "sm": 4, "md": 4, "lg": 3, "xl": 2},
-            on_click=lambda _, i=item_id: self._add_item(i),
+            on_click=lambda _, i=int(item["id"]): self._add_item(i),
         )
 
     def _cart_row(self, row: dict, on_change) -> ft.Container:
         item = row["item"]
-        item_id = int(item["id"])
         is_service = item["item_type"] == "خدمة"
         is_weighted = (not is_service) and self._is_weighted_item(item)
+
+        item_id = int(item["id"])
 
         def change_qty(delta: float):
             new_qty = row["qty"] + delta

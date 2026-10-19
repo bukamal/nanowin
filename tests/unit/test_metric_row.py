@@ -13,9 +13,14 @@ def test_cards_share_one_row_on_desktop():
     assert [c.col["xs"] for c in cards] == [6, 6, 6, 6]  # 2 across on phones
 
 
-def test_six_cards_fill_the_row_too():
+def test_five_cards_wrap_to_three_plus_two():
+    cards = metric_controls([ft.Container() for _ in range(5)])
+    assert {c.col["md"] for c in cards} == {4}  # 3 + 2, never five-across
+
+
+def test_six_cards_wrap_to_two_balanced_rows():
     cards = metric_controls([ft.Container() for _ in range(6)])
-    assert {c.col["md"] for c in cards} == {2}
+    assert {c.col["md"] for c in cards} == {4}  # 3 + 3, capped at four per row
 
 
 def test_non_container_controls_are_wrapped():

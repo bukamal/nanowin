@@ -4,7 +4,7 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import PatternPad, SelectAllTextField
+from nano_offline.components import PatternPad, SelectAllTextField, kpi_card, metric_controls
 from nano_offline.core.theme import Colors, Radius, Shadow
 
 
@@ -104,18 +104,29 @@ class SecurityCenter:
         session = ctx.auth.current()
         if session is None:
             raise RuntimeError("لا توجد جلسة مستخدم")
-        quick_kind = ctx.auth.quick_auth_info(session.username)
-        quick_label = {"pin": "PIN", "pattern": "نمط"}.get(quick_kind, "غير مفعّل")
-        quick_status = ft.Text(f"الدخول السريع الحالي: {quick_label}", color=Colors.TEXT_MUTED)
-        saved_status = ft.Text(
-            "الدخول التلقائي مفعّل على هذا الجهاز" if ctx.auth.saved_login_enabled(session.username) else "الدخول التلقائي غير مفعّل",
-            color=Colors.TEXT_MUTED,
-        )
+
+        # Same KPI-strip language as every other screen (items, finance,
+        # statements): the current quick-auth kind and the auto-login state
+        # are the two facts this screen exists to communicate, so they are
+        # live status cards instead of plain grey sentences.
+        summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
 
         def refresh_security():
             kind = ctx.auth.quick_auth_info(session.username)
-            quick_status.value = "الدخول السريع الحالي: " + {"pin": "PIN", "pattern": "نمط"}.get(kind, "غير مفعّل")
-            saved_status.value = "الدخول التلقائي مفعّل على هذا الجهاز" if ctx.auth.saved_login_enabled(session.username) else "الدخول التلقائي غير مفعّل"
+            quick_value, quick_icon, quick_accent = {
+                "pin": ("PIN", ft.Icons.PIN_ROUNDED, Colors.PRIMARY),
+                "pattern": ("نمط", ft.Icons.APPS_ROUNDED, Colors.PURPLE),
+            }.get(kind, ("غير مفعّل", ft.Icons.LOCK_OUTLINE_ROUNDED, Colors.TEXT_MUTED))
+            saved_on = ctx.auth.saved_login_enabled(session.username)
+            summary.controls = metric_controls([
+                kpi_card("الدخول السريع", quick_value, quick_icon, quick_accent),
+                kpi_card(
+                    "الدخول التلقائي على هذا الجهاز",
+                    "مفعّل" if saved_on else "غير مفعّل",
+                    ft.Icons.CHECK_CIRCLE_OUTLINE if saved_on else ft.Icons.REMOVE_CIRCLE_OUTLINE_ROUNDED,
+                    Colors.SUCCESS if saved_on else Colors.TEXT_MUTED,
+                ),
+            ])
             page.update()
 
         def pin_dialog(_=None):
@@ -261,41 +272,136 @@ class SecurityCenter:
                 ],
             )
 
-        content.content = ft.Column(
+        initial = (session.full_name or session.username or "?").strip()[:1].upper() or "?"
+
+        def action_tile(*, icon, color, bg, title, subtitle, on_click):
+            return ft.Container(
+                ft.Row(
+                    [
+                        self._icon_bubble(icon, color=color, bgcolor=bg),
+                        ft.Column(
+                            [
+                                ft.Text(title, size=13, weight=ft.FontWeight.BOLD),
+                                ft.Text(subtitle, size=10, color=Colors.TEXT_FAINT),
+                            ],
+                            spacing=1,
+                            expand=True,
+                        ),
+                        ft.Icon(ft.Icons.CHEVRON_LEFT_ROUNDED, size=16, color=Colors.TEXT_FAINT),
+                    ],
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=12,
+                bgcolor=Colors.WHITE,
+                border=ft.border.all(1, Colors.BORDER),
+                border_radius=Radius.LG,
+                shadow=Shadow.SM,
+                ink=True,
+                on_click=on_click,
+            )
+
+        section_header = ft.Row(
             [
-                ft.Container(
+                ft.Icon(ft.Icons.SHIELD_OUTLINED, size=15, color=Colors.TEXT_SECONDARY),
+                ft.Text("خيارات الحماية", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY, expand=True),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=6,
+        )
+
+        hero_card = ft.Container(
+            ft.Row(
+                [
+                    ft.Container(
+                        ft.Text(initial, size=18, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
+                        width=48,
+                        height=48,
+                        alignment=ft.alignment.center,
+                        bgcolor=Colors.PRIMARY,
+                        border_radius=15,
+                    ),
                     ft.Column(
                         [
-                            ft.Text(f"المستخدم: {session.full_name} ({session.username})", weight=ft.FontWeight.BOLD),
-                            quick_status,
-                            saved_status,
-                            ft.Text(
-                                "لا يتم حفظ كلمة المرور كنص. خيار البقاء مسجلاً يستخدم رمز جلسة عشوائيًا محليًا، بينما PIN والنمط يحفظان كبصمة مشفرة مرتبطة بهذا الجهاز.",
-                                size=11,
-                                color=Colors.TEXT_SECONDARY,
-                            ),
+                            ft.Text(session.full_name, size=16, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"{session.username} · حساب محلي على هذا الجهاز", size=11, color=Colors.TEXT_SECONDARY),
                         ],
-                        spacing=6,
+                        spacing=1,
+                        expand=True,
                     ),
-                    padding=14,
-                    border=ft.border.all(1, Colors.BORDER),
-                    border_radius=14,
-                    bgcolor=Colors.WHITE,
-                    shadow=Shadow.SM,
+                    ft.Container(
+                        ft.Icon(ft.Icons.SHIELD_OUTLINED, color=Colors.PRIMARY, size=20),
+                        width=40,
+                        height=40,
+                        alignment=ft.alignment.center,
+                        bgcolor=Colors.PRIMARY_BG,
+                        border_radius=13,
+                    ),
+                ],
+                spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=14,
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.LG,
+            shadow=Shadow.SM,
+        )
+
+        note_card = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=Colors.TEXT_SECONDARY),
+                    ft.Text(
+                        "لا يتم حفظ كلمة المرور كنص. خيار البقاء مسجلاً يستخدم رمز جلسة عشوائيًا محليًا، بينما PIN والنمط يحفظان كبصمة مشفرة مرتبطة بهذا الجهاز.",
+                        size=11,
+                        color=Colors.TEXT_SECONDARY,
+                        expand=True,
+                    ),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            padding=12,
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.MD,
+        )
+
+        content.content = ft.Column(
+            [
+                hero_card,
+                summary,
+                section_header,
+                action_tile(
+                    icon=ft.Icons.PIN_ROUNDED,
+                    color=Colors.PRIMARY,
+                    bg=Colors.PRIMARY_BG,
+                    title="إعداد الدخول بـ PIN",
+                    subtitle="رقم سري قصير (4–8 أرقام) لفتح Nano بسرعة على هذا الجهاز",
+                    on_click=pin_dialog,
                 ),
-                ft.ResponsiveRow(
-                    [
-                        ft.Container(ft.FilledButton("إعداد PIN", icon=ft.Icons.LOCK, on_click=pin_dialog), col={"xs": 6, "md": 3}),
-                        ft.Container(ft.OutlinedButton("إعداد نمط", icon=ft.Icons.APPS_ROUNDED, on_click=pattern_dialog), col={"xs": 6, "md": 3}),
-                        ft.Container(ft.TextButton("إلغاء PIN / النمط", icon=ft.Icons.REFRESH, on_click=clear_dialog), col={"xs": 12, "md": 3}),
-                    ],
-                    spacing=8,
-                    run_spacing=8,
+                action_tile(
+                    icon=ft.Icons.APPS_ROUNDED,
+                    color=Colors.PURPLE,
+                    bg=Colors.PURPLE_BG,
+                    title="إعداد نمط الدخول",
+                    subtitle="ارسم نمطًا يربط 4 نقاط على الأقل",
+                    on_click=pattern_dialog,
                 ),
+                action_tile(
+                    icon=ft.Icons.REMOVE_CIRCLE_OUTLINE_ROUNDED,
+                    color=Colors.DANGER,
+                    bg=Colors.DANGER_BG,
+                    title="إلغاء PIN / النمط",
+                    subtitle="سيعود تسجيل الدخول إلى كلمة المرور الكاملة فقط",
+                    on_click=clear_dialog,
+                ),
+                note_card,
             ],
             spacing=12,
             scroll=ft.ScrollMode.AUTO,
         )
+        refresh_security()
         page.update()
 
 

@@ -474,14 +474,16 @@ class FinanceCenter:
         # Same sticky-header / scrolling-body split as invoice_view and
         # items_view: the section tabs, search, and type filters live in a
         # bordered white bar that stays put, while the KPI cards and the
-        # voucher list scroll together underneath it.
+        # voucher list scroll together underneath it. Search shares its row
+        # with the type dropdown + actions (parties_view toolbar shape)
+        # instead of spanning the whole width by itself.
+        type_filter.width = 130
         sticky_header = ft.Container(
             ft.Column(
                 [
                     self._section_nav("vouchers"),
-                    search,
                     ft.Row(
-                        [ft.Container(type_filter, expand=True), columns_button, export_button, density_button],
+                        [ft.Container(search, expand=True), type_filter, columns_button, export_button, density_button],
                         spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
