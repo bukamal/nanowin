@@ -189,11 +189,9 @@ jobs:
           )
           $zipPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $zipPath) {
-            # Fallback: just verify the app source files are present somewhere under build
-            Write-Host "WARNING: app.zip not found in expected locations; skipping entry-point guard"
             Write-Host "===== build tree (first 40 entries) ====="
             Get-ChildItem build -Recurse -ErrorAction SilentlyContinue | Select-Object -First 40 FullName
-            exit 0
+            throw "app.zip not found in any expected Flet build location; refusing to publish an installer that cannot start"
           }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $PWD ($zipPath -replace '/', '\')))
@@ -201,6 +199,9 @@ jobs:
             $roots = @($zip.Entries.FullName | Where-Object { $_ -notmatch '/' })
             if (-not ($roots -contains 'main.py' -or $roots -contains 'main.pyc')) {
               throw "bundled app.zip has no main.py/main.pyc at its root"
+            }
+            if (-not ($zip.Entries.FullName -contains 'nano_offline/__init__.py')) {
+              throw "bundled app.zip has no nano_offline package at its root"
             }
             echo "bundled app entry OK ($($zip.Entries.Count) entries) at $zipPath"
           } finally { $zip.Dispose() }
