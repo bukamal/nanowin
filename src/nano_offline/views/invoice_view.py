@@ -2712,6 +2712,7 @@ class InvoiceCenter:
             bgcolor=Colors.WHITE,
             border_radius=ft.border_radius.only(top_left=28, top_right=28),
             shadow=Shadow.LG,
+            rtl=True,
         )
         self.page.open(sheet)
 

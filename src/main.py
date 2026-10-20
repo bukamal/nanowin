@@ -77,6 +77,28 @@ def _apply_theme(page: ft.Page) -> None:
     page.theme_mode = ft.ThemeMode.DARK if theme.is_dark() else ft.ThemeMode.LIGHT
 
 
+def _apply_rtl_to_sheets(page: ft.Page) -> None:
+    """Render every BottomSheet content RTL, like the rest of the app.
+
+    ``page.rtl = True`` only wraps the page's own view: Flet 0.28 pushes
+    modal bottom sheets as Navigator routes on top of it, so their content
+    is laid out LTR unless the content control itself carries ``rtl``.
+    Without this, every Arabic sheet was mirrored -- most visibly the table
+    sheets, whose grid columns came out in the opposite order from the RTL
+    items/invoices screens. Set it on the content right before opening so
+    sheets that replace ``content`` at open time are covered too.
+    """
+    original_open = page.open
+
+    def open_sheet(control):
+        content = getattr(control, "content", None)
+        if isinstance(control, ft.BottomSheet) and content is not None:
+            content.rtl = True
+        return original_open(control)
+
+    page.open = open_sheet
+
+
 def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: NativeFiles, on_theme_changed):
     page.title = "Nano | نانو"
     page.rtl = True
@@ -978,6 +1000,7 @@ def main(page: ft.Page):
 
     page.title = "Nano | نانو"
     page.rtl = True
+    _apply_rtl_to_sheets(page)
     _resolve_and_set_theme(page, ctx)
     _apply_theme(page)
     page.padding = 0
