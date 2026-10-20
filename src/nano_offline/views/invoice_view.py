@@ -2628,8 +2628,7 @@ class InvoiceCenter:
 
         # ----------------------------------------------------------- initial
         party_options()
-        for _ in range(3):
-            lines_grid.add_row({"qty": 1})
+        lines_grid.add_row({"qty": 1})
         update_party_insight()
         refresh_summary()
 

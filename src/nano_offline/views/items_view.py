@@ -35,6 +35,26 @@ ITEM_GRID_COLUMNS = [
 ]
 
 
+def _edit_item_cell_text(col: GridColumn, value, row: dict, settings) -> str | None:
+    """Start a price edit in the display currency, not the stored USD."""
+    if col.kind == "money":
+        if value in (None, ""):
+            return ""
+        return currency.to_input_text(value, settings)
+    return None
+
+
+def _parse_item_cell(col: GridColumn, text: str, settings):
+    """Convert a cell edit back to storage; money is stored as USD."""
+    if col.kind == "money":
+        return currency.parse_display_input(text, settings)
+    cleaned = (text or "").strip()
+    if col.kind == "number":
+        cleaned = cleaned.replace(",", "")
+        return float(cleaned) if cleaned else 0.0
+    return cleaned
+
+
 def _confirm_similar(page: ft.Page, *, title: str, message: str, on_confirm) -> None:
     """Non-blocking guard dialog: ask once, then let the caller proceed
     either way -- never silently reject, since two genuinely different
@@ -539,6 +559,8 @@ class ItemsCenter:
             on_search_shortcut=focus_search,
             on_new_shortcut=lambda: open_item_editor(),
             formatter=_grid_formatter,
+            edit_formatter=lambda col, value, row: _edit_item_cell_text(col, value, row, ctx.settings),
+            parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
             boxed=True,
             center_cells=True,
         )
@@ -2422,6 +2444,8 @@ class ItemsCenter:
                     if str(row.get("name") or "").strip():
                         return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
                     return ("ناقص الاسم", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
+                if col.kind == "money":
+                    return money(value) if value else ""
                 return None
 
             def bulk_row_bg(row: dict) -> str | None:
@@ -2452,6 +2476,8 @@ class ItemsCenter:
                 row_height=36 if bulk_density_state["compact"] else 48,
                 hidden_keys=set(bulk_hidden_state["keys"]),
                 formatter=bulk_formatter,
+                edit_formatter=lambda col, value, row: _edit_item_cell_text(col, value, row, ctx.settings),
+                parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
                 row_bg=bulk_row_bg,
                 on_cell_commit=lambda *_: refresh_bulk_footer(),
                 on_pick=lambda row_index, col: open_bulk_picker(row_index, col),
@@ -2776,8 +2802,7 @@ class ItemsCenter:
             for _selector in (type_sel, cat_sel, unit_sel):
                 _disarm_on_focus(_selector)
 
-            for _ in range(3):
-                bulk_grid.add_row(row_defaults())
+            bulk_grid.add_row(row_defaults())
             refresh_bulk_footer()
 
             # A wide, tall sheet: the table is the point, so it gets the

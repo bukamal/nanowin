@@ -98,6 +98,21 @@ def test_commit_reverts_display_when_callback_raises():
     assert g._rows[0]["name"] == "قلم"
 
 
+def test_edit_formatter_shows_display_value_and_parser_restores_storage():
+    g = make_grid(
+        edit_formatter=lambda col, value, row: f"{float(value) * 10:.0f}" if col.kind == "money" else None,
+        parser=lambda col, text: float(text) / 10 if col.kind == "money" else text,
+    )
+    g._on_cell_click(0, 2)                 # price cell of the first row
+    g._handle_key(FakeKey("Enter"))        # open editor
+    assert g._edit_field is not None
+    assert g._edit_field.value == "15"     # 1.5 rendered in the display currency
+    g._edit_field.value = "200"
+    g._handle_key(FakeKey("Enter"))        # commit
+    assert g._edit_field is None
+    assert g._rows[0]["price"] == 20.0     # parsed back to the stored value
+
+
 def test_row_action_column_added_only_with_activate():
     plain = make_grid()
     with_action = make_grid(on_row_activate=lambda row: None)

@@ -79,6 +79,7 @@ class DataGrid(ft.Column):
         on_row_activate: Callable[[dict], None] | None = None,
         on_pick: Callable[[int, GridColumn], None] | None = None,
         formatter: Callable[[GridColumn, object, dict], object] | None = None,
+        edit_formatter: Callable[[GridColumn, object, dict], object] | None = None,
         parser: Callable[[GridColumn, str], object] | None = None,
         activate_icon: str = ft.Icons.OPEN_IN_NEW_ROUNDED,
         activate_tooltip: str = "فتح",
@@ -109,6 +110,7 @@ class DataGrid(ft.Column):
         self._on_row_activate = on_row_activate
         self._on_pick = on_pick
         self._formatter = formatter
+        self._edit_formatter = edit_formatter
         self._parser = parser
         self._activate_icon = activate_icon
         self._activate_tooltip = activate_tooltip
@@ -939,8 +941,15 @@ class DataGrid(ft.Column):
             return
         self.nav.begin_edit()
         current = self._rows[r].get(col.key)
+        edit_text = None
+        if self._edit_formatter is not None:
+            out = self._edit_formatter(col, current, self._rows[r])
+            if out is not None:
+                edit_text = str(out)
+        if edit_text is None:
+            edit_text = _default_text(col, current)
         field = ft.TextField(
-            value=_default_text(col, current),
+            value=edit_text,
             dense=True,
             text_size=12,
             autofocus=True,
