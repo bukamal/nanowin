@@ -79,9 +79,10 @@ class AppContext:
         stocktake_repo = StocktakeRepository(db)
         settings_repo = SettingsRepository(db)
         dashboard_svc = DashboardService(db)
+        reports_svc = ReportingService(db)
         license_svc = LicenseService(db)
         notifications_svc = NotificationService(
-            db, settings_repo, items_repo, ReportingService(db), license_svc, dashboard_svc
+            db, settings_repo, items_repo, reports_svc, license_svc, dashboard_svc
         )
         external_notifications_svc = ExternalNotificationService(db, settings_repo, notifications_svc)
         # PHASE11.1: wire the immediate-push hook -- the moment the rules
@@ -134,7 +135,7 @@ class AppContext:
             payments=PaymentService(db),
             expenses=expenses,
             statements=StatementService(db),
-            reports=ReportingService(db),
+            reports=reports_svc,
             forecast=ForecastService(db),
             dashboard=dashboard_svc,
             documents=DocumentService(db, invoices, StatementService(db)),

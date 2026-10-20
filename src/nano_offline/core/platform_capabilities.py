@@ -53,7 +53,7 @@ _FEATURES: dict[str, dict[str, str]] = {
     # (USB keyboard) barcode path needs no code at all and is already the
     # recommended desktop scanning mode (see barcode settings).
     "camera_capture": {"android": "native", "windows": "fallback:file-pick"},
-    "barcode_camera_scan": {"android": "native", "windows": "fallback:wedge-and-image-decode"},
+    "barcode_camera_scan": {"android": "native", "windows": "fallback:wedge"},
     # Android SpeechRecognizer has no desktop counterpart in the current
     # extension; voice entry points must stay hidden on Windows until a
     # local engine (Vosk/Whisper) is bridged.
@@ -94,8 +94,7 @@ def supports(feature: str) -> bool:
 def app_data_dir(app_name: str = "Nano") -> Path:
     """Writable per-user data directory for databases/backups/exports.
 
-    ``%APPDATA%\\<app>`` on Windows, ``~/.nano`` elsewhere (matches the
-    historical default already used by ``core.paths`` on Android/desktop).
+    ``%APPDATA%\\<app>`` on Windows, ``~/.nano`` elsewhere.
     """
     if IS_WINDOWS:
         base = os.environ.get("APPDATA") or str(Path.home())

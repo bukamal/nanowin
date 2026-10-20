@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 from pathlib import Path
+
+from nano_offline.core import platform_capabilities
 
 APP_DIR_NAME = "nano-offline"
 PRIMARY_DB_NAME = "nano.db"
 LEGACY_DB_NAME = "qeid.db"
+_WINDOWS_MIGRATIONS_CHECKED: set[tuple[str, str]] = set()
 
 
 def app_data_dir() -> Path:
@@ -26,9 +30,75 @@ def app_data_dir() -> Path:
     if configured:
         path = Path(configured).expanduser()
     else:
-        path = Path.home() / ".nano"
+        if platform_capabilities.IS_WINDOWS:
+            path = platform_capabilities.app_data_dir()
+            _migrate_legacy_windows_data(Path.home() / ".nano", path)
+        else:
+            path = Path.home() / ".nano"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _migrate_legacy_windows_data(source_dir: Path, target_dir: Path) -> None:
+    """Copy legacy per-user data to the documented Windows location safely.
+
+    The old directory is intentionally retained. SQLite's backup API includes
+    committed WAL data; other files are copied only when the destination does
+    not already contain them.
+    """
+    try:
+        source_resolved = source_dir.resolve()
+        target_resolved = target_dir.resolve()
+    except OSError:
+        source_resolved = source_dir
+        target_resolved = target_dir
+    key = (str(source_resolved), str(target_resolved))
+    if source_resolved == target_resolved or key in _WINDOWS_MIGRATIONS_CHECKED or not source_dir.is_dir():
+        return
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_has_database = any((target_dir / name).exists() for name in (PRIMARY_DB_NAME, LEGACY_DB_NAME))
+    if not target_has_database:
+        legacy_db = next(
+            (source_dir / name for name in (PRIMARY_DB_NAME, LEGACY_DB_NAME) if (source_dir / name).is_file()),
+            None,
+        )
+        if legacy_db is not None:
+            destination = target_dir / PRIMARY_DB_NAME
+            temporary = destination.with_suffix(destination.suffix + ".migrating")
+            source = sqlite3.connect(legacy_db)
+            target = sqlite3.connect(temporary)
+            try:
+                source.backup(target)
+                target.commit()
+                integrity = str(target.execute("PRAGMA integrity_check").fetchone()[0])
+            except Exception:
+                target.close()
+                source.close()
+                temporary.unlink(missing_ok=True)
+                raise
+            else:
+                target.close()
+                source.close()
+            if integrity.lower() != "ok":
+                temporary.unlink(missing_ok=True)
+                raise RuntimeError(f"فشل ترحيل قاعدة بيانات ويندوز القديمة: {integrity}")
+            os.replace(temporary, destination)
+
+    for directory_name in ("backups", "logs"):
+        old_directory = source_dir / directory_name
+        if not old_directory.is_dir():
+            continue
+        for old_path in old_directory.rglob("*"):
+            if old_path.is_symlink() or not old_path.is_file() or old_path.name.endswith(".migrating"):
+                continue
+            relative = old_path.relative_to(source_dir)
+            new_path = target_dir / relative
+            if new_path.exists():
+                continue
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(old_path, new_path)
+    _WINDOWS_MIGRATIONS_CHECKED.add(key)
 
 
 def migrate_legacy_database(legacy_path: str | Path, target_path: str | Path | None = None) -> bool:

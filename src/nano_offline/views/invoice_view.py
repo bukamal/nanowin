@@ -38,6 +38,7 @@ from nano_offline.core.margin_guard import check_sale_margin
 from nano_offline.core.price_fingerprint import check_purchase_price
 from nano_offline.core import invoice_settings
 from nano_offline.core import barcode_settings
+from nano_offline.core.platform_capabilities import supports
 
 # Below this remaining quantity a stock item is flagged on the invoice line
 # as running low -- there is no per-item reorder-point column in the schema
@@ -1731,7 +1732,7 @@ class InvoiceCenter:
                 ft.Row(
                     [
                         ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
-                        ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line),
+                        ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
                     ],
                     spacing=8, wrap=True,
                 ),
@@ -2669,7 +2670,7 @@ class InvoiceCenter:
                     ft.Row(
                         [
                             ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
-                            ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line),
+                            ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
                             ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
                             density_button,
@@ -3676,7 +3677,7 @@ class InvoiceCenter:
                 ft.Row(
                     [
                         ft.Text("بنود الفاتورة", size=18, weight=ft.FontWeight.BOLD, expand=True),
-                        ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_to_add_line),
+                        ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_to_add_line, visible=supports("barcode_camera_scan")),
                         ft.OutlinedButton("إدخال سريع (جدول)", icon=ft.Icons.VIEW_LIST_OUTLINED, on_click=open_bulk_lines_sheet),
                         ft.OutlinedButton("إضافة بند", icon=ft.Icons.ADD, on_click=lambda _: add_line()),
                     ]

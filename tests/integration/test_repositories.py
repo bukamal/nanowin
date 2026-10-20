@@ -49,6 +49,21 @@ def test_party_repository_async(ctx, seeded):
     assert rows and rows[0]["name"] == "عميل"
 
 
+def test_reporting_and_forecast_services_support_async_offload(ctx):
+    async def scenario():
+        pnl, cash, forecast = await asyncio.gather(
+            ctx.reports.aio.income_statement(),
+            ctx.reports.aio.cash_movement(),
+            ctx.forecast.aio.seasonal_forecast(invoice_type="sale"),
+        )
+        return pnl, cash, forecast
+
+    pnl, cash, forecast = asyncio.run(scenario())
+    assert pnl["sales"] == 0
+    assert cash["rows"] == []
+    assert forecast["insufficient"] is True
+
+
 def test_invoice_flow_updates_state(ctx, seeded):
     supplier_id = ctx.suppliers.list()[0]["id"]
     customer_id = ctx.customers.list()[0]["id"]

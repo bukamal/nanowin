@@ -18,6 +18,7 @@ from nano_offline.core import currency
 from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_margin
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
+from nano_offline.core.platform_capabilities import supports
 from nano_offline.core import sound as sound_engine
 from nano_offline.core.voice_nlu import normalize_ar
 
@@ -1161,7 +1162,19 @@ class POSCenter:
         catalog_pane = ft.Column(
             [
                 ft.Row([search_field], spacing=10),
-                ft.Row([barcode_field, ft.IconButton(icon=ft.Icons.CAMERA_ALT_OUTLINED, tooltip="مسح بالكاميرا", on_click=scan_button_handler, icon_color=Colors.PRIMARY)], spacing=10),
+                ft.Row(
+                    [
+                        barcode_field,
+                        ft.IconButton(
+                            icon=ft.Icons.CAMERA_ALT_OUTLINED,
+                            tooltip="مسح بالكاميرا",
+                            on_click=scan_button_handler,
+                            icon_color=Colors.PRIMARY,
+                            visible=supports("barcode_camera_scan"),
+                        ),
+                    ],
+                    spacing=10,
+                ),
                 recent_row,
                 grid,
                 empty_box,

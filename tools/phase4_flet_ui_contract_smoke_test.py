@@ -33,5 +33,7 @@ for token in [
     assert token in view, token
 
 assert "reports: ReportingService" in ctx
-assert "reports=ReportingService(db)" in ctx
+assert "reports_svc = ReportingService(db)" in ctx
+assert "reports=reports_svc" in ctx
+assert "items_repo, reports_svc, license_svc, dashboard_svc" in ctx
 print("phase4_flet_ui_contract_smoke_test passed")

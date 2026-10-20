@@ -9,6 +9,7 @@ from nano_offline.components import SelectAllTextField, SearchSelect, SmartAmoun
 from nano_offline.components.buttons import inline_icon_button
 from nano_offline.core.theme import Colors
 from nano_offline.core import barcode_settings
+from nano_offline.core.platform_capabilities import supports
 
 DEFAULT_UNIT_NAME = "قطعة"
 
@@ -423,7 +424,8 @@ class StocktakeCenter:
             page.open(dialog)
 
         scan_button = ft.FilledButton(
-            "ابدأ المسح المستمر", icon=ft.Icons.QR_CODE_SCANNER, on_click=toggle_scan, expand=True,
+            "ابدأ المسح المستمر", icon=ft.Icons.QR_CODE_SCANNER, on_click=toggle_scan,
+            expand=True, visible=supports("barcode_camera_scan"),
         )
 
         def sync_scan_button():

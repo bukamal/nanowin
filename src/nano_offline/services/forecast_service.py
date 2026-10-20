@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from statistics import mean, pstdev
 
+from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
 
 # PHASE10 wave4 (B1): seasonal sales/purchase forecasting. Deliberately pure
@@ -14,7 +15,7 @@ MONTH_NAMES_AR = {
 CONFIDENCE_LABELS = {"high": "عالية", "medium": "متوسطة", "low": "منخفضة"}
 
 
-class ForecastService:
+class ForecastService(Offloadable):
     """Seasonal forecast of sales/purchases from the local database.
 
     Method (kept intentionally simple and deterministic):
@@ -34,6 +35,7 @@ class ForecastService:
     def __init__(self, db: Database):
         self.db = db
 
+    @blocking
     def monthly_totals(
         self,
         *,
@@ -68,6 +70,7 @@ class ForecastService:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    @blocking
     def seasonal_forecast(
         self,
         *,

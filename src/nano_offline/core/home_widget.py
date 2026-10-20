@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from nano_offline.core import currency
 from nano_offline.core.expiring import invalidate_insights
+from nano_offline.core.platform_capabilities import supports
 
 
 def home_widget_snapshot(dashboard, settings=None) -> dict:
@@ -90,7 +91,7 @@ def _fire(page, native_files, method: str, *args) -> None:
     control. Swallows ``None`` (desktop/dev runs without the Android
     bridge) and never raises back into the caller -- the widget is a
     nice-to-have surface, not a critical path."""
-    if native_files is None or getattr(native_files, method, None) is None:
+    if not supports("home_widget") or native_files is None or getattr(native_files, method, None) is None:
         return
     page.run_task(getattr(native_files, method), *args)
 

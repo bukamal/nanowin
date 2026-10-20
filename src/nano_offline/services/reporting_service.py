@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
+from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
 
 EPSILON = 1e-9
 
 
-class ReportingService:
+class ReportingService(Offloadable):
     """Read-only local reports derived from source documents and rebuilt ledger state."""
 
     def __init__(self, db: Database):
@@ -39,6 +40,7 @@ class ReportingService:
             params.append(date_to)
         return (" AND ".join(clauses) if clauses else "1=1"), params
 
+    @blocking
     def income_statement(self, *, date_from: str | None = None, date_to: str | None = None) -> dict:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("i.invoice_date", date_from, date_to)
@@ -80,6 +82,7 @@ class ReportingService:
                 "expense_breakdown": expense_rows,
             }
 
+    @blocking
     def invoice_profitability(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("i.invoice_date", date_from, date_to)
@@ -108,6 +111,7 @@ class ReportingService:
                 result.append(row)
             return result
 
+    @blocking
     def item_profitability(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("i.invoice_date", date_from, date_to)
@@ -141,6 +145,7 @@ class ReportingService:
                 result.append(row)
             return result
 
+    @blocking
     def top_selling_items(
         self,
         *,
@@ -154,6 +159,7 @@ class ReportingService:
         rows.sort(key=lambda row: float(row.get(key) or 0), reverse=True)
         return rows[: max(1, int(limit))]
 
+    @blocking
     def inventory_report(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
         """Inventory movement and valuation by item for a period.
 
@@ -222,6 +228,7 @@ class ReportingService:
                 })
             return result
 
+    @blocking
     def inventory_valuation(self, *, as_of: str | None = None) -> dict:
         _, as_of = self._normalize_dates(None, as_of)
         rows = self.inventory_report(date_to=as_of)
@@ -233,6 +240,7 @@ class ReportingService:
             "item_count": len(rows),
         }
 
+    @blocking
     def party_balances(self, party_type: str, *, as_of: str | None = None) -> dict:
         _, as_of = self._normalize_dates(None, as_of)
         if party_type == "customer":
@@ -277,6 +285,7 @@ class ReportingService:
                 "net_total": positive - credits,
             }
 
+    @blocking
     def outstanding_invoices(self, party_type: str, *, as_of: str | None = None) -> list[dict]:
         _, as_of = self._normalize_dates(None, as_of)
         if party_type == "customer":
@@ -314,6 +323,7 @@ class ReportingService:
                     result.append(row)
             return result
 
+    @blocking
     def cash_movement(self, *, date_from: str | None = None, date_to: str | None = None) -> dict:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("entry_date", date_from, date_to)

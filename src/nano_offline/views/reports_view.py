@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import flet as ft
 
 from nano_offline.core.toast import toast
@@ -56,6 +58,7 @@ class ReportsCenter:
         self.on_open_statement = on_open_statement
         self.on_open_invoice = on_open_invoice
         self._report_key: str = "pnl"
+        self._refresh_generation = 0
         self.report_dropdown: ft.Dropdown | None = None
         self.date_from: ft.TextField | None = None
         self.date_to: ft.TextField | None = None
@@ -395,20 +398,63 @@ class ReportsCenter:
 
     def _refresh(self, _=None) -> None:
         report = self._report_key or "pnl"
+        date_from, date_to = self._dates()
+        self._refresh_generation += 1
+        generation = self._refresh_generation
+        self.body.controls = [ft.Container(ft.ProgressRing(), padding=24, alignment=ft.alignment.center)]
+        self.page.update()
+        self.page.run_task(self._load_and_render, generation, report, date_from, date_to)
+
+    async def _load_report_data(self, report: str, date_from: str | None, date_to: str | None):
+        reports = self.ctx.reports.aio
+        if report == "pnl":
+            return await reports.income_statement(date_from=date_from, date_to=date_to)
+        if report == "profitability":
+            invoices, items = await asyncio.gather(
+                reports.invoice_profitability(date_from=date_from, date_to=date_to),
+                reports.item_profitability(date_from=date_from, date_to=date_to),
+            )
+            top = sorted(items, key=lambda row: float(row.get("revenue") or 0), reverse=True)[:5]
+            return invoices, items, top
+        if report == "inventory":
+            return await asyncio.gather(
+                reports.inventory_report(date_from=date_from, date_to=date_to),
+                reports.inventory_valuation(as_of=date_to),
+            )
+        if report == "balances":
+            return await asyncio.gather(
+                reports.party_balances("customer", as_of=date_to),
+                reports.party_balances("supplier", as_of=date_to),
+                reports.outstanding_invoices("customer", as_of=date_to),
+                reports.outstanding_invoices("supplier", as_of=date_to),
+            )
+        if report == "forecast":
+            return await asyncio.gather(
+                self.ctx.forecast.aio.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to),
+                self.ctx.forecast.aio.seasonal_forecast(invoice_type="purchase", date_from=date_from, date_to=date_to),
+            )
+        return await reports.cash_movement(date_from=date_from, date_to=date_to)
+
+    async def _load_and_render(self, generation: int, report: str, date_from: str | None, date_to: str | None) -> None:
         try:
+            data = await self._load_report_data(report, date_from, date_to)
+            if generation != self._refresh_generation:
+                return
             if report == "pnl":
-                controls = self._render_pnl()
+                controls = self._render_pnl(data)
             elif report == "profitability":
-                controls = self._render_profitability()
+                controls = self._render_profitability(*data)
             elif report == "inventory":
-                controls = self._render_inventory()
+                controls = self._render_inventory(*data)
             elif report == "balances":
-                controls = self._render_balances()
+                controls = self._render_balances(*data)
             elif report == "forecast":
-                controls = self._render_forecast()
+                controls = self._render_forecast(*data)
             else:
-                controls = self._render_cash()
+                controls = self._render_cash(data)
         except Exception as exc:
+            if generation != self._refresh_generation:
+                return
             self.notify(str(exc), kind="error")
             controls = [self._error_card(exc)]
         self.body.controls = controls
@@ -418,7 +464,7 @@ class ReportsCenter:
         ]
         self.page.update()
 
-    def _report_html(self) -> str:
+    async def _report_html(self) -> str:
         """Build the printable HTML for whichever report is on screen now,
         re-reading the same data the cards were just drawn from -- so print
         and PDF share always match what the user is currently looking at.
@@ -426,34 +472,43 @@ class ReportsCenter:
         report = self._report_key or "pnl"
         date_from, date_to = self._dates()
         documents = self.ctx.documents
+        reports = self.ctx.reports.aio
         if report == "pnl":
-            data = self.ctx.reports.income_statement(date_from=date_from, date_to=date_to)
+            data = await reports.income_statement(date_from=date_from, date_to=date_to)
             return documents.pnl_report_html(data, date_from=date_from, date_to=date_to)
         if report == "profitability":
-            invoices = self.ctx.reports.invoice_profitability(date_from=date_from, date_to=date_to)
-            items = self.ctx.reports.item_profitability(date_from=date_from, date_to=date_to)
-            top = self.ctx.reports.top_selling_items(date_from=date_from, date_to=date_to, limit=5)
+            invoices, items = await asyncio.gather(
+                reports.invoice_profitability(date_from=date_from, date_to=date_to),
+                reports.item_profitability(date_from=date_from, date_to=date_to),
+            )
+            top = sorted(items, key=lambda row: float(row.get("revenue") or 0), reverse=True)[:5]
             return documents.profitability_report_html(
                 invoices=invoices, items=items, top=top, date_from=date_from, date_to=date_to
             )
         if report == "inventory":
-            rows = self.ctx.reports.inventory_report(date_from=date_from, date_to=date_to)
-            valuation = self.ctx.reports.inventory_valuation(as_of=date_to)
+            rows, valuation = await asyncio.gather(
+                reports.inventory_report(date_from=date_from, date_to=date_to),
+                reports.inventory_valuation(as_of=date_to),
+            )
             return documents.inventory_report_html(rows=rows, valuation=valuation, date_from=date_from, date_to=date_to)
         if report == "balances":
-            customers = self.ctx.reports.party_balances("customer", as_of=date_to)
-            suppliers = self.ctx.reports.party_balances("supplier", as_of=date_to)
-            open_customers = self.ctx.reports.outstanding_invoices("customer", as_of=date_to)
-            open_suppliers = self.ctx.reports.outstanding_invoices("supplier", as_of=date_to)
+            customers, suppliers, open_customers, open_suppliers = await asyncio.gather(
+                reports.party_balances("customer", as_of=date_to),
+                reports.party_balances("supplier", as_of=date_to),
+                reports.outstanding_invoices("customer", as_of=date_to),
+                reports.outstanding_invoices("supplier", as_of=date_to),
+            )
             return documents.balances_report_html(
                 customers=customers, suppliers=suppliers,
                 open_customers=open_customers, open_suppliers=open_suppliers, as_of=date_to,
             )
         if report == "forecast":
-            sales = self.ctx.forecast.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to)
-            purchases = self.ctx.forecast.seasonal_forecast(invoice_type="purchase", date_from=date_from, date_to=date_to)
+            sales, purchases = await asyncio.gather(
+                self.ctx.forecast.aio.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to),
+                self.ctx.forecast.aio.seasonal_forecast(invoice_type="purchase", date_from=date_from, date_to=date_to),
+            )
             return documents.forecast_report_html(sales=sales, purchases=purchases, date_from=date_from, date_to=date_to)
-        data = self.ctx.reports.cash_movement(date_from=date_from, date_to=date_to)
+        data = await reports.cash_movement(date_from=date_from, date_to=date_to)
         return documents.cash_report_html(data, date_from=date_from, date_to=date_to)
 
     async def _print_report(self, _=None) -> None:
@@ -461,7 +516,7 @@ class ReportsCenter:
             self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
             return
         try:
-            html = self._report_html()
+            html = await self._report_html()
             report = self._report_key or "pnl"
             await self.native_files.print_html(html, name=f"nano-report-{report}")
         except Exception as exc:
@@ -472,15 +527,13 @@ class ReportsCenter:
             self.notify("تصدير PDF غير مهيأ في هذا البناء")
             return
         try:
-            html = self._report_html()
+            html = await self._report_html()
             report = self._report_key or "pnl"
             await self.native_files.share_pdf(html, filename=f"nano_report_{report}.pdf")
         except Exception as exc:
             self.notify(str(exc), kind="error")
 
-    def _render_pnl(self) -> list[ft.Control]:
-        date_from, date_to = self._dates()
-        report = self.ctx.reports.income_statement(date_from=date_from, date_to=date_to)
+    def _render_pnl(self, report: dict) -> list[ft.Control]:
         metrics = metric_row([
             self._metric("المبيعات", self.money(report["sales"]), icon=ft.Icons.POINT_OF_SALE_OUTLINED, accent=Colors.PRIMARY),
             self._metric("تكلفة المبيعات", self.money(report["cogs"]), icon=ft.Icons.RECEIPT_LONG_OUTLINED, accent=Colors.ORANGE),
@@ -507,12 +560,7 @@ class ReportsCenter:
         result.append(expenses)
         return result
 
-    def _render_profitability(self) -> list[ft.Control]:
-        date_from, date_to = self._dates()
-        invoices = self.ctx.reports.invoice_profitability(date_from=date_from, date_to=date_to)
-        items = self.ctx.reports.item_profitability(date_from=date_from, date_to=date_to)
-        top = self.ctx.reports.top_selling_items(date_from=date_from, date_to=date_to, limit=5)
-
+    def _render_profitability(self, invoices: list[dict], items: list[dict], top: list[dict]) -> list[ft.Control]:
         top_cards = ft.Column(spacing=6)
         for index, row in enumerate(top, 1):
             top_cards.controls.append(
@@ -562,10 +610,8 @@ class ReportsCenter:
             self._section_title(ft.Icons.INVENTORY_2_OUTLINED, "ربحية المواد والخدمات"), item_cards,
         ]
 
-    def _render_inventory(self) -> list[ft.Control]:
-        date_from, date_to = self._dates()
-        rows = self.ctx.reports.inventory_report(date_from=date_from, date_to=date_to)
-        valuation = self.ctx.reports.inventory_valuation(as_of=date_to)
+    def _render_inventory(self, rows: list[dict], valuation: dict) -> list[ft.Control]:
+        _, date_to = self._dates()
         cards = ft.Column(spacing=6)
         for row in rows:
             unit = f" {row['unit_name']}" if row.get("unit_name") else ""
@@ -589,13 +635,7 @@ class ReportsCenter:
             cards,
         ]
 
-    def _render_balances(self) -> list[ft.Control]:
-        _, date_to = self._dates()
-        customers = self.ctx.reports.party_balances("customer", as_of=date_to)
-        suppliers = self.ctx.reports.party_balances("supplier", as_of=date_to)
-        open_customers = self.ctx.reports.outstanding_invoices("customer", as_of=date_to)
-        open_suppliers = self.ctx.reports.outstanding_invoices("supplier", as_of=date_to)
-
+    def _render_balances(self, customers: dict, suppliers: dict, open_customers: list[dict], open_suppliers: list[dict]) -> list[ft.Control]:
         def party_cards(report: dict, label: str, icon, party_type: str) -> ft.Column:
             column = ft.Column(spacing=6)
             for row in report["rows"]:
@@ -659,9 +699,7 @@ class ReportsCenter:
             self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير الموردين المفتوحة"), open_cards(open_suppliers, "شراء"),
         ]
 
-    def _render_cash(self) -> list[ft.Control]:
-        date_from, date_to = self._dates()
-        report = self.ctx.reports.cash_movement(date_from=date_from, date_to=date_to)
+    def _render_cash(self, report: dict) -> list[ft.Control]:
         cards = ft.Column(spacing=6)
         for row in reversed(report["rows"]):
             incoming = float(row["debit"] or 0)
@@ -690,14 +728,10 @@ class ReportsCenter:
         ]
 
     # -- seasonal forecast (phase10 wave4, B1) -----------------------------
-    def _render_forecast(self) -> list[ft.Control]:
+    def _render_forecast(self, sales: dict, purchases: dict) -> list[ft.Control]:
         """Sales/purchase forecast built from local invoice history only.
         Pure-DB analytics (no native extension): renders the same data the
         printable HTML mirrors in document_service.forecast_report_html."""
-        date_from, date_to = self._dates()
-        sales = self.ctx.forecast.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to)
-        purchases = self.ctx.forecast.seasonal_forecast(invoice_type="purchase", date_from=date_from, date_to=date_to)
-
         def direction_card(title: str, icon, accent: str, data: dict) -> list[ft.Control]:
             if data["insufficient"]:
                 return [

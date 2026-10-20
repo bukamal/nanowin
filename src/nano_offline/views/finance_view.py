@@ -15,6 +15,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
+from nano_offline.core.platform_capabilities import feature_status
 from nano_offline.core.expiring import invalidate_insights
 from nano_offline.core.home_widget import refresh_home_widget
 
@@ -1208,7 +1209,7 @@ class FinanceCenter:
                 return
             try:
                 shot = await self.native_files.capture_receipt(filename="receipt.jpg")
-            except RuntimeError as exc:
+            except (RuntimeError, OSError) as exc:
                 self.notify(str(exc), kind="error")
                 return
             if not shot:
@@ -1225,8 +1226,10 @@ class FinanceCenter:
             photo_area.controls = _photo_preview_controls()
             self.page.update()
 
+        capture_fallback = feature_status("camera_capture") == "fallback:file-pick"
         capture_button = ft.OutlinedButton(
-            "التقاط صورة الإيصال", icon=ft.Icons.PHOTO_CAMERA_OUTLINED,
+            "اختيار صورة الإيصال" if capture_fallback else "التقاط صورة الإيصال",
+            icon=ft.Icons.IMAGE_OUTLINED if capture_fallback else ft.Icons.PHOTO_CAMERA_OUTLINED,
             on_click=lambda _: self.page.run_task(_capture_receipt),
         )
         remove_button = ft.TextButton(

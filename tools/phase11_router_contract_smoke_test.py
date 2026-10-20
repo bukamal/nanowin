@@ -5,9 +5,8 @@ central-router refactor. Checks two independent things:
 
   1. The pure Router is importable and its stack semantics behave (this is the
      real test; also mirrored in tests/unit/test_router.py).
-  2. main.py actually wires the Router for section navigation and the Android
-     back button -- i.e. we did not regress to the old hand-rolled navigate()
-     that had no back-stack and could only ever jump to the dashboard.
+  2. The shell route coordinator owns route registration, rendering, and
+     navigation, while main.py wires it to the desktop shell and Android back.
 """
 from __future__ import annotations
 
@@ -54,16 +53,23 @@ router.render = lambda key, kwargs: renders.append((key, dict(kwargs)))
 
 # ---- (2) main.py wiring ----------------------------------------------------
 main = (ROOT / "src/main.py").read_text(encoding="utf-8")
+shell_routes = (ROOT / "src/nano_offline/core/shell_routes.py").read_text(encoding="utf-8")
 for needle in [
     "from nano_offline.core.router import",
     "router = Router(",
-    "router.register(\"pos\"",
-    "router.register(\"stocktake\"",
-    "router.go(target",
+    "register_shell_routes(",
+    "ShellRouteCoordinator(",
     "router.can_go_back()",
     "router.back()",
 ]:
     assert needle in main, f"main.py no longer wires the Router: {needle}"
+for needle in [
+    "router.register(",
+    "self.router.go(target, reset=target in self.section_keys",
+    "def render(self, router: Router",
+    "def on_denied(",
+]:
+    assert needle in shell_routes, f"shell_routes.py no longer coordinates routes: {needle}"
 # The gray-screen guard: build_shell failures surface a dialog instead of an
 # empty cleared page.
 assert "تعذر تحميل الواجهة" in main, "open_shell must not leave a silent blank page"

@@ -19,6 +19,7 @@ from nano_offline.core import currency
 from nano_offline.core import barcode_quality
 from nano_offline.core import barcode_settings
 from nano_offline.core import item_card_signing
+from nano_offline.core.platform_capabilities import supports
 
 # Desktop grid columns. Only name + the two prices are inline-editable:
 # quantity is derived from inventory movements (see ItemRepository.update,
@@ -1021,7 +1022,7 @@ class ItemsCenter:
                 on_barcode_change()
                 page.update()
 
-            scan_button = ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=scan_for_editor)
+            scan_button = ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=scan_for_editor, visible=supports("barcode_camera_scan"))
             generate_button = ft.IconButton(icon=ft.Icons.CASINO_OUTLINED, tooltip="توليد باركود عشوائي", on_click=generate_random_barcode)
             barcode_row = ft.Row([barcode, scan_button, generate_button], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER)
             barcode_status_row = ft.Row([scan_status])
@@ -1158,7 +1159,7 @@ class ItemsCenter:
                         ft.Row(
                             [
                                 new_alt_barcode,
-                                ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=scan_for_alt_barcode),
+                                ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=scan_for_alt_barcode, visible=supports("barcode_camera_scan")),
                                 ft.IconButton(icon=ft.Icons.CASINO_OUTLINED, tooltip="توليد باركود عشوائي", on_click=generate_alt_barcode),
                             ],
                             spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1282,7 +1283,7 @@ class ItemsCenter:
                             ft.Row(
                                 [
                                     ft.Container(bc_field, expand=True),
-                                    ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=_scan_bc),
+                                    ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=_scan_bc, visible=supports("barcode_camera_scan")),
                                     ft.IconButton(icon=ft.Icons.CASINO_OUTLINED, tooltip="توليد باركود عشوائي", on_click=_gen_bc),
                                 ],
                                 spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1837,7 +1838,7 @@ class ItemsCenter:
                     body = ft.Column(
                         [
                             ft.Text("وجّه الكاميرا نحو بطاقة QR لمادة صادرة من نانو (من هذا الجهاز أو من جهاز آخر).", size=12, color=Colors.TEXT_SECONDARY),
-                            ft.FilledButton("فتح الكاميرا ومسح البطاقة", icon=ft.Icons.QR_CODE_SCANNER, on_click=do_scan),
+                            ft.FilledButton("فتح الكاميرا ومسح البطاقة", icon=ft.Icons.QR_CODE_SCANNER, on_click=do_scan, visible=supports("barcode_camera_scan")),
                             scan_status,
                         ],
                         spacing=12, tight=True,
@@ -3345,7 +3346,11 @@ class ItemsCenter:
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),
-                RibbonAction("import_card", "استيراد بطاقة", ft.Icons.QR_CODE_SCANNER, on_click=lambda _=None: open_import_card_sheet()),
+                *(
+                    [RibbonAction("import_card", "استيراد بطاقة", ft.Icons.QR_CODE_SCANNER, on_click=lambda _=None: open_import_card_sheet())]
+                    if supports("barcode_camera_scan")
+                    else []
+                ),
             ])
         if prefill_barcode:
             open_item_editor(None, prefill_barcode)

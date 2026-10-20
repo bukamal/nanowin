@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 
 import flet as ft
-from flet_native_files import NativeFiles
 
 from nano_offline.app_context import AppContext
 from nano_offline.core.invoice_signing import verify_payload
@@ -29,10 +28,13 @@ from nano_offline.views.security_view import SecurityCenter
 from nano_offline.views.splash_view import SplashGate
 from nano_offline.views.stocktake_view import StocktakeCenter
 from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonTab
-from nano_offline.components import SelectAllTextField
+from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.platform_capabilities import supports
+from nano_offline.core.platform_native_files import PlatformNativeFiles
+from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
 
 APP_DB = database_path()
 LEGACY_APP_DB = next((p for p in [Path(__file__).resolve().parent.parent / "data" / "nano.db", Path(__file__).resolve().parent.parent / "data" / "qeid.db"] if p.exists()), Path(__file__).resolve().parent.parent / "data" / "nano.db")
@@ -99,7 +101,7 @@ def _apply_rtl_to_sheets(page: ft.Page) -> None:
     page.open = open_sheet
 
 
-def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: NativeFiles, on_theme_changed):
+def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: PlatformNativeFiles, on_theme_changed):
     page.title = "Nano | نانو"
     page.rtl = True
     _apply_theme(page)
@@ -369,7 +371,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     # Python (no flet import) and unit-tested under tests/unit/test_router.py;
     # the render callback below keeps the exact cross-fade + header + badge
     # behavior the old navigate() had.
-    from nano_offline.core.router import Router, Route, RouteDenied
+    from nano_offline.core.router import Router
 
     def refresh_navigation_state() -> None:
         current = selected_key["value"]
@@ -398,40 +400,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
     # from render_route / pos_chrome_restore closures, i.e. at click time,
     # once the whole shell (including them) exists.
 
-    def render_route(key: str, kwargs: dict) -> None:
-        route = router.get(key)
-        selected_key["value"] = key
-        # Each route starts with the shell's global shortcuts active; a view
-        # that wants raw keyboard input (the items DataGrid) installs its own
-        # handler during render() below, and this reset keeps it from leaking
-        # onto the next screen.
-        page.on_keyboard_event = _shell_key
-        if route is not None and route.label:
-            set_header(route.label, route.subtitle)
-        refresh_navigation_state()
-        # Cross-fade: hide the outgoing view *before* the target's
-        # show_center() swaps content.content in (it also calls
-        # page.update() itself), so the new view first appears at
-        # opacity 0, then we fade it in with one more update(). This is
-        # Flet's built-in implicit animation (animate_opacity on the
-        # container), so there's no timing to get wrong.
-        content.opacity = 0
-        try:
-            if kwargs:
-                route.render(**kwargs)
-            else:
-                route.render()
-        except Exception as exc:
-            content.opacity = 1
-            try:
-                content.update()
-            except Exception:
-                pass
-            notify(f"تعذر فتح القسم: {exc}")
-            raise  # let the Router undo the stack push it just made
-        content.opacity = 1
-        content.update()
-        notification_center.refresh_badge()
+    route_coordinator = ShellRouteCoordinator(
+        active_key=lambda key: selected_key.__setitem__("value", key),
+        keyboard_handler=lambda: _shell_key,
+        set_header=set_header,
+        refresh_navigation=refresh_navigation_state,
+        notify=notify,
+        refresh_badge=notification_center.refresh_badge,
+    )
 
     def render_sale(_=None) -> None:
         invoice_center.show_editor(None, "sale")
@@ -452,65 +428,31 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             pass
         adapt_navigation()
 
-    _DENY_MESSAGES = {
-        "pos": "لا تملك صلاحية الفواتير",
-        "sale": "لا تملك صلاحية الفواتير",
-        "purchase": "لا تملك صلاحية الفواتير",
-        "stocktake": "لا تملك صلاحية المواد/الجرد",
-    }
-
-    def _on_route_denied(exc: Exception, key: str, kwargs: dict) -> None:
-        # Render failures were already toasted inside render_route; here only
-        # permission denials are user-facing. Unknown keys stay silent, same
-        # as the old navigate() returned early on them.
-        if isinstance(exc, RouteDenied) and "permission" in str(exc):
-            notify(_DENY_MESSAGES.get(key, "لا تملك صلاحية هذا القسم"))
-
     router = Router(
         home="dashboard",
-        render=render_route,
+        render=lambda key, kwargs: route_coordinator.render(router, page, content, key, kwargs),
         can_render=lambda route: session.can(route.permission or route.key),
-        on_denied=_on_route_denied,
+        on_denied=route_coordinator.on_denied,
     )
-    for _key, (_title, _subtitle) in page_meta.items():
-        router.add(
-            Route(
-                key=_key,
-                label=_title,
-                subtitle=_subtitle,
-                icon=icon_map[_key],
-                permission=_key,
-                render=actions[_key],
-            )
-        )
-    router.register("pos", label="نقطة البيع", permission="invoices", render=pos_center.show_center, on_leave=pos_chrome_restore)
-    router.register("sale", label="فاتورة بيع", subtitle="إنشاء فاتورة بيع جديدة — النقدي افتراضيًا", permission="invoices", render=render_sale, replace_current=True)
-    router.register("purchase", label="فاتورة شراء", subtitle="إنشاء فاتورة شراء جديدة — النقدي افتراضيًا", permission="invoices", render=render_purchase, replace_current=True)
-    router.register("stocktake", label="الجرد", subtitle="جرد بالمسح المستمر", permission="items", render=stocktake_center.show_center)
+    register_shell_routes(
+        router,
+        page_meta=page_meta,
+        actions=actions,
+        icon_map=icon_map,
+        pos_render=pos_center.show_center,
+        sale_render=render_sale,
+        purchase_render=render_purchase,
+        stocktake_render=stocktake_center.show_center,
+        pos_on_leave=pos_chrome_restore,
+    )
 
-    _NAV_ALIASES = {
-        "نقطة البيع": "pos",
-        "بيع سريع": "pos",
-        "جرد": "stocktake",
-        "فاتورة بيع": "sale",
-        "فاتورة شراء": "purchase",
-    }
-
-    def navigate(key: str, **kwargs) -> None:
-        # Voice session / notification rows / dashboard quick-actions all
-        # funnel through this one function, so the back-stack stays correct
-        # no matter where navigation was triggered from.
-        if key in ("notifications", "إشعارات", "تنبيهات"):
-            try:
-                notification_center.open_panel()
-            except Exception as exc:
-                notify(str(exc), kind="error")
-            return
-        target = _NAV_ALIASES.get(key, key)
-        # Tab-level sections behave like bottom-navigation: the destination
-        # becomes the new root of the stack. Sale/POS/stocktake editors
-        # opened from elsewhere push, so back returns where you came from.
-        router.go(target, reset=target in actions, **kwargs)
+    shell_navigation = ShellNavigation(
+        router,
+        set(actions),
+        open_notifications=notification_center.open_panel,
+        on_notification_error=lambda exc: notify(str(exc), kind="error"),
+    )
+    navigate = shell_navigation.navigate
 
     # Thin wrappers kept for the existing call-sites (sidebar buttons, the
     # ribbon actions, dashboard quick actions). All of them delegate to the
@@ -727,18 +669,24 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
                         ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
                         ft.Text("التحقق من فاتورة", size=20, weight=ft.FontWeight.BOLD),
                         ft.Text("تأكد من أن الأرقام المطبوعة لم تُعدَّل بعد الطباعة", size=11, color=Colors.TEXT_SECONDARY),
-                        ft.Container(
-                            ft.Row(
-                                [
-                                    ft.Container(ft.Icon(ft.Icons.QR_CODE_SCANNER_OUTLINED, color=Colors.PRIMARY, size=24), width=46, height=46, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=15),
-                                    ft.Column([ft.Text("مسح رمز QR بالكاميرا", size=14, weight=ft.FontWeight.W_600), ft.Text("يفتح الكاميرا ويقرأ رمز الفاتورة", size=11, color=Colors.TEXT_SECONDARY)], spacing=2, expand=True),
-                                    ft.Icon(ft.Icons.CHEVRON_LEFT, size=16, color=Colors.BORDER_STRONG),
-                                ],
-                                spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            padding=ft.padding.symmetric(horizontal=14, vertical=12),
-                            border_radius=14, ink=True,
-                            on_click=lambda _: (page.close(verify_sheet), page.run_task(_verify_invoice_scan)),
+                        *(
+                            [
+                                ft.Container(
+                                    ft.Row(
+                                        [
+                                            ft.Container(ft.Icon(ft.Icons.QR_CODE_SCANNER_OUTLINED, color=Colors.PRIMARY, size=24), width=46, height=46, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=15),
+                                            ft.Column([ft.Text("مسح رمز QR بالكاميرا", size=14, weight=ft.FontWeight.W_600), ft.Text("يفتح الكاميرا ويقرأ رمز الفاتورة", size=11, color=Colors.TEXT_SECONDARY)], spacing=2, expand=True),
+                                            ft.Icon(ft.Icons.CHEVRON_LEFT, size=16, color=Colors.BORDER_STRONG),
+                                        ],
+                                        spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    ),
+                                    padding=ft.padding.symmetric(horizontal=14, vertical=12),
+                                    border_radius=14, ink=True,
+                                    on_click=lambda _: (page.close(verify_sheet), page.run_task(_verify_invoice_scan)),
+                                )
+                            ]
+                            if supports("barcode_camera_scan")
+                            else []
                         ),
                         ft.Container(
                             ft.Row(
@@ -771,27 +719,29 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
 
     # In-app voice «call» session — survives section switches, not a true
     # OS background service. Floating banner + FAB hang over the shell.
-    try:
-        from nano_offline.core.voice_session import VoiceSessionController
-        voice_session = VoiceSessionController(
-            page,
-            ctx,
-            navigate=navigate,
-            notify=lambda t, **kw: toast(page, t, **kw),
-            get_section=lambda: selected_key.get("value") or "dashboard",
-            native_files=native_files,
-            tts_enabled=True,
-        )
-        # Floating draggable bubble (positioned by VoiceSessionController)
-        page.overlay.append(voice_session.banner)
-        # Call control lives in the top bar so it never covers the content.
-        voice_header_slot.content = voice_session.header_btn
-        voice_header_slot.visible = True
-        page.floating_action_button = None
-        ctx._voice_session = voice_session  # type: ignore[attr-defined]
-        page.update()
-    except Exception:
-        voice_session = None
+    voice_session = None
+    if supports("speech_recognition"):
+        try:
+            from nano_offline.core.voice_session import VoiceSessionController
+            voice_session = VoiceSessionController(
+                page,
+                ctx,
+                navigate=navigate,
+                notify=lambda t, **kw: toast(page, t, **kw),
+                get_section=lambda: selected_key.get("value") or "dashboard",
+                native_files=native_files,
+                tts_enabled=True,
+            )
+            # Floating draggable bubble (positioned by VoiceSessionController)
+            page.overlay.append(voice_session.banner)
+            # Call control lives in the top bar so it never covers the content.
+            voice_header_slot.content = voice_session.header_btn
+            voice_header_slot.visible = True
+            page.floating_action_button = None
+            ctx._voice_session = voice_session  # type: ignore[attr-defined]
+            page.update()
+        except Exception:
+            voice_session = None
 
     _pos_fullscreen = {"value": False}
 
@@ -845,55 +795,17 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Nati
             navigate("dashboard")
 
     # ---------------- Ctrl+K command palette + global shortcuts ----------------
-    def open_command_palette(_=None) -> None:
-        """A tiny quick-switcher: filter the allowed sections by name and jump.
-
-        Rebuilt fresh on every open (like the app's other dialogs) so the
-        search field always starts empty and autofocused.
-        """
-        entries = [(k, label_map[k], icon_map[k]) for k in allowed_keys]
-        results = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=320)
-        holder: dict[str, ft.Control] = {}
-        field = SelectAllTextField(
-            label="ابحث عن قسم…",
-            autofocus=True,
-            on_change=lambda e: render_results(holder["field"].value),
-        )
-        holder["field"] = field
-        dialog = ft.AlertDialog(modal=True, title=ft.Text("بحث سريع"))
-
-        def go(key: str) -> None:
-            page.close(dialog)
-            navigate(key)
-
-        def render_results(query: str = "") -> None:
-            q = (query or "").strip().casefold()
-            results.controls = []
-            for key, label, icon in entries:
-                if q and q not in label.casefold() and q not in key.casefold():
-                    continue
-                results.controls.append(
-                    ft.Container(
-                        ft.Row([ft.Icon(icon, size=18, color=Colors.PRIMARY), ft.Text(label, size=13, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY)], spacing=12),
-                        padding=ft.padding.symmetric(horizontal=12, vertical=11),
-                        border_radius=12,
-                        ink=True,
-                        on_click=lambda _, k=key: go(k),
-                    )
-                )
-            if not results.controls:
-                results.controls.append(ft.Text("لا نتائج مطابقة", size=12, color=Colors.TEXT_SECONDARY))
-            try:
-                results.update()
-            except Exception:
-                pass
-
-        render_results("")
-        dialog.content = ft.Container(ft.Column([field, results], spacing=12, tight=True), width=440)
-        page.open(dialog)
+    command_palette = CommandPalette(
+        page,
+        [(key, label_map[key], icon_map[key]) for key in allowed_keys],
+        on_select=navigate,
+    )
+    open_command_palette = command_palette.open
 
     def _shell_key(e: ft.KeyboardEvent) -> None:
         norm = (e.key or "").strip().lower().replace(" ", "")
+        if command_palette.handle_key(norm):
+            return
         if getattr(e, "ctrl", False) and norm == "k":
             open_command_palette()
 
@@ -924,7 +836,7 @@ def main(page: ft.Page):
     #   set_engine(YourEngine(...))
     migrate_legacy_database(LEGACY_APP_DB, APP_DB)
     ctx = AppContext.create(APP_DB)
-    native_files = NativeFiles()
+    native_files = PlatformNativeFiles()
     page.overlay.append(native_files)
 
     # Voice: prefer Android on-device SpeechRecognizer when available.
