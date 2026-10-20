@@ -445,7 +445,6 @@ class ItemsCenter:
                     [
                         ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                         ft.Text(f"تم تحديد {len(rows)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                        ft.Container(expand=True),
                         ft.OutlinedButton("طباعة باركود", icon=ft.Icons.QR_CODE_2, on_click=print_selected_barcodes),
                         ft.FilledButton(
                             "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
@@ -2549,7 +2548,6 @@ class ItemsCenter:
                         [
                             ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                             ft.Text(f"تم تحديد {len(rows)} صف", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                            ft.Container(expand=True),
                             ft.OutlinedButton("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows))),
                             ft.OutlinedButton(
                                 "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
@@ -2887,7 +2885,6 @@ class ItemsCenter:
                                 ft.Container(cat_sel, width=210),
                                 ft.Container(unit_sel, width=190),
                                 ft.OutlinedButton("تطبيق على الكل", icon=ft.Icons.DONE_ALL_ROUNDED, on_click=apply_defaults_to_all),
-                                ft.Container(expand=True),
                             ],
                             spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
@@ -2896,7 +2893,6 @@ class ItemsCenter:
                                 ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                                 ft.OutlinedButton("تكرار الأخير", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(bulk_grid.rows[-1:] if bulk_grid.rows else [])),
                                 ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
-                                ft.Container(expand=True),
                                 bulk_columns_button,
                                 bulk_density_button,
                                 bulk_export_button,

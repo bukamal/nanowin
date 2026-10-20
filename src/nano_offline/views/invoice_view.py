@@ -833,7 +833,6 @@ class InvoiceCenter:
                         [
                             ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                             ft.Text(f"تم تحديد {len(rows)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                            ft.Container(expand=True),
                             ft.FilledButton(
                                 "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
                                 style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
@@ -2304,7 +2303,6 @@ class InvoiceCenter:
                     [
                         ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                         ft.Text(f"تم تحديد {len(rows)} سطر", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                        ft.Container(expand=True),
                         ft.OutlinedButton("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows))),
                         ft.OutlinedButton(
                             "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
@@ -2659,7 +2657,6 @@ class InvoiceCenter:
                             ft.Container(party_dd, width=240),
                             ft.Container(invoice_date, width=180),
                             ft.Container(reference, width=220),
-                            ft.Container(expand=True),
                         ],
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -2675,7 +2672,6 @@ class InvoiceCenter:
                             ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                             ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line),
                             ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
-                            ft.Container(expand=True),
                             columns_button,
                             density_button,
                             export_button,
@@ -2700,7 +2696,7 @@ class InvoiceCenter:
                     ft.Row(
                         [
                             quick_chips,
-                            ft.Container(expand=True),
+                            ft.Container(width=12),
                             ft.Container(paid, width=220),
                             ft.FilledButton("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
                         ],
