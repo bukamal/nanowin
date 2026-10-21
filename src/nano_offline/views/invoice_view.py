@@ -47,6 +47,16 @@ from nano_offline.core.platform_capabilities import supports
 LOW_STOCK_THRESHOLD = 5.0
 
 
+def _default_invoice_unit(units: list[dict]) -> dict | None:
+    """Prefer piece for new invoice lines, then the item's base unit."""
+    if not units:
+        return None
+    piece = next((unit for unit in units if str(unit.get("name") or "").strip() == "قطعة"), None)
+    if piece is not None:
+        return piece
+    return next((unit for unit in units if unit.get("is_base")), units[0])
+
+
 STATUS_AR = {
     "paid": "مدفوعة",
     "partial": "مدفوعة جزئيًا",
@@ -1543,16 +1553,15 @@ class InvoiceCenter:
 
         # ---------------------------------------------------------------- save
         def _default_unit(item_id: int) -> tuple[int | None, float]:
-            # Same default as the page editor's update_line_units: the
-            # item's first unit (its base unit) wins when none is chosen.
             try:
                 units = self.ctx.items.units(item_id)
             except Exception:
                 units = []
-            if not units:
+            unit = _default_invoice_unit(units)
+            if unit is None:
                 return None, 1.0
             try:
-                return int(units[0]["id"]), float(units[0].get("conversion_factor") or 1)
+                return int(unit["id"]), float(unit.get("conversion_factor") or 1)
             except Exception:
                 return None, 1.0
 
@@ -2011,15 +2020,11 @@ class InvoiceCenter:
             item_row = item_map.get(int(item_id))
             if item_row is None:
                 return
-            row = lines_grid.row_at(index) or {}
             units = _units_of(item_id)
-            unit_row = None
-            if row.get("unit"):
-                unit_row = next((u for u in units if int(u["id"]) == int(row["unit"])), None)
-            if unit_row is None:
-                unit_row = units[0] if units else None
+            unit_row = _default_invoice_unit(units)
             if unit_row is not None:
                 lines_grid.set_cell(index, "unit", int(unit_row["id"]), notify=False)
+            row = lines_grid.row_at(index) or {}
             if not row.get("qty"):
                 lines_grid.set_cell(index, "qty", 1, notify=False)
             lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
@@ -2331,7 +2336,7 @@ class InvoiceCenter:
                 if row.get("unit"):
                     unit_row = next((u for u in units if int(u["id"]) == int(row["unit"])), None)
                 if unit_row is None:
-                    unit_row = units[0] if units else None
+                    unit_row = _default_invoice_unit(units)
                 inputs.append(
                     InvoiceLineInput(
                         description="",
@@ -2396,7 +2401,7 @@ class InvoiceCenter:
                 units = _units_of(int(row["item"]))
                 unit_row = next((u for u in units if int(u["id"]) == int(row.get("unit") or 0)), None)
                 if unit_row is None:
-                    unit_row = units[0] if units else None
+                    unit_row = _default_invoice_unit(units)
                 lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
             update_party_insight()
             refresh_summary()
@@ -2843,7 +2848,8 @@ class InvoiceCenter:
             ]
             chosen = selected_unit_id if selected_unit_id in state["units"] else None
             if chosen is None and units:
-                chosen = int(units[0]["id"])
+                default_unit = _default_invoice_unit(units)
+                chosen = int(default_unit["id"]) if default_unit else None
             if chosen is not None:
                 unit_select.value = str(chosen)
                 state["factor"] = float(state["units"][chosen]["conversion_factor"])
