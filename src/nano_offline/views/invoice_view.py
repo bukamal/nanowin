@@ -1297,86 +1297,14 @@ class InvoiceCenter:
                 GridColumn("price", currency.amount_field_label("السعر", settings), editable=True, kind="money", width=150, align="end"),
             ],
             rows=[], page=self.page,
-            on_pick=lambda r, col: open_chooser(r),
-            on_cell_commit=lambda *_: refresh_summary(),
+            picker_options=lambda _col, _row: [
+                (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                for item_row in items
+            ],
+            on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
             formatter=row_formatter,
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
         )
-
-        chooser_search = SelectAllTextField(
-            label="ابحث عن مادة", hint_text="الاسم أو الباركود",
-            prefix_icon=ft.Icons.SEARCH, dense=True,
-        )
-        chooser_results = ft.Column(spacing=4)
-        picking_row = {"index": None}
-
-        def render_chooser(term: str = "") -> None:
-            term = (term or "").strip().lower()
-            cards: list[ft.Control] = []
-            for item_row in items:
-                haystack = f"{item_row.get('name', '')} {item_row.get('barcode', '')}".lower()
-                if term and term not in haystack:
-                    continue
-                cards.append(
-                    ft.Container(
-                        ft.Row(
-                            [
-                                ft.Column(
-                                    [
-                                        ft.Text(item_row["name"], size=13, weight=ft.FontWeight.W_600),
-                                        ft.Text(item_row.get("barcode") or "بلا باركود", size=9, color=Colors.TEXT_SECONDARY),
-                                    ],
-                                    spacing=1, expand=True,
-                                ),
-                                ft.Text(currency.format_plain(default_display_price(item_row)), size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=9, border=ft.border.all(1, Colors.BORDER), border_radius=10,
-                        bgcolor=Colors.WHITE, ink=True,
-                        on_click=lambda _, i=item_row: choose_item(i),
-                    )
-                )
-                if len(cards) >= 40:
-                    break
-            if not cards:
-                cards = [ft.Text("لا توجد نتائج", size=11, color=Colors.TEXT_SECONDARY)]
-            chooser_results.controls = cards
-            _safe_update(chooser_results)
-
-        chooser_search.on_change = lambda e: render_chooser(e.control.value)
-        chooser_panel = ft.Container(
-            ft.Column([chooser_search, ft.Container(chooser_results, height=240)], spacing=8),
-            visible=False,
-        )
-
-        def hide_chooser() -> None:
-            picking_row["index"] = None
-            chooser_panel.visible = False
-            _safe_update(chooser_panel)
-
-        def choose_item(item_row: dict) -> None:
-            index = picking_row["index"]
-            if index is None:
-                return
-            lines_grid.set_cell(index, "item", int(item_row["id"]))
-            if not lines_grid.row_at(index).get("price"):
-                lines_grid.set_cell(index, "price", default_display_price(item_row))
-            hide_chooser()
-            refresh_summary()
-
-        def open_chooser(index: int) -> None:
-            picking_row["index"] = index
-            chooser_search.value = ""
-            render_chooser("")
-            chooser_panel.visible = True
-            # While the chooser's search box has focus it owns the keys.
-            lines_grid.disarm()
-            _safe_update(chooser_panel)
-            try:
-                chooser_search.focus()
-            except Exception:
-                pass
 
         def add_blank(_=None) -> None:
             lines_grid.add_row({"qty": 1})
@@ -1477,6 +1405,15 @@ class InvoiceCenter:
             _safe_update(remaining_text)
             _safe_update(paid_progress)
             _safe_update(quick_chips)
+
+        def commit_sheet_line_cell(index: int, key: str, value) -> None:
+            if key == "item" and value:
+                row = lines_grid.row_at(index) or {}
+                if not row.get("price"):
+                    item_row = item_map.get(int(value))
+                    if item_row is not None:
+                        lines_grid.set_cell(index, "price", default_display_price(item_row), notify=False)
+            refresh_summary()
 
         def quick_pay(ratio: float) -> None:
             paid.value = currency.format_plain(round(rows_total_display() * ratio, 2))
@@ -1736,9 +1673,8 @@ class InvoiceCenter:
                     ],
                     spacing=8, wrap=True,
                 ),
-                chooser_panel,
                 ft.Container(lines_grid, height=300, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
-                ft.Text("افتح خلية المادة لاختيارها • Tab للتنقل بين الخلايا • Enter للتحرير", size=10, color=Colors.TEXT_SECONDARY),
+                ft.Text("انقر مرتين على خلية المادة أو اضغط Enter للبحث والاختيار • Tab للتنقل", size=10, color=Colors.TEXT_SECONDARY),
             ],
             spacing=10, tight=True,
         )
@@ -1913,7 +1849,6 @@ class InvoiceCenter:
 
         hidden_state = {"keys": set(filter(None, settings.get("ui.table_invoice_hidden_columns", "").split(",")))}
         density_state = {"compact": settings.get("ui.table_invoice_density", "comfortable") == "compact"}
-        picker_state = {"row": None, "key": None}
 
         # ------------------------------------------------------------- header
         type_dd = SegmentedToggle(
@@ -2023,7 +1958,7 @@ class InvoiceCenter:
             return None
 
         line_columns = [
-            GridColumn("item", "المادة", editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للاختيار"),
+            GridColumn("item", "المادة", editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للبحث والاختيار داخلها"),
             GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="وحدة البند — تغيّر معامل التحويل والسعر"),
             GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
             GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
@@ -2049,124 +1984,26 @@ class InvoiceCenter:
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=set(hidden_state["keys"]),
             formatter=row_formatter,
-            on_cell_commit=lambda *_: refresh_summary(),
-            on_pick=lambda row_index, col: open_picker(row_index, col),
+            on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
+            picker_options=lambda col, row: (
+                [
+                    (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                    for item_row in items
+                ]
+                if col.key == "item"
+                else [
+                    (int(unit_row["id"]), _unit_label(unit_row))
+                    for unit_row in _units_of(int(row["item"]))
+                ]
+                if row.get("item")
+                else []
+            ),
             on_sort=lambda key, direction: apply_lines_sort(key, direction),
             on_row_menu=lambda row: lines_row_menu(row),
             selectable=True,
             on_selection_change=lambda rows: render_lines_selection(rows),
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
         )
-
-        # ------------------------------------------------------------ chooser
-        chooser_search = SelectAllTextField(
-            label="ابحث في النتائج", hint_text="الاسم أو الباركود",
-            prefix_icon=ft.Icons.SEARCH, dense=True,
-        )
-        chooser_title = ft.Text("اختيار", size=12, weight=ft.FontWeight.BOLD)
-        chooser_results = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO, height=150)
-
-        def chooser_card(primary: str, secondary: str, price_text: str, on_click) -> ft.Container:
-            return ft.Container(
-                ft.Row(
-                    [
-                        ft.Column(
-                            [
-                                ft.Text(primary, size=13, weight=ft.FontWeight.W_600),
-                                ft.Text(secondary, size=9, color=Colors.TEXT_SECONDARY),
-                            ],
-                            spacing=1, expand=True,
-                        ),
-                        ft.Text(price_text, size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                padding=9, border=ft.border.all(1, Colors.BORDER), border_radius=10,
-                bgcolor=Colors.WHITE, ink=True, on_click=on_click,
-            )
-
-        def render_chooser(term: str = "") -> None:
-            term = (term or "").strip().lower()
-            cards: list[ft.Control] = []
-            if picker_state["key"] == "unit":
-                row = lines_grid.row_at(picker_state["row"]) or {}
-                item_row = item_map.get(int(row.get("item") or 0)) if row.get("item") else None
-                for unit_row in (_units_of(int(row["item"])) if item_row else []):
-                    label = _unit_label(unit_row)
-                    if term and term not in label.lower():
-                        continue
-                    cards.append(
-                        chooser_card(
-                            label, "وحدة البند",
-                            currency.format_plain(_unit_price_display(item_row, unit_row)),
-                            lambda _, u=unit_row: choose_unit(u),
-                        )
-                    )
-            else:
-                for item_row in items:
-                    haystack = f"{item_row.get('name', '')} {item_row.get('barcode', '')}".lower()
-                    if term and term not in haystack:
-                        continue
-                    cards.append(
-                        chooser_card(
-                            item_row["name"],
-                            item_row.get("barcode") or "بلا باركود",
-                            currency.format_plain(_unit_price_display(item_row, None)),
-                            lambda _, i=item_row: choose_item(i),
-                        )
-                    )
-                    if len(cards) >= 40:
-                        break
-            if not cards:
-                cards = [ft.Text("لا توجد نتائج", size=11, color=Colors.TEXT_SECONDARY)]
-            chooser_results.controls = cards
-            _safe_update(chooser_results)
-
-        chooser_search.on_change = lambda e: render_chooser(e.control.value)
-        chooser_panel = ft.Container(
-            ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=Colors.PRIMARY),
-                            chooser_title,
-                            ft.Container(expand=True),
-                            ft.IconButton(ft.Icons.CLOSE, icon_size=16, tooltip="إغلاق", on_click=lambda _=None: hide_chooser()),
-                        ],
-                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    chooser_search,
-                    chooser_results,
-                ],
-                spacing=6, tight=True,
-            ),
-            visible=False,
-            padding=10,
-            border=ft.border.all(1, Colors.BORDER),
-            border_radius=Radius.MD,
-            bgcolor=Colors.BACKGROUND_ALT,
-        )
-
-        def hide_chooser() -> None:
-            picker_state["row"] = None
-            chooser_panel.visible = False
-            lines_grid.arm()
-            _safe_update(chooser_panel)
-
-        def open_picker(index: int, col: GridColumn) -> None:
-            picker_state["row"] = index
-            picker_state["key"] = col.key
-            chooser_title.value = "اختيار المادة" if col.key == "item" else "اختيار الوحدة"
-            chooser_search.value = ""
-            render_chooser("")
-            chooser_panel.visible = True
-            # While the chooser's search box has focus it owns the keys.
-            lines_grid.disarm()
-            _safe_update(chooser_panel)
-            try:
-                chooser_search.focus()
-            except Exception:
-                pass
 
         def fill_line_defaults(index: int, item_id: int) -> None:
             """After an item is picked: choose its base unit and stamp the
@@ -2182,31 +2019,24 @@ class InvoiceCenter:
             if unit_row is None:
                 unit_row = units[0] if units else None
             if unit_row is not None:
-                lines_grid.set_cell(index, "unit", int(unit_row["id"]))
+                lines_grid.set_cell(index, "unit", int(unit_row["id"]), notify=False)
             if not row.get("qty"):
-                lines_grid.set_cell(index, "qty", 1)
-            lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
+                lines_grid.set_cell(index, "qty", 1, notify=False)
+            lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
 
-        def choose_item(item_row: dict) -> None:
-            index = picker_state["row"]
-            if index is None:
-                return
-            item_id = int(item_row["id"])
-            lines_grid.set_cell(index, "item", item_id)
-            fill_line_defaults(index, item_id)
-            hide_chooser()
-            refresh_summary()
-
-        def choose_unit(unit_row: dict) -> None:
-            index = picker_state["row"]
-            if index is None:
-                return
-            lines_grid.set_cell(index, "unit", int(unit_row["id"]))
-            row = lines_grid.row_at(index) or {}
-            item_row = item_map.get(int(row.get("item") or 0))
-            if item_row is not None:
-                lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
-            hide_chooser()
+        def commit_line_cell(index: int, key: str, value) -> None:
+            if key == "item" and value:
+                fill_line_defaults(index, int(value))
+            elif key == "unit" and value:
+                row = lines_grid.row_at(index) or {}
+                item_row = item_map.get(int(row.get("item") or 0))
+                if item_row is not None:
+                    unit_row = next(
+                        (unit for unit in _units_of(int(item_row["id"])) if int(unit["id"]) == int(value)),
+                        None,
+                    )
+                    if unit_row is not None:
+                        lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
             refresh_summary()
 
         def add_blank(_=None) -> None:
@@ -2680,7 +2510,6 @@ class InvoiceCenter:
                     ),
                     bulk_bar,
                     ft.Container(lines_grid, height=grid_viewport, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
-                    chooser_panel,
                     ft.Row(
                         [
                             lines_summary_text,
@@ -3410,17 +3239,14 @@ class InvoiceCenter:
             """Table-style quick entry for invoice lines.
 
             Reuses the editable DataGrid (same keys as every other table)
-            with a *picker* column: activating the item cell opens an
-            in-sheet chooser instead of a free-text box, so an item is
-            never guessed by name. Chosen rows are applied through the
+            with an inline searchable picker, so an item is never guessed
+            by name. Chosen rows are applied through the
             exact ``add_line`` path the manual editor uses, so units,
             prices and the stock/price badges stay consistent.
             """
             previous_key_handler = getattr(self.page, "on_keyboard_event", None)
             rate = currency.get_effective_rate(self.ctx.settings)
             price_key = "selling_price" if (type_dd.value or self.invoice_type) == "sale" else "purchase_price"
-            picking_row = {"index": None}
-
             def default_display_price(item_row: dict) -> float:
                 price_usd = float(item_row.get(price_key) or 0)
                 return round(currency.to_display(price_usd, rate), 2)
@@ -3442,8 +3268,11 @@ class InvoiceCenter:
                     GridColumn("price", "السعر", editable=True, kind="money", width=150, align="end"),
                 ],
                 rows=[], page=self.page,
-                on_pick=lambda r, col: open_chooser(r),
-                on_cell_commit=lambda *_: refresh_footer(),
+                picker_options=lambda _col, _row: [
+                    (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                    for item_row in items
+                ],
+                on_cell_commit=lambda index, key, value: commit_bulk_cell(index, key, value),
                 formatter=row_formatter,
                 empty_text="اضغط «سطر جديد» لإضافة بنود",
             )
@@ -3465,86 +3294,17 @@ class InvoiceCenter:
                     "price": currency.format_plain(round(total, 2)),
                 })
 
+            def commit_bulk_cell(index: int, key: str, value) -> None:
+                if key == "item" and value:
+                    row = bulk_grid.row_at(index) or {}
+                    item_row = item_map.get(int(value))
+                    if item_row is not None and not row.get("price"):
+                        bulk_grid.set_cell(index, "price", default_display_price(item_row), notify=False)
+                refresh_footer()
+
             for _ in range(3):
                 bulk_grid.add_row({"qty": 1})
             refresh_footer()
-
-            chooser_search = SelectAllTextField(
-                label="ابحث عن مادة", hint_text="الاسم أو الباركود",
-                prefix_icon=ft.Icons.SEARCH, dense=True,
-            )
-            chooser_results = ft.Column(spacing=4)
-
-            def render_chooser(term: str = "") -> None:
-                term = (term or "").strip().lower()
-                cards: list[ft.Control] = []
-                for item_row in items:
-                    haystack = f"{item_row.get('name', '')} {item_row.get('barcode', '')}".lower()
-                    if term and term not in haystack:
-                        continue
-                    cards.append(
-                        ft.Container(
-                            ft.Row(
-                                [
-                                    ft.Column(
-                                        [
-                                            ft.Text(item_row["name"], size=13, weight=ft.FontWeight.W_600),
-                                            ft.Text(item_row.get("barcode") or "بلا باركود", size=9, color=Colors.TEXT_SECONDARY),
-                                        ],
-                                        spacing=1, expand=True,
-                                    ),
-                                    ft.Text(currency.format_plain(default_display_price(item_row)), size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                                ],
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            padding=9, border=ft.border.all(1, Colors.BORDER), border_radius=10,
-                            bgcolor=Colors.WHITE, ink=True,
-                            on_click=lambda _, i=item_row: choose_item(i),
-                        )
-                    )
-                    if len(cards) >= 40:
-                        break
-                if not cards:
-                    cards = [ft.Text("لا توجد نتائج", size=11, color=Colors.TEXT_SECONDARY)]
-                chooser_results.controls = cards
-                _safe_update(chooser_results)
-
-            chooser_search.on_change = lambda e: render_chooser(e.control.value)
-            chooser_panel = ft.Container(
-                ft.Column(
-                    [chooser_search, ft.Container(chooser_results, height=300)],
-                    spacing=8,
-                ),
-                visible=False,
-            )
-
-            def hide_chooser(_=None) -> None:
-                picking_row["index"] = None
-                chooser_panel.visible = False
-                _safe_update(chooser_panel)
-
-            def choose_item(item_row: dict) -> None:
-                index = picking_row["index"]
-                if index is None:
-                    return
-                bulk_grid.set_cell(index, "item", int(item_row["id"]))
-                if not bulk_grid.row_at(index).get("price"):
-                    bulk_grid.set_cell(index, "price", default_display_price(item_row))
-                refresh_footer()
-                hide_chooser()
-
-            def open_chooser(index: int) -> None:
-                picking_row["index"] = index
-                chooser_search.value = ""
-                render_chooser("")
-                chooser_panel.visible = True
-                # While the chooser's search box has focus it owns the keys.
-                bulk_grid.disarm()
-                _safe_update(chooser_panel)
-                try:
-                    chooser_search.focus()
-                except Exception:
-                    pass
 
             def add_blank(_=None) -> None:
                 bulk_grid.add_row({"qty": 1})
@@ -3607,11 +3367,10 @@ class InvoiceCenter:
                             ],
                             spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        chooser_panel,
                         ft.Row(
                             [
                                 ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
-                                ft.Text("افتح خلية المادة لاختيارها • Tab للتنقل", size=10, color=Colors.TEXT_SECONDARY, expand=True),
+                                ft.Text("انقر مرتين على خلية المادة أو اضغط Enter للبحث والاختيار • Tab للتنقل", size=10, color=Colors.TEXT_SECONDARY, expand=True),
                             ],
                             spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),

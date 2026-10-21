@@ -2410,7 +2410,6 @@ class ItemsCenter:
 
             bulk_hidden_state = {"keys": set(filter(None, ctx.settings.get("ui.bulk_add_hidden_columns", "").split(",")))}
             bulk_density_state = {"compact": ctx.settings.get("ui.bulk_add_density", "comfortable") == "compact"}
-            picker_state = {"row": -1, "key": ""}
 
             type_sel = SearchSelect(
                 label="النوع الافتراضي", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")],
@@ -2481,7 +2480,7 @@ class ItemsCenter:
                 parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
                 row_bg=bulk_row_bg,
                 on_cell_commit=lambda *_: refresh_bulk_footer(),
-                on_pick=lambda row_index, col: open_bulk_picker(row_index, col),
+                picker_options=lambda col, _row: bulk_choices(col.key),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
                 on_row_menu=lambda row: bulk_row_menu(row),
                 selectable=True,
@@ -2661,81 +2660,6 @@ class ItemsCenter:
                     return [("مخزون", "مخزون"), ("خدمة", "خدمة")]
                 return []
 
-            def render_bulk_picker(_=None) -> None:
-                term = (picker_search.value or "").strip()
-                current = ""
-                if 0 <= picker_state["row"] < len(bulk_grid.rows):
-                    row_now = bulk_grid.row_at(picker_state["row"]) or {}
-                    current = str(row_now.get(picker_state["key"]) or "")
-                choices = bulk_choices(picker_state["key"])
-                if term:
-                    choices = [choice for choice in choices if term in str(choice[1])]
-                results: list[ft.Control] = []
-                for value, label in choices[:60]:
-                    chosen = current == str(value if value is not None else "")
-                    results.append(
-                        ft.Container(
-                            ft.Row(
-                                [
-                                    ft.Icon(
-                                        ft.Icons.CHECK_ROUNDED if chosen else ft.Icons.CIRCLE_OUTLINED,
-                                        size=16, color=Colors.PRIMARY if chosen else Colors.TEXT_FAINT,
-                                    ),
-                                    ft.Text(str(label), size=12.5),
-                                ],
-                                spacing=8,
-                            ),
-                            padding=ft.padding.symmetric(horizontal=10, vertical=8),
-                            border_radius=Radius.SM,
-                            bgcolor=Colors.PRIMARY_BG if chosen else None,
-                            on_click=lambda _, v=value: choose_bulk_value(v),
-                            ink=True,
-                        )
-                    )
-                if not results:
-                    results.append(ft.Container(ft.Text("لا نتائج مطابقة", size=12, color=Colors.TEXT_SECONDARY), padding=10))
-                picker_list.controls = results
-                try:
-                    picker_list.update()
-                except Exception:
-                    pass
-
-            def open_bulk_picker(row_index: int, col: GridColumn) -> None:
-                bulk_grid.disarm()
-                picker_state["row"] = row_index
-                picker_state["key"] = col.key
-                picker_title.value = f"اختيار {col.label}"
-                picker_search.value = ""
-                render_bulk_picker()
-                picker_panel.visible = True
-                page.update()
-                try:
-                    picker_search.focus()
-                except Exception:
-                    pass
-
-            def close_bulk_picker(_=None) -> None:
-                picker_panel.visible = False
-                bulk_grid.arm()
-                try:
-                    picker_panel.update()
-                except Exception:
-                    pass
-
-            def choose_bulk_value(value) -> None:
-                row_index = picker_state["row"]
-                key = picker_state["key"]
-                if 0 <= row_index < len(bulk_grid.rows):
-                    bulk_grid.set_cell(row_index, key, "" if value is None else value)
-                picker_panel.visible = False
-                picker_search.value = ""
-                bulk_grid.arm()
-                try:
-                    picker_panel.update()
-                except Exception:
-                    pass
-                refresh_bulk_footer()
-
             def apply_defaults_to_all(_=None) -> None:
                 defaults = row_defaults()
                 for index, row in enumerate(bulk_grid.rows):
@@ -2853,39 +2777,6 @@ class ItemsCenter:
                 tooltip="تصدير الصفوف الجاهزة CSV",
                 on_click=bulk_export_csv,
             )
-            picker_title = ft.Text("اختيار", size=12, weight=ft.FontWeight.BOLD)
-            picker_search = ft.TextField(
-                hint_text="بحث…", dense=True, text_size=12, prefix_icon=ft.Icons.SEARCH,
-                border_radius=Radius.SM,
-                content_padding=ft.padding.symmetric(horizontal=10, vertical=8),
-            )
-            picker_search.on_change = render_bulk_picker
-            picker_search.on_focus = lambda _: bulk_grid.disarm()
-            picker_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=132)
-            picker_panel = ft.Container(
-                ft.Column(
-                    [
-                        ft.Row(
-                            [
-                                ft.Icon(ft.Icons.LIST_ALT_ROUNDED, size=16, color=Colors.PRIMARY),
-                                picker_title,
-                                ft.Container(expand=True),
-                                ft.IconButton(ft.Icons.CLOSE, icon_size=IconSize.INLINE, tooltip="إغلاق", on_click=close_bulk_picker),
-                            ],
-                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        picker_search,
-                        picker_list,
-                    ],
-                    spacing=6, tight=True,
-                ),
-                visible=False,
-                padding=10,
-                border=ft.border.all(1, Colors.BORDER),
-                border_radius=Radius.MD,
-                bgcolor=Colors.BACKGROUND_ALT,
-            )
-
             sheet.content = ft.Container(
                 ft.Column(
                     [
@@ -2927,7 +2818,6 @@ class ItemsCenter:
                         ),
                         bulk_bar,
                         ft.Container(bulk_grid, height=grid_viewport, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
-                        picker_panel,
                         ft.Row(
                             [
                                 ft.Text("الحفظ يتجاهل الصفوف بلا اسم", size=10, color=Colors.TEXT_SECONDARY),

@@ -5,6 +5,10 @@ exposes -- no rendering required.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import flet as ft
+
 from nano_offline.components.data_grid import DataGrid
 from nano_offline.components.grid_model import GridColumn
 from nano_offline.core.theme import Colors
@@ -191,6 +195,58 @@ def test_picker_cell_delegates_to_on_pick_without_opening_an_editor():
     g._handle_key(FakeKey("Enter"))
     assert calls == [(0, "item")]
     assert g._edit_field is None  # picker never materialises a TextField
+
+
+def test_picker_options_edit_inside_active_cell_and_commit_original_value():
+    calls = []
+    g = DataGrid(
+        columns=PICK_COLS,
+        rows=[{"item": None, "qty": 1}],
+        page=None,
+        picker_options=lambda col, _row: [(7, "مادة سبعة"), (9, "مادة تسعة")] if col.key == "item" else [],
+        on_cell_commit=lambda row, key, value: calls.append((row, key, value)),
+    )
+
+    g.arm()
+    g._handle_key(FakeKey("Enter"))
+
+    editor = g._cell_boxes[(0, 0)].content
+    assert isinstance(editor, ft.Dropdown)
+    assert g._picker_control is editor
+
+    editor.value = "1"
+    editor.on_change(SimpleNamespace(control=editor))
+
+    assert g._picker_control is None
+    assert g.row_at(0)["item"] == 9
+    assert calls == [(0, "item", 9)]
+    assert isinstance(g._cell_boxes[(0, 0)].content, ft.Text)
+    assert g._cell_boxes[(0, 0)].content.value == "9"
+
+
+def test_picker_ignores_unmatched_search_text_and_escape_restores_cell():
+    g = DataGrid(
+        columns=PICK_COLS,
+        rows=[{"item": 7, "qty": 1}],
+        page=None,
+        picker_options=lambda col, _row: [(7, "مادة سبعة"), (9, "مادة تسعة")] if col.key == "item" else [],
+    )
+
+    g.arm()
+    g._handle_key(FakeKey("Enter"))
+    editor = g._picker_control
+    editor.value = "بحث غير مطابق"
+    editor.on_change(SimpleNamespace(control=editor))
+
+    assert g._picker_control is editor
+    assert g.row_at(0)["item"] == 7
+
+    g._handle_key(FakeKey("Escape"))
+
+    assert g._picker_control is None
+    assert g.row_at(0)["item"] == 7
+    assert isinstance(g._cell_boxes[(0, 0)].content, ft.Text)
+    assert g._cell_boxes[(0, 0)].content.value == "7"
 
 
 def test_set_cell_writes_and_notifies_then_reverts_on_failure():

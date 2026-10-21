@@ -78,6 +78,8 @@ class DataGrid(ft.Column):
         on_cell_commit: Callable[[int, str, object], None] | None = None,
         on_row_activate: Callable[[dict], None] | None = None,
         on_pick: Callable[[int, GridColumn], None] | None = None,
+        picker_options: Callable[[GridColumn, dict], list[tuple[object, str]]] | None = None,
+        picker_searchable: bool = True,
         formatter: Callable[[GridColumn, object, dict], object] | None = None,
         edit_formatter: Callable[[GridColumn, object, dict], object] | None = None,
         parser: Callable[[GridColumn, str], object] | None = None,
@@ -109,6 +111,8 @@ class DataGrid(ft.Column):
         self._on_cell_commit = on_cell_commit
         self._on_row_activate = on_row_activate
         self._on_pick = on_pick
+        self._picker_options = picker_options
+        self._picker_searchable = picker_searchable
         self._formatter = formatter
         self._edit_formatter = edit_formatter
         self._parser = parser
@@ -150,6 +154,8 @@ class DataGrid(ft.Column):
         self._cell_boxes: dict[tuple[int, int], ft.Container] = {}
         self._row_boxes: list[ft.Container] = []
         self._edit_field: ft.TextField | None = None
+        self._picker_control: ft.Dropdown | None = None
+        self._picker_values: dict[str, object] = {}
         self._prev_cell: tuple[int, int] | None = None
         # Keyboard nav only reacts once the user has actually engaged the
         # grid (clicked a cell); otherwise a page-level handler would also
@@ -202,6 +208,13 @@ class DataGrid(ft.Column):
             self._page.on_keyboard_event = None
 
     def _handle_key(self, e: ft.KeyboardEvent) -> None:
+        if self._picker_control is not None:
+            key = _norm_key(e.key)
+            if key in ("escape", "esc"):
+                self._cancel_picker()
+            elif key == "enter":
+                self._commit_picker(self._picker_control.value)
+            return
         if self._edit_field is not None:
             # While a cell editor is open, Enter/Escape resolve it; every
             # other key is the user typing, so leave it to the TextField.
@@ -806,8 +819,7 @@ class DataGrid(ft.Column):
     def set_cell(self, index: int, key: str, value, *, notify: bool = True) -> None:
         """Write ``value`` into one cell and repaint its row.
 
-        Used by picker cells (see ``on_pick``), where the value comes from a
-        dialog rather than a typed TextField.
+        Used by picker cells and by view callbacks that update dependent cells.
         """
         if not (0 <= index < len(self._rows)):
             return
@@ -886,6 +898,8 @@ class DataGrid(ft.Column):
 
     # ------------------------------------------------------------- selection
     def _on_cell_click(self, r: int, c: int) -> None:
+        if self._picker_control is not None and self.nav.cell != (r, c):
+            self._cancel_picker()
         was_armed = self._armed
         self._armed = True
         if self.nav.cell == (r, c):
@@ -893,7 +907,7 @@ class DataGrid(ft.Column):
             # a second click opens the editor (click-to-select, click-again
             # -to-edit -- so the default-highlighted first cell doesn't pop
             # an editor on the very first click).
-            if was_armed and self._edit_field is None and self.nav.is_editable:
+            if was_armed and self._edit_field is None and self._picker_control is None and self.nav.is_editable:
                 self._begin_edit()
             return
         self.nav.select(r, c)
@@ -934,8 +948,10 @@ class DataGrid(ft.Column):
         if col is None or box is None or not col.editable:
             return
         if col.kind == "picker":
-            # A picker cell has no free-text editor: hand control to the view,
-            # which opens a chooser and writes back via set_cell().
+            if self._picker_options is not None:
+                self._begin_picker(r, col, box)
+                return
+            # Legacy picker cells may still delegate to a view-level selector.
             if self._on_pick is not None:
                 self._on_pick(r, col)
             return
@@ -976,6 +992,74 @@ class DataGrid(ft.Column):
             field.focus()
         except Exception:
             pass
+
+    def _begin_picker(self, row_index: int, col: GridColumn, box: ft.Container) -> None:
+        options = self._picker_options(col, self._rows[row_index]) if self._picker_options else []
+        values: dict[str, object] = {}
+        dropdown_options: list[ft.dropdown.Option] = []
+        selected_key = None
+        for index, (value, label) in enumerate(options):
+            key = str(index)
+            values[key] = value
+            dropdown_options.append(ft.dropdown.Option(key=key, text=str(label)))
+            if value == self._rows[row_index].get(col.key):
+                selected_key = key
+
+        if not dropdown_options:
+            self._on_pick(row_index, col) if self._on_pick is not None else None
+            return
+
+        self.nav.begin_edit()
+        self._picker_values = values
+        dropdown = ft.Dropdown(
+            value=selected_key,
+            options=dropdown_options,
+            editable=self._picker_searchable,
+            enable_filter=self._picker_searchable,
+            enable_search=self._picker_searchable,
+            menu_height=280,
+            dense=True,
+            text_size=12,
+            border_radius=Radius.SM,
+            border=ft.border.all(2, Colors.PRIMARY),
+            bgcolor=Colors.WHITE,
+            content_padding=ft.padding.symmetric(horizontal=6, vertical=2),
+            on_change=lambda e: self._commit_picker(e.control.value),
+        )
+        box.bgcolor = Colors.WHITE
+        box.border = ft.border.all(2, Colors.PRIMARY)
+        box.padding = ft.padding.symmetric(horizontal=2, vertical=2)
+        box.content = dropdown
+        self._picker_control = dropdown
+        self._safe_update(box)
+        try:
+            dropdown.focus()
+        except Exception:
+            pass
+
+    def _commit_picker(self, key: str | None) -> None:
+        if self._picker_control is None or key not in self._picker_values:
+            return
+        row, col_index = self.nav.cell
+        col = self._columns[col_index]
+        value = self._picker_values[key]
+        self._picker_control = None
+        self._picker_values = {}
+        self.nav.editing = False
+        if self._rows[row].get(col.key) == value:
+            self._render_row(row)
+            self._safe_update(self._body)
+        else:
+            self.set_cell(row, col.key, value)
+
+    def _cancel_picker(self) -> None:
+        if self._picker_control is None:
+            return
+        self._picker_control = None
+        self._picker_values = {}
+        self.nav.editing = False
+        self._render_row(self.nav.row)
+        self._safe_update(self._body)
 
     def _commit_edit(self) -> None:
         field = self._edit_field
@@ -1052,6 +1136,7 @@ class DataGrid(ft.Column):
             active = (r, c) == self.nav.cell
             box.bgcolor = Colors.PRIMARY_BG if active else None
             box.border = ft.border.all(2, Colors.PRIMARY) if active else None
+            box.padding = ft.padding.symmetric(horizontal=12)
         row_box.bgcolor = self._row_bg_for(r)
         self._safe_update(row_box)
 
