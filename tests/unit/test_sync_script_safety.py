@@ -4,9 +4,15 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "sync_from_nano.sh"
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="sync script execution requires a POSIX bash and rsync environment",
+)
 
 
 def _run_sync(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:

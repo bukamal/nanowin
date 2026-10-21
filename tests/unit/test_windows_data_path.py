@@ -22,6 +22,7 @@ def test_windows_default_path_migrates_legacy_data_without_removing_source(tmp_p
     (legacy_dir / "backups").mkdir(parents=True)
     (legacy_dir / "backups" / "old.nanobackup").write_bytes(b"backup")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setenv("APPDATA", str(appdata))
     monkeypatch.delenv("FLET_APP_STORAGE_DATA", raising=False)
     monkeypatch.delenv("NANO_DATA_DIR", raising=False)
@@ -43,6 +44,7 @@ def test_windows_migration_never_overwrites_existing_data(tmp_path, monkeypatch)
     _create_db(home / ".nano" / "nano.db", "legacy")
     _create_db(appdata / "Nano" / "nano.db", "current")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setenv("APPDATA", str(appdata))
     monkeypatch.delenv("FLET_APP_STORAGE_DATA", raising=False)
     monkeypatch.delenv("NANO_DATA_DIR", raising=False)
@@ -60,6 +62,7 @@ def test_explicit_data_directory_takes_precedence_on_windows(tmp_path, monkeypat
     custom_dir = tmp_path / "custom-data"
     _create_db(home / ".nano" / "nano.db", "legacy")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setenv("NANO_DATA_DIR", str(custom_dir))
     monkeypatch.setattr(platform_capabilities, "IS_WINDOWS", True)
 
