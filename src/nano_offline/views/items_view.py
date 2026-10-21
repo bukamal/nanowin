@@ -2809,7 +2809,7 @@ class ItemsCenter:
                             [
                                 ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                                 ft.OutlinedButton("تكرار الأخير", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(bulk_grid.rows[-1:] if bulk_grid.rows else [])),
-                                ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
+                                ft.Text("Enter للتحرير • Tab للتنقل • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                                 bulk_columns_button,
                                 bulk_density_button,
                                 bulk_export_button,

@@ -18,11 +18,16 @@ Why the "selection highlight" model instead of making every cell a
 arrow key and swallows keystrokes in ways that are hard to reason about.
 Here only the *one* cell being edited owns a ``TextField`` -- arrows move
 a highlight (no focus needed), and Enter materialises an input just for
-that cell. That keeps the common case (scan/navigate/edit a price) robust.
+that cell. Shift+arrows extend a rectangular selection; Ctrl+C/Ctrl+V use
+tab-separated display values, and Ctrl+Z/Ctrl+Y replay committed edits.
 """
 
 from __future__ import annotations
 
+import csv
+import io
+import logging
+import math
 from typing import Callable
 
 import flet as ft
@@ -40,6 +45,7 @@ def _norm_key(key: str | None) -> str:
 
 _UP, _DOWN, _LEFT, _RIGHT = "arrowup", "arrowdown", "arrowleft", "arrowright"
 _PAGE_UP, _PAGE_DOWN = "pageup", "pagedown"
+_HISTORY_LIMIT = 100
 
 
 def _default_text(col: GridColumn, value) -> str:
@@ -62,7 +68,10 @@ def _default_parser(col: GridColumn, text: str):
         cleaned = (text or "").strip().replace(",", "")
         if not cleaned:
             return 0.0
-        return float(cleaned)  # ValueError propagates -> edit is cancelled
+        value = float(cleaned)
+        if not math.isfinite(value):
+            raise ValueError("أدخل رقمًا محدودًا")
+        return value
     return (text or "").strip()
 
 
@@ -102,6 +111,7 @@ class DataGrid(ft.Column):
         on_row_expand: Callable[[dict], ft.Control | None] | None = None,
         on_search_shortcut: Callable[[], None] | None = None,
         on_new_shortcut: Callable[[], None] | None = None,
+        on_edit_error: Callable[[str], None] | None = None,
     ):
         self._all_columns = list(columns)
         self._hidden_keys: set[str] = set(hidden_keys or set())
@@ -131,6 +141,7 @@ class DataGrid(ft.Column):
         self._on_row_expand = on_row_expand
         self._on_search_shortcut = on_search_shortcut
         self._on_new_shortcut = on_new_shortcut
+        self._on_edit_error = on_edit_error
         self._expanded: set[int] = set()
         self._sort_key: str | None = None
         self._sort_dir: str | None = None
@@ -157,6 +168,10 @@ class DataGrid(ft.Column):
         self._picker_control: ft.Dropdown | None = None
         self._picker_values: dict[str, object] = {}
         self._prev_cell: tuple[int, int] | None = None
+        self._range_anchor: tuple[int, int] | None = None
+        self._painted_selection: set[tuple[int, int]] = set()
+        self._history: list[list[tuple[int, str, object, object]]] = []
+        self._history_cursor = 0
         # Keyboard nav only reacts once the user has actually engaged the
         # grid (clicked a cell); otherwise a page-level handler would also
         # fire while the search box has focus (e.g. Enter there would open a
@@ -244,14 +259,27 @@ class DataGrid(ft.Column):
             # Works even when the grid was only "checked" (not cell-armed).
             self.clear_selection()
             return
+        if key in ("escape", "esc") and self._range_anchor is not None:
+            self._range_anchor = None
+            self._paint_selection()
+            return
         if not self._armed:
             return
 
+        shift = bool(getattr(e, "shift", False))
+        if getattr(e, "ctrl", False) and (key == "y" or (key == "z" and shift)):
+            self._replay_history(redo=True)
+            return
+        if getattr(e, "ctrl", False) and key == "z":
+            self._replay_history(redo=False)
+            return
         if getattr(e, "ctrl", False) and key == "c":
-            self._copy_active()
+            self._copy_selection()
+            return
+        if getattr(e, "ctrl", False) and key == "v":
+            self._paste_from_clipboard()
             return
 
-        shift = bool(getattr(e, "shift", False))
         moved = False
         if key == _UP:
             moved = self.nav.move_up()
@@ -281,6 +309,11 @@ class DataGrid(ft.Column):
         else:
             return
         if moved:
+            if shift and key in (_UP, _DOWN, _LEFT, _RIGHT, _PAGE_UP, _PAGE_DOWN, "home", "end"):
+                if self._range_anchor is None:
+                    self._range_anchor = self._prev_cell or self.nav.cell
+            else:
+                self._range_anchor = None
             self._paint_selection()
 
     def _page_rows(self) -> int:
@@ -440,6 +473,8 @@ class DataGrid(ft.Column):
         self._hidden_keys = valid
         self._columns = [c for c in self._all_columns if c.key not in self._hidden_keys]
         self.nav = GridNavigator(self._columns, len(self._rows))
+        self._range_anchor = None
+        self._painted_selection.clear()
         self._prev_cell = None
         self._refresh_header()
         self._render_body()
@@ -452,11 +487,7 @@ class DataGrid(ft.Column):
     def visible_keys(self) -> list[str]:
         return [c.key for c in self._columns]
 
-    def _copy_active(self) -> None:
-        """Ctrl+C: put the active cell's *displayed* text on the clipboard."""
-        r, c = self.nav.cell
-        if self._page is None or not (0 <= r < len(self._rows)) or not (0 <= c < len(self._columns)):
-            return
+    def _cell_text(self, r: int, c: int) -> str:
         col = self._columns[c]
         row = self._rows[r]
         value = row.get(col.key)
@@ -471,10 +502,195 @@ class DataGrid(ft.Column):
                 text = str(out)
         if not text:
             text = _default_text(col, value)
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
+    def _copy_selection(self) -> None:
+        """Copy the selected rectangle as tab-separated display values."""
+        if self._page is None or not self._rows or not self._columns:
+            return
+        selected = self._selection_cells()
+        row_start = min(row for row, _ in selected)
+        row_end = max(row for row, _ in selected)
+        col_start = min(col for _, col in selected)
+        col_end = max(col for _, col in selected)
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+        for row in range(row_start, row_end + 1):
+            writer.writerow([self._cell_text(row, col) for col in range(col_start, col_end + 1)])
         try:
-            self._page.set_clipboard(text)
-        except Exception:
-            pass
+            self._page.set_clipboard(output.getvalue().rstrip("\n"))
+        except Exception as exc:
+            self._report_edit_error(f"تعذر نسخ الخلايا: {exc}")
+
+    def _paste_from_clipboard(self) -> None:
+        if self._page is None:
+            return
+        try:
+            text = self._page.get_clipboard()
+        except Exception as exc:
+            self._report_edit_error(f"تعذرت قراءة الحافظة: {exc}")
+            return
+        if not text:
+            return
+        try:
+            matrix = list(csv.reader(io.StringIO(text), delimiter="\t"))
+        except csv.Error as exc:
+            self._report_edit_error(f"تنسيق الحافظة غير صالح: {exc}")
+            return
+        if matrix and not any(matrix[-1]) and text.endswith(("\n", "\r")):
+            matrix.pop()
+        self._paste_matrix(matrix)
+
+    def _paste_matrix(self, matrix: list[list[str]]) -> bool:
+        if not matrix or not any(matrix):
+            return False
+        start_row, start_col = self.nav.cell
+        if start_row + len(matrix) > len(self._rows) or start_col + max(map(len, matrix), default=0) > len(self._columns):
+            self._report_edit_error("النطاق المنسوخ يتجاوز حدود الجدول")
+            return False
+
+        changes: list[tuple[int, str, object]] = []
+        parser = self._parser or _default_parser
+        for row_offset, values in enumerate(matrix):
+            row_index = start_row + row_offset
+            staged_row = dict(self._rows[row_index])
+            for col_offset, text in enumerate(values):
+                col_index = start_col + col_offset
+                col = self._columns[col_index]
+                if not col.editable:
+                    continue
+                try:
+                    value = self._parse_pasted_value(col, text, row_index, parser, staged_row)
+                except Exception as exc:
+                    self._report_edit_error(f"قيمة غير صالحة في الصف {row_index + 1}، عمود «{col.label}»: {exc}")
+                    return False
+                staged_row[col.key] = value
+                if self._rows[row_index].get(col.key) != value:
+                    changes.append((row_index, col.key, value))
+        if not changes:
+            return True
+        return self._apply_user_changes(changes, record_history=True)
+
+    def _parse_pasted_value(self, col: GridColumn, text: str, row_index: int, parser, row_values: dict) -> object:
+        if col.kind == "picker":
+            clean = text.strip()
+            if not clean:
+                return None
+            options = self._picker_options(col, row_values) if self._picker_options else []
+            exact = []
+            for value, label in options:
+                if (clean == str(label) or clean == str(value)) and not any(value == match for match in exact):
+                    exact.append(value)
+            if not exact and " · " not in clean:
+                for value, label in options:
+                    if clean == str(label).split(" · ", 1)[0] and not any(value == match for match in exact):
+                        exact.append(value)
+            if len(exact) == 1:
+                return exact[0]
+            if len(exact) > 1:
+                raise ValueError("الاسم متكرر؛ انسخ القيمة المميزة من القائمة")
+            raise ValueError("لا تطابق مادة أو وحدة متاحة")
+        return self._parse_value(col, text, parser)
+
+    @staticmethod
+    def _parse_value(col: GridColumn, text: str, parser) -> object:
+        value = parser(col, text)
+        if col.kind in ("number", "money"):
+            try:
+                finite = math.isfinite(float(value))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("أدخل رقمًا صالحًا") from exc
+            if not finite:
+                raise ValueError("أدخل رقمًا محدودًا")
+        return value
+
+    def _report_edit_error(self, message: str) -> None:
+        if self._on_edit_error is not None:
+            self._on_edit_error(message)
+            return
+        if self._page is not None:
+            try:
+                self._page.open(ft.SnackBar(content=ft.Text(message)))
+                return
+            except Exception:
+                pass
+        logging.getLogger(__name__).warning("%s", message)
+
+    def _row_snapshots(self, row_indices: set[int]) -> dict[int, dict]:
+        return {index: dict(self._rows[index]) for index in row_indices if 0 <= index < len(self._rows)}
+
+    def _apply_user_changes(self, changes: list[tuple[int, str, object]], *, record_history: bool) -> bool:
+        snapshots = self._row_snapshots({row for row, _, _ in changes})
+        try:
+            for row_index, key, value in changes:
+                row = self._rows[row_index]
+                old = row.get(key)
+                if old == value:
+                    continue
+                row[key] = value
+                if self._on_cell_commit is not None:
+                    self._on_cell_commit(row_index, key, value)
+        except Exception as exc:
+            self._restore_rows(snapshots)
+            self._report_edit_error(f"تعذر تطبيق التعديل: {exc}")
+            return False
+
+        if record_history:
+            recorded: list[tuple[int, str, object, object]] = []
+            for row_index, before in snapshots.items():
+                after = self._rows[row_index]
+                keys = list(before)
+                keys.extend(key for key in after if key not in before)
+                recorded.extend(
+                    (row_index, key, before.get(key), after.get(key))
+                    for key in keys
+                    if before.get(key) != after.get(key)
+                )
+            self._record_history(recorded)
+        self._render_body()
+        self._safe_update(self._body)
+        return True
+
+    def _restore_rows(self, snapshots: dict[int, dict]) -> None:
+        changed: list[tuple[int, str, object]] = []
+        for row_index, before in snapshots.items():
+            current = self._rows[row_index]
+            keys = set(current) | set(before)
+            changed.extend((row_index, key, before.get(key)) for key in keys if current.get(key) != before.get(key))
+            self._rows[row_index] = dict(before)
+        if self._on_cell_commit is not None:
+            for row_index, key, value in reversed(changed):
+                try:
+                    self._on_cell_commit(row_index, key, value)
+                except Exception:
+                    logging.getLogger(__name__).exception("Failed to persist grid rollback for %s", key)
+        self._render_body()
+        self._safe_update(self._body)
+
+    def _record_history(self, changes: list[tuple[int, str, object, object]]) -> None:
+        if not changes:
+            return
+        self._history = self._history[: self._history_cursor]
+        self._history.append(changes)
+        if len(self._history) > _HISTORY_LIMIT:
+            self._history.pop(0)
+        self._history_cursor = len(self._history)
+
+    def _replay_history(self, *, redo: bool) -> bool:
+        if redo:
+            if self._history_cursor >= len(self._history):
+                return False
+            entry = self._history[self._history_cursor]
+            changes = [(row, key, new if redo else old) for row, key, old, new in entry]
+        else:
+            if self._history_cursor <= 0:
+                return False
+            entry = self._history[self._history_cursor - 1]
+            changes = [(row, key, old) for row, key, old, _new in entry]
+        if not self._apply_user_changes(changes, record_history=False):
+            return False
+        self._history_cursor += 1 if redo else -1
+        return True
 
     def _display(self, col: GridColumn, value, row: dict) -> ft.Control:
         if self._formatter is not None:
@@ -496,18 +712,16 @@ class DataGrid(ft.Column):
         return ft.Text(str(value), size=12.5, color=Colors.TEXT_PRIMARY, weight=weight)
 
     def _make_cell(self, r: int, c: int, col: GridColumn, row: dict) -> ft.Container:
-        active = (r, c) == self.nav.cell
         box = ft.Container(
             self._display(col, row.get(col.key), row),
             height=self._row_height,
             alignment=self._col_align(col),
             padding=ft.padding.symmetric(horizontal=12),
-            bgcolor=Colors.PRIMARY_BG if active else None,
-            border=ft.border.all(2, Colors.PRIMARY) if active else None,
             border_radius=Radius.SM,
             on_click=lambda _, rr=r, cc=c: self._on_cell_click(rr, cc),
             **self._cell_kwargs(col),
         )
+        self._style_cell_selection(r, c, box)
         self._cell_boxes[(r, c)] = box
         return box
 
@@ -729,6 +943,8 @@ class DataGrid(ft.Column):
         if footer is not None:
             controls.append(footer)
         self._body.controls = controls
+        self._painted_selection = self._selection_cells() if self._cell_boxes else set()
+        self._prev_cell = self.nav.cell if self._cell_boxes else None
         self._sync_select_all()
 
     # ---------------------------------------------------------------- reload
@@ -747,6 +963,10 @@ class DataGrid(ft.Column):
         if incoming == self._rows:
             return
         self._rows = incoming
+        self._history.clear()
+        self._history_cursor = 0
+        self._range_anchor = None
+        self._painted_selection.clear()
         # A new result set (search/filter/sort) invalidates old row indices.
         self._checked.clear()
         self._expanded.clear()
@@ -796,6 +1016,7 @@ class DataGrid(ft.Column):
         editable = self.nav.editable_cols
         self.nav.select(index, editable[0] if editable else 0)
         self._armed = True
+        self._range_anchor = None
         self._prev_cell = None
         self._render_body()
         self._safe_update(self._body)
@@ -806,6 +1027,10 @@ class DataGrid(ft.Column):
         if not (0 <= index < len(self._rows)):
             return
         del self._rows[index]
+        self._history.clear()
+        self._history_cursor = 0
+        self._range_anchor = None
+        self._painted_selection.clear()
         self._checked = {i if i < index else i - 1 for i in self._checked if i != index}
         self.nav.editing = False
         self._render_body()
@@ -900,6 +1125,10 @@ class DataGrid(ft.Column):
     def _on_cell_click(self, r: int, c: int) -> None:
         if self._picker_control is not None and self.nav.cell != (r, c):
             self._cancel_picker()
+        had_range = self._range_anchor is not None
+        self._range_anchor = None
+        if had_range and self.nav.cell == (r, c):
+            self._paint_selection()
         was_armed = self._armed
         self._armed = True
         if self.nav.cell == (r, c):
@@ -927,18 +1156,32 @@ class DataGrid(ft.Column):
         self._safe_update(box)
 
     def _paint_selection(self) -> None:
-        targets = {self.nav.cell}
+        selected = self._selection_cells()
+        targets = self._painted_selection | selected
         if self._prev_cell is not None:
             targets.add(self._prev_cell)
         for (r, c) in targets:
             box = self._cell_boxes.get((r, c))
             if box is None:
                 continue
-            active = (r, c) == self.nav.cell
-            box.bgcolor = Colors.PRIMARY_BG if active else None
-            box.border = ft.border.all(2, Colors.PRIMARY) if active else None
+            self._style_cell_selection(r, c, box)
             self._safe_update(box)
+        self._painted_selection = selected
         self._prev_cell = self.nav.cell
+
+    def _selection_cells(self) -> set[tuple[int, int]]:
+        if self._range_anchor is None:
+            return {self.nav.cell}
+        anchor_row, anchor_col = self._range_anchor
+        row_start, row_end = sorted((anchor_row, self.nav.row))
+        col_start, col_end = sorted((anchor_col, self.nav.col))
+        return {(row, col) for row in range(row_start, row_end + 1) for col in range(col_start, col_end + 1)}
+
+    def _style_cell_selection(self, row: int, col: int, box: ft.Container) -> None:
+        active = (row, col) == self.nav.cell
+        selected = (row, col) in self._selection_cells()
+        box.bgcolor = Colors.PRIMARY_BG if selected else None
+        box.border = ft.border.all(2, Colors.PRIMARY) if active else ft.border.all(1, Colors.PRIMARY_BORDER) if selected else None
 
     # ------------------------------------------------------------------ edit
     def _begin_edit(self) -> None:
@@ -1050,7 +1293,7 @@ class DataGrid(ft.Column):
             self._render_row(row)
             self._safe_update(self._body)
         else:
-            self.set_cell(row, col.key, value)
+            self._apply_user_changes([(row, col.key, value)], record_history=True)
 
     def _cancel_picker(self) -> None:
         if self._picker_control is None:
@@ -1068,7 +1311,7 @@ class DataGrid(ft.Column):
         r, c = self.nav.cell
         col = self._columns[c]
         try:
-            value = (self._parser or _default_parser)(col, field.value or "")
+            value = self._parse_value(col, field.value or "", self._parser or _default_parser)
         except ValueError:
             # Keep the editor open and flag the cell instead of silently
             # throwing the typed value away -- the user can fix it in place
@@ -1081,16 +1324,8 @@ class DataGrid(ft.Column):
         self.nav.editing = False
         old = self._rows[r].get(col.key)
         if value is not None and value != old:
-            self._rows[r][col.key] = value
-            if self._on_cell_commit is not None:
-                try:
-                    self._on_cell_commit(r, col.key, value)
-                except Exception:
-                    # A rejected save must not silently keep the new value.
-                    self._rows[r][col.key] = old
-                    self._render_row(r)
-                    self._safe_update(self._body)
-                    return
+            if not self._apply_user_changes([(r, col.key, value)], record_history=True):
+                return
         self._render_row(r)
         self._safe_update(self._body)
 
@@ -1103,25 +1338,19 @@ class DataGrid(ft.Column):
         self._safe_update(self._body)
 
     def _clear_active(self) -> None:
-        r, c = self.nav.cell
-        col = self._columns[c] if 0 <= c < len(self._columns) else None
-        if col is None or not col.editable:
-            return
-        blank = "" if col.kind == "text" else 0.0
-        old = self._rows[r].get(col.key)
-        if old == blank:
-            return
-        self._rows[r][col.key] = blank
-        if self._on_cell_commit is not None:
-            try:
-                self._on_cell_commit(r, col.key, blank)
-            except Exception:
-                self._rows[r][col.key] = old
-                self._render_row(r)
-                self._safe_update(self._body)
-                return
-        self._render_row(r)
-        self._safe_update(self._body)
+        cells = self._selection_cells()
+        changes = []
+        for r, c in sorted(cells):
+            if not (0 <= c < len(self._columns)):
+                continue
+            col = self._columns[c]
+            if not col.editable:
+                continue
+            blank = None if col.kind == "picker" else "" if col.kind == "text" else 0.0
+            if self._rows[r].get(col.key) != blank:
+                changes.append((r, col.key, blank))
+        if changes:
+            self._apply_user_changes(changes, record_history=True)
 
     def _render_row(self, r: int) -> None:
         if not (0 <= r < len(self._rows)):
@@ -1133,9 +1362,7 @@ class DataGrid(ft.Column):
             if box is None:
                 continue
             box.content = self._display(col, row.get(col.key), row)
-            active = (r, c) == self.nav.cell
-            box.bgcolor = Colors.PRIMARY_BG if active else None
-            box.border = ft.border.all(2, Colors.PRIMARY) if active else None
+            self._style_cell_selection(r, c, box)
             box.padding = ft.padding.symmetric(horizontal=12)
         row_box.bgcolor = self._row_bg_for(r)
         self._safe_update(row_box)

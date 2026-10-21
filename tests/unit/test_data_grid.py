@@ -165,6 +165,131 @@ def test_arm_enables_navigation_without_a_click():
     assert g.nav.cell == (1, 0)
 
 
+def test_shift_arrows_select_a_range_and_copy_it_as_tsv():
+    class Clipboard:
+        value = ""
+
+        def set_clipboard(self, value):
+            self.value = value
+
+    clipboard = Clipboard()
+    g = DataGrid(columns=COLS, rows=ROWS, page=clipboard)
+    g.arm()
+    g._handle_key(FakeKey("Arrow Right", shift=True))
+    g._handle_key(FakeKey("Arrow Down", shift=True))
+
+    assert g._selection_cells() == {(0, 0), (0, 1), (1, 0), (1, 1)}
+    assert g._cell_boxes[(0, 1)].bgcolor == Colors.PRIMARY_BG
+    g._copy_selection()
+    assert clipboard.value == "قلم\tقرطاسية\nورق\tقرطاسية"
+
+
+def test_tsv_paste_is_one_undoable_redoable_operation():
+    calls = []
+    g = make_grid(on_cell_commit=lambda row, key, value: calls.append((row, key, value)))
+
+    assert g._paste_matrix([["مبراة", "غير قابل للتحرير", "2.5"], ["كتاب", "غير قابل للتحرير", "3"]])
+    assert (g.row_at(0)["name"], g.row_at(0)["price"]) == ("مبراة", 2.5)
+    assert (g.row_at(1)["name"], g.row_at(1)["price"]) == ("كتاب", 3.0)
+
+    assert g._replay_history(redo=False)
+    assert (g.row_at(0)["name"], g.row_at(0)["price"]) == ("قلم", 1.5)
+    assert (g.row_at(1)["name"], g.row_at(1)["price"]) == ("ورق", 10.0)
+
+    assert g._replay_history(redo=True)
+    assert (g.row_at(0)["name"], g.row_at(0)["price"]) == ("مبراة", 2.5)
+    assert (g.row_at(1)["name"], g.row_at(1)["price"]) == ("كتاب", 3.0)
+    assert calls
+
+
+def test_clipboard_shortcuts_paste_undo_and_redo():
+    class Clipboard:
+        value = "قلم جديد\t\t4"
+
+        def get_clipboard(self):
+            return self.value
+
+    clipboard = Clipboard()
+    g = DataGrid(columns=COLS, rows=ROWS, page=clipboard)
+    g.arm()
+
+    g._handle_key(FakeKey("v", ctrl=True))
+    assert g.row_at(0)["name"] == "قلم جديد"
+    assert g.row_at(0)["price"] == 4.0
+
+    g._handle_key(FakeKey("z", ctrl=True))
+    assert g.row_at(0)["name"] == "قلم"
+    assert g.row_at(0)["price"] == 1.5
+
+    g._handle_key(FakeKey("z", ctrl=True, shift=True))
+    assert g.row_at(0)["name"] == "قلم جديد"
+    assert g.row_at(0)["price"] == 4.0
+
+
+def test_tsv_paste_validates_whole_range_before_applying():
+    errors = []
+    calls = []
+    g = make_grid(
+        on_cell_commit=lambda row, key, value: calls.append((row, key, value)),
+        on_edit_error=errors.append,
+    )
+
+    assert not g._paste_matrix([["مبراة", "", "2.5"], ["كتاب", "", "ليس رقمًا"]])
+    assert g.row_at(0)["name"] == "قلم"
+    assert g.row_at(0)["price"] == 1.5
+    assert calls == []
+    assert errors and "الصف 2" in errors[0]
+
+
+def test_pasting_picker_values_resolves_labels_using_prior_cells_in_same_row():
+    cols = [
+        GridColumn("item", "المادة", editable=True, kind="picker"),
+        GridColumn("unit", "الوحدة", editable=True, kind="picker"),
+    ]
+
+    def options(col, row):
+        if col.key == "item":
+            return [(1, "عنصر · 123")]
+        if row.get("item") == 1:
+            return [(12, "قطعة × 1")]
+        return []
+
+    g = DataGrid(columns=cols, rows=[{"item": None, "unit": None}], page=None, picker_options=options)
+
+    assert g._paste_matrix([["عنصر", "قطعة × 1"]])
+    assert g.row_at(0) == {"item": 1, "unit": 12}
+
+
+def test_delete_clears_editable_cells_in_selected_range_only():
+    g = make_grid()
+    g.arm()
+    g._handle_key(FakeKey("Arrow Right", shift=True))
+    g._handle_key(FakeKey("Arrow Right", shift=True))
+    g._handle_key(FakeKey("Arrow Down", shift=True))
+
+    g._handle_key(FakeKey("Delete"))
+
+    assert g.row_at(0)["name"] == ""
+    assert g.row_at(0)["category"] == "قرطاسية"
+    assert g.row_at(0)["price"] == 0.0
+    assert g.row_at(1)["name"] == ""
+    assert g.row_at(1)["category"] == "قرطاسية"
+    assert g.row_at(1)["price"] == 0.0
+
+
+def test_undo_restores_dependent_cells_changed_by_commit_callback():
+    def commit(row, key, value):
+        if key == "item" and value:
+            g.set_cell(row, "qty", 2, notify=False)
+
+    g = DataGrid(columns=PICK_COLS, rows=[{"item": None, "qty": 1}], page=None, on_cell_commit=commit)
+    assert g._apply_user_changes([(0, "item", 7)], record_history=True)
+    assert g.row_at(0) == {"item": 7, "qty": 2}
+
+    assert g._replay_history(redo=False)
+    assert g.row_at(0) == {"item": None, "qty": 1}
+
+
 def test_rows_property_returns_a_copy():
     g = make_grid()
     snapshot = g.rows

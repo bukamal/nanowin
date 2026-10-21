@@ -1683,7 +1683,7 @@ class InvoiceCenter:
                     spacing=8, wrap=True,
                 ),
                 ft.Container(lines_grid, height=300, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
-                ft.Text("انقر مرتين على خلية المادة أو اضغط Enter للبحث والاختيار • Tab للتنقل", size=10, color=Colors.TEXT_SECONDARY),
+                ft.Text("Enter للبحث والاختيار • Tab للتنقل • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
             ],
             spacing=10, tight=True,
         )
@@ -2506,7 +2506,7 @@ class InvoiceCenter:
                         [
                             ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                             ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
-                            ft.Text("نقرة ثم Enter للتحرير • Tab للتنقل • Esc للإلغاء", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Text("Enter للتحرير • Tab للتنقل • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
                             density_button,
                             export_button,
@@ -3376,7 +3376,7 @@ class InvoiceCenter:
                         ft.Row(
                             [
                                 ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
-                                ft.Text("انقر مرتين على خلية المادة أو اضغط Enter للبحث والاختيار • Tab للتنقل", size=10, color=Colors.TEXT_SECONDARY, expand=True),
+                                ft.Text("Enter للبحث والاختيار • Tab للتنقل • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY, expand=True),
                             ],
                             spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
