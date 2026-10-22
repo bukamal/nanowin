@@ -2403,8 +2403,8 @@ class ItemsCenter:
             are removed from the grid so a retry never re-creates them.
             """
             cat_options = [(str(c["id"]), c["name"]) for c in categories]
+            default_unit = ensure_default_unit_id()
             unit_options = [(str(u["id"]), u["name"]) for u in units]
-            default_unit = str(units[0]["id"]) if units else None
             cat_map = {str(c["id"]): c["name"] for c in categories}
             unit_map = {str(u["id"]): u["name"] for u in units}
 
@@ -2430,6 +2430,11 @@ class ItemsCenter:
                 GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True, tooltip="الكمية الافتتاحية (للمخزون فقط)"),
                 GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
                 GridColumn("selling_price", "سعر البيع", width=120, align="end", kind="money", editable=True),
+                GridColumn("alternate_unit_id", "الوحدة الفرعية", width=120, editable=True, kind="picker", tooltip="وحدة فرعية اختيارية"),
+                GridColumn("alternate_conversion_factor", "معامل التحويل", width=110, align="end", kind="number", editable=True, tooltip="عدد الوحدات الأساسية في الوحدة الفرعية"),
+                GridColumn("alternate_purchase_price", "شراء الوحدة الفرعية", width=140, align="end", kind="money", editable=True),
+                GridColumn("alternate_selling_price", "بيع الوحدة الفرعية", width=140, align="end", kind="money", editable=True),
+                GridColumn("alternate_barcode", "باركود فرعي", width=150, editable=True, tooltip="باركود اختياري للوحدة الفرعية"),
                 GridColumn("_status", "الحالة", width=110, align="center", sortable=False, tooltip="جاهز للحفظ / ناقص الاسم"),
             ]
 
@@ -2437,6 +2442,8 @@ class ItemsCenter:
                 if col.key == "category_id":
                     return cat_map.get(str(value)) if value else "بلا تصنيف"
                 if col.key == "base_unit_id":
+                    return unit_map.get(str(value)) if value else None
+                if col.key == "alternate_unit_id":
                     return unit_map.get(str(value)) if value else None
                 if col.key == "item_type":
                     return value or "مخزون"
@@ -2524,6 +2531,11 @@ class ItemsCenter:
                     "item_type": type_sel.value or "مخزون",
                     "category_id": default_id(cat_sel) or "",
                     "base_unit_id": default_id(unit_sel) or "",
+                    "alternate_unit_id": "",
+                    "alternate_conversion_factor": 1.0,
+                    "alternate_purchase_price": "",
+                    "alternate_selling_price": "",
+                    "alternate_barcode": "",
                 }
 
             def add_blank(_=None) -> None:
@@ -2594,7 +2606,11 @@ class ItemsCenter:
                 if key:
                     def sort_value(row: dict):
                         value = row.get(key)
-                        if key in ("quantity", "purchase_price", "selling_price"):
+                        if key in (
+                            "quantity", "purchase_price", "selling_price",
+                            "alternate_conversion_factor", "alternate_purchase_price",
+                            "alternate_selling_price",
+                        ):
                             try:
                                 return float(value or 0)
                             except (TypeError, ValueError):
@@ -2634,7 +2650,11 @@ class ItemsCenter:
                     path = Path(tempfile.gettempdir()) / f"nano_bulk_items_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
                     with open(path, "w", encoding="utf-8-sig", newline="") as fh:
                         writer = _csv.writer(fh)
-                        writer.writerow(["الاسم", "الباركود", "التصنيف", "النوع", "الوحدة", "الكمية", "سعر الشراء", "سعر البيع"])
+                        writer.writerow([
+                            "الاسم", "الباركود", "التصنيف", "النوع", "الوحدة", "الكمية",
+                            "سعر الشراء", "سعر البيع", "الوحدة الفرعية", "معامل التحويل",
+                            "شراء الوحدة الفرعية", "بيع الوحدة الفرعية", "باركود فرعي",
+                        ])
                         for row in rows:
                             writer.writerow([
                                 row.get("name") or "",
@@ -2645,6 +2665,11 @@ class ItemsCenter:
                                 row.get("quantity") or 0,
                                 row.get("purchase_price") or 0,
                                 row.get("selling_price") or 0,
+                                unit_map.get(str(row.get("alternate_unit_id") or "")) or "",
+                                row.get("alternate_conversion_factor") or 1,
+                                row.get("alternate_purchase_price") or "",
+                                row.get("alternate_selling_price") or "",
+                                row.get("alternate_barcode") or "",
                             ])
                     await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير مسودة الإدخال")
                     notify("تم تجهيز ملف CSV للصفوف الجاهزة")
@@ -2656,6 +2681,8 @@ class ItemsCenter:
                     return [(None, "بلا تصنيف")] + [(int(c["id"]), c["name"]) for c in categories]
                 if key == "base_unit_id":
                     return [(int(u["id"]), u["name"]) for u in units]
+                if key == "alternate_unit_id":
+                    return [(None, "بلا وحدة فرعية")] + [(int(u["id"]), u["name"]) for u in units]
                 if key == "item_type":
                     return [("مخزون", "مخزون"), ("خدمة", "خدمة")]
                 return []
@@ -2673,12 +2700,22 @@ class ItemsCenter:
                 type_default = type_sel.value or "مخزون"
                 created_indices: list[int] = []
                 errors: list[str] = []
+                warnings: list[str] = []
                 for index, row in enumerate(bulk_grid.rows):
                     name = str(row.get("name") or "").strip()
                     if not name:
                         continue
                     try:
-                        ctx.items.create(
+                        alternate_unit_id = int(row["alternate_unit_id"]) if row.get("alternate_unit_id") else None
+                        alternate_units = []
+                        if alternate_unit_id is not None:
+                            alternate_units.append({
+                                "unit_id": alternate_unit_id,
+                                "conversion_factor": float(row.get("alternate_conversion_factor") or 1),
+                                "purchase_price": row.get("alternate_purchase_price") or None,
+                                "selling_price": row.get("alternate_selling_price") or None,
+                            })
+                        item_id = ctx.items.create(
                             name=name,
                             category_id=int(row["category_id"]) if row.get("category_id") else None,
                             item_type=str(row.get("item_type") or type_default),
@@ -2686,9 +2723,18 @@ class ItemsCenter:
                             selling_price=row.get("selling_price") or 0,
                             quantity=row.get("quantity") or 0,
                             base_unit_id=int(row["base_unit_id"]) if row.get("base_unit_id") else None,
+                            item_units=alternate_units,
                             barcode=str(row.get("barcode") or "").strip() or None,
                         )
                         created_indices.append(index)
+                        alternate_barcode = str(row.get("alternate_barcode") or "").strip()
+                        if alternate_barcode:
+                            try:
+                                ctx.items.add_barcode(
+                                    item_id, alternate_barcode, unit_id=alternate_unit_id,
+                                )
+                            except Exception as exc:
+                                warnings.append(f"{name} — باركود فرعي: {exc}")
                     except Exception as exc:
                         errors.append(f"{name}: {exc}")
                 # Drop the rows that did save; a retry can then only ever
@@ -2702,11 +2748,11 @@ class ItemsCenter:
                 if created_indices:
                     notify(f"تمت إضافة {len(created_indices)} مادة", sound_kind="success")
                 if errors:
-                    # Keep the sheet open so the user can fix the offending
-                    # rows; a bad barcode is the common case.
-                    notify(errors[0] if len(errors) == 1 else f"تعذّر حفظ {len(errors)} مادة: {errors[0]}", kind="error")
+                    notify(errors[0] if len(errors) == 1 else f"تعذّر حفظ بعض البيانات: {errors[0]}", kind="error")
                     page.update()
                     return
+                if warnings:
+                    notify(warnings[0] if len(warnings) == 1 else f"تمت الإضافة مع تعذّر حفظ بعض الباركودات: {warnings[0]}", kind="warning")
                 close()
                 refresh()
 
