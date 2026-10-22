@@ -7,8 +7,9 @@ activation = (ROOT / "src/nano_offline/views/activation_view.py").read_text(enco
 license_service = (ROOT / "src/nano_offline/services/license_service.py").read_text(encoding="utf-8")
 
 assert 'name = "nano-offline"' in pyproject
-assert 'product = "Nano | نانو"' in pyproject
+assert 'product = "Nano"' in pyproject
 assert 'org = "com.nano"' in pyproject
+assert 'page.title = "Nano | نانو"' in main
 assert 'src="icon.png"' in main
 assert 'src="icon.png"' in activation
 assert 'f"Nano-Offline/{version_token}"' in license_service

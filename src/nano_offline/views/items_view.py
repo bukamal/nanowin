@@ -2627,6 +2627,8 @@ class ItemsCenter:
                     bulk_hidden_state["keys"].add(key)
                 ctx.settings.set("ui.bulk_add_hidden_columns", ",".join(sorted(bulk_hidden_state["keys"])))
                 bulk_grid.set_hidden_keys(bulk_hidden_state["keys"])
+                bulk_columns_button.items = bulk_column_menu_items()
+                bulk_columns_button.update()
                 page.update()
 
             def bulk_toggle_density(_=None) -> None:
@@ -2801,17 +2803,20 @@ class ItemsCenter:
                 page.close(sheet)
                 grid.attach()
 
-            bulk_columns_button = ft.PopupMenuButton(
-                icon=ft.Icons.VIEW_COLUMN,
-                tooltip="إظهار/إخفاء الأعمدة",
-                items=[
+            def bulk_column_menu_items() -> list:
+                return [
                     ft.PopupMenuItem(
                         text=col.label,
                         checked=col.key not in bulk_hidden_state["keys"],
                         on_click=lambda _, k=col.key: bulk_toggle_column(k),
                     )
                     for col in bulk_columns
-                ],
+                ]
+
+            bulk_columns_button = ft.PopupMenuButton(
+                icon=ft.Icons.VIEW_COLUMN,
+                tooltip="إظهار/إخفاء الأعمدة",
+                items=bulk_column_menu_items(),
             )
             bulk_density_button = ft.IconButton(
                 icon=ft.Icons.DENSITY_SMALL if bulk_density_state["compact"] else ft.Icons.DENSITY_MEDIUM,

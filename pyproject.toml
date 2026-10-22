@@ -104,7 +104,10 @@ where = ["src"]
 
 [tool.flet]
 org = "com.nano"
-product = "Nano | نانو"
+# Keep the executable product metadata ASCII: the Windows Python bootstrap
+# uses it in PYTHONPATH, where non-ASCII paths can be corrupted by ANSI APIs.
+# The Arabic brand remains in the app's runtime title and installer.
+product = "Nano"
 company = "Nano"
 copyright = "Copyright © 2026"
 # Kept in lock-step with version.py:BUILD_NUMBER by
