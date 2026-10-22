@@ -2617,7 +2617,135 @@ class InvoiceCenter:
             value=currency.to_input_text(existing["initial_paid_amount"] if existing else 0, self.ctx.settings),
             keyboard_type=ft.KeyboardType.NUMBER,
         )
-        lines_column = ft.Column(spacing=8)
+        def _grid_item_name(value) -> str:
+            if not value:
+                return "— اختر مادة —"
+            item_row = item_map.get(int(value))
+            return item_row["name"] if item_row else "—"
+
+        def _grid_unit_name(value, row) -> str | None:
+            if not value or not row.get("item"):
+                return None
+            item_id = int(row.get("item"))
+            unit_row = next((u for u in self.ctx.items.units(item_id) if int(u["id"]) == int(value)), None)
+            if not unit_row:
+                return None
+            return f"{unit_row.get('name')} × {self._qty(unit_row.get('conversion_factor'))}"
+
+        def row_formatter(col, value, row):
+            if col.key == "item":
+                return _grid_item_name(value)
+            if col.key == "unit":
+                return _grid_unit_name(value, row)
+            if col.key == "qty":
+                try:
+                    return self._qty(float(value or 0)) if value not in (None, "") else ""
+                except (TypeError, ValueError):
+                    return ""
+            if col.key == "price":
+                try:
+                    return currency.format_plain(float(value or 0)) if value not in (None, "") else ""
+                except (TypeError, ValueError):
+                    return ""
+            if col.key == "_total":
+                try:
+                    total = float(row.get("qty") or 0) * float(row.get("price") or 0)
+                    return currency.format_plain(round(total, 2)) if total else ""
+                except (TypeError, ValueError):
+                    return ""
+            if col.key == "_status":
+                if not row.get("item"):
+                    return ("بلا مادة", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
+                try:
+                    qty = float(row.get("qty") or 0)
+                    price = float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    qty = 0.0
+                    price = 0.0
+                if qty <= 0:
+                    return ("كمية غير صالحة", Colors.DANGER_DARKER, Colors.DANGER_BG)
+                if price < 0:
+                    return ("سعر غير صالح", Colors.DANGER_DARKER, Colors.DANGER_BG)
+                if price == 0:
+                    return ("بلا سعر", Colors.ORANGE_DARK, Colors.WARNING_BG_ALT)
+                return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
+            return None
+
+        def grid_row_from_state(state: dict) -> dict:
+            item_value = state["item"].value if state["item"].value else None
+            unit_value = state["unit"].value if state["unit"].value else None
+            qty_value = state["qty"].value if state["qty"].value not in (None, "") else 0
+            try:
+                price_value = float(currency.parse_display_input(str(state["price"].value or 0), self.ctx.settings))
+            except Exception:
+                price_value = 0.0
+            return {
+                "item": int(item_value) if item_value else None,
+                "unit": int(unit_value) if unit_value else None,
+                "qty": float(qty_value) if qty_value not in (None, "") else 0.0,
+                "price": price_value,
+                "_total": float(qty_value or 0) * price_value,
+            }
+
+        def sync_lines_grid() -> None:
+            lines_grid.set_rows([grid_row_from_state(state) for state in self.lines])
+
+        def commit_line_cell(index: int, key: str, value) -> None:
+            if index < 0 or index >= len(self.lines):
+                return
+            state = self.lines[index]
+            if key == "item" and value:
+                state["item"].value = str(int(value))
+                item_changed(state)
+            elif key == "unit" and value:
+                state["unit"].value = str(int(value))
+                unit_changed(state)
+            elif key == "qty":
+                state["qty"].value = str(value)
+                recalc()
+                refresh_stock_badge(state)
+            elif key == "price":
+                try:
+                    display = currency.format_plain(float(value))
+                except Exception:
+                    display = str(value or 0)
+                state["price"].value = display
+                recalc()
+                refresh_price_badge(state)
+            sync_lines_grid()
+
+        line_columns = [
+            GridColumn("item", "المادة", editable=True, kind="picker", tooltip="اختر المادة أو الخدمة"),
+            GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="الوحدة المستخدمة في السطر"),
+            GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
+            GridColumn("price", currency.amount_field_label("السعر", self.ctx.settings), width=150, align="end", kind="money", editable=True),
+            GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
+            GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
+        ]
+        lines_grid = DataGrid(
+            columns=line_columns,
+            rows=[],
+            page=self.page,
+            viewport_height=max(240, int(int(self.page.height or 800) * 0.62) - 150),
+            row_height=36,
+            formatter=row_formatter,
+            picker_options=lambda col, row: (
+                [
+                    (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                    for item_row in items
+                ]
+                if col.key == "item"
+                else [
+                    (int(unit_row["id"]), f"{unit_row['name']} × {self._qty(unit_row['conversion_factor'])}")
+                    for unit_row in self.ctx.items.units(int(row["item"]))
+                ]
+                if row.get("item")
+                else []
+            ),
+            on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
+            selectable=True,
+            empty_text="اضغط «إضافة بند» أو «مسح باركود»",
+        )
         total_text = ft.Text("0.00", size=20, weight=ft.FontWeight.BOLD)
         remaining_text = ft.Text("0.00", size=18, weight=ft.FontWeight.BOLD)
         paid_progress = ft.ProgressBar(value=0, color=Colors.SUCCESS, bgcolor=Colors.BACKGROUND_ALT, height=6, border_radius=6)
@@ -2878,8 +3006,10 @@ class InvoiceCenter:
             if len(self.lines) <= 1:
                 self.notify("يجب أن تحتوي الفاتورة على بند واحد على الأقل")
                 return
+            index = self.lines.index(state)
             self.lines.remove(state)
-            lines_column.controls.remove(state["card"])
+            if index < len(lines_grid.rows):
+                lines_grid.remove_row(index)
             recalc()
 
         def refresh_stock_badge(state: dict) -> None:
@@ -3073,7 +3203,7 @@ class InvoiceCenter:
             )
             state["card"] = card
             self.lines.append(state)
-            lines_column.controls.append(card)
+            lines_grid.add_row(grid_row_from_state(state))
             if initial.get("item_id"):
                 update_line_units(state, int(initial["unit_id"]) if initial.get("unit_id") else None)
                 # `price` above was seeded from initial.get("unit_price"), which
@@ -3084,6 +3214,7 @@ class InvoiceCenter:
                     _fill_line_price(state)
             refresh_stock_badge(state)
             refresh_price_badge(state)
+            sync_lines_grid()
             recalc()
 
         def add_or_bump_item(item_id: int) -> str:
@@ -3102,6 +3233,7 @@ class InvoiceCenter:
                     existing_state["qty"].value = "1"
                 existing_state["qty"].update()
                 recalc()
+                sync_lines_grid()
                 return "bumped"
             add_line({"item_id": item_id, "quantity": 1})
             self.page.update()
@@ -3448,7 +3580,7 @@ class InvoiceCenter:
                     ]
                 ),
                 suggestions_column,
-                lines_column,
+                ft.Container(lines_grid, height=max(260, min(460, int(int(self.page.height or 800) * 0.46))), border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
                 paid,
                 notes,
                 ft.Text(
