@@ -1047,6 +1047,11 @@ class InvoiceCenter:
             # --- Sticky header: search + filters stay put while the list
             # below scrolls, so they're never lost mid-scroll on a long
             # invoice list. ---
+            type_label = ft.Text("النوع", size=10, color=Colors.TEXT_SECONDARY)
+            status_label = ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY)
+            type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
+            status_filter_row = ft.Row([status_label, status_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
+            filters_inline = ft.Row([type_filter_row, status_filter_row], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             sticky_header = ft.Container(
                 ft.Column(
                     [
@@ -1054,8 +1059,7 @@ class InvoiceCenter:
                             [ft.Container(search, expand=True), columns_button, export_button, density_button],
                             spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Column([ft.Text("النوع", size=10, color=Colors.TEXT_SECONDARY), type_row], spacing=4),
-                        ft.Column([ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY), status_row], spacing=4),
+                        filters_inline,
                     ],
                     spacing=10,
                 ),
@@ -1065,14 +1069,32 @@ class InvoiceCenter:
                 shadow=Shadow.SM,
             )
 
-            # --- Scrollable middle: KPI cards, overdue alert, invoice list. ---
+            # --- Scrollable middle: KPI cards (collapsible), overdue alert, invoice list. ---
+            kpi_cards = metric_row([
+                kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
+                kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
+                kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+            ], spacing=8)
+            kpi_container = ft.Container(kpi_cards, padding=ft.padding.only(left=16, right=16, top=12), visible=True)
+            kpi_toggle_icon = ft.Icon(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, size=18, color=Colors.TEXT_SECONDARY)
+            kpi_toggle_text = ft.Text("إخفاء الإحصائيات", size=11, color=Colors.TEXT_SECONDARY)
+            kpi_collapsed = {"v": False}
+            def _toggle_kpis(e=None):
+                kpi_collapsed["v"] = not kpi_collapsed["v"]
+                kpi_container.visible = not kpi_collapsed["v"]
+                kpi_toggle_icon.name = ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if kpi_collapsed["v"] else ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
+                kpi_toggle_text.value = "إظهار الإحصائيات" if kpi_collapsed["v"] else "إخفاء الإحصائيات"
+                self.page.update()
+            kpi_toggle = ft.Container(
+                ft.Row([kpi_toggle_icon, kpi_toggle_text], spacing=4, alignment=ft.MainAxisAlignment.CENTER),
+                padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                on_click=_toggle_kpis, ink=True, border_radius=10,
+            )
+            kpi_header = ft.Row([kpi_toggle], alignment=ft.MainAxisAlignment.CENTER)
             scroll_body = ft.Column(
                 [
-                    metric_row([
-                        kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
-                        kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
-                        kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
-                    ], spacing=8),
+                    kpi_container,
+                    kpi_header,
                     ft.Container(
                         ft.Row(
                             [
@@ -1095,10 +1117,11 @@ class InvoiceCenter:
                         padding=ft.padding.symmetric(horizontal=12, vertical=9),
                         bgcolor=Colors.DANGER_BG, border=ft.border.all(1, Colors.DANGER_BORDER), border_radius=12,
                         visible=bool(overdue_invoices),
+                        margin=ft.margin.symmetric(horizontal=16),
                     ),
-                    cards,
+                    ft.Container(cards, padding=ft.padding.symmetric(horizontal=16), expand=True),
                 ],
-                spacing=12,
+                spacing=8,
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
             )
