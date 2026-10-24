@@ -245,23 +245,50 @@ class NativeFiles(Control):
         )
         return raw == "ok"
 
+    async def show_system_notification(
+        self,
+        *,
+        title: str = "",
+        body: str = "",
+    ) -> bool:
+        """Post one real OS-level notification on desktop (Windows/Linux/macOS).
+
+        Used by the app's smart-alert engine while Nano is open (see the
+        system hook wired in main.py) and by the settings-screen test button.
+        On Android/iOS this returns False -- those platforms use
+        flutter_local_notifications instead. Returns False rather than
+        raising when the desktop notifier cannot be initialised (e.g. no
+        Start Menu access on Windows), so callers can report a truthful
+        failure without treating it as a crash.
+        """
+        raw = await self.invoke_method_async(
+            "show_system_notification",
+            {"title": title, "body": body},
+            wait_for_result=True,
+            wait_timeout=_QUICK_TIMEOUT,
+        )
+        if str(raw).startswith("error:"):
+            return False
+        return raw == "ok"
+
     async def send_test_notification(
         self,
         *,
         title: str = "",
         body: str = "",
     ) -> bool:
-        """Fire one real Android notification right now, through the same
-        channel the closed-app background check uses.
+        """Fire one real system notification right now, through the same
+        channel real alerts use (Android notification channel or desktop
+        local_notifier).
 
         Purely a "does the pipe work" check -- unlike schedule_notifications,
         nothing here touches WorkManager or the on-disk database, so it's
-        safe to call directly from a settings-screen button. No-op (returns
-        True) on iOS/desktop/web, same as the rest of this bridge.
+        safe to call directly from a settings-screen button. Returns False
+        on iOS, which has no notification bridge in this extension.
 
         Fires while the app is still open/foregrounded -- it does not prove
         anything about delivery once the app is closed. For that, use
-        :meth:`schedule_test_notification` instead.
+        :meth:`schedule_test_notification` on Android instead.
         """
         raw = await self.invoke_method_async(
             "send_test_notification",
@@ -290,8 +317,10 @@ class NativeFiles(Control):
 
         Only registers the task -- this call returns immediately once
         WorkManager has accepted the schedule; it does not wait for the
-        notification to actually fire. No-op (returns True) on iOS/
-        desktop/web, same as the rest of this bridge.
+        notification to actually fire. Returns False on iOS/desktop/web,
+        where WorkManager (and therefore closed-app delivery) does not
+        exist; the settings screen only offers this option where it can
+        actually work.
         """
         raw = await self.invoke_method_async(
             "schedule_test_notification",

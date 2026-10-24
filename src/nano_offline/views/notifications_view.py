@@ -12,6 +12,7 @@ from nano_offline.core import sound as sound_engine
 from nano_offline.components import SelectAllTextField
 from nano_offline.components.buttons import header_close_button
 from nano_offline.components.form_sheet import new_form_sheet
+from nano_offline.core.platform_capabilities import feature_status
 from nano_offline.core.theme import Colors, IconSize, Radius, SEVERITY_STYLE, Shadow
 
 _RULE_META = [
@@ -415,15 +416,19 @@ class NotificationCenter:
         # stays open, only proves the notification channel itself works);
         # the rest register a one-off delayed test so the admin can close
         # the app and confirm delivery actually happens while it's not
-        # running, which is what closed-app alerts depend on.
-        _TEST_DELAY_OPTIONS = [
-            ("0", "فورًا (والتطبيق مفتوح)"),
-            ("30", "بعد 30 ثانية"),
-            ("60", "بعد دقيقة واحدة"),
-            ("300", "بعد 5 دقائق"),
-        ]
+        # running, which is what closed-app alerts depend on. Closed-app
+        # delivery is Android-only (WorkManager); Windows has no desktop
+        # equivalent, so there the delayed options would be a lie.
+        background_ok = feature_status("background_notifications") == "native"
+        _TEST_DELAY_OPTIONS = [("0", "فورًا (والتطبيق مفتوح)")]
+        if background_ok:
+            _TEST_DELAY_OPTIONS += [
+                ("30", "بعد 30 ثانية"),
+                ("60", "بعد دقيقة واحدة"),
+                ("300", "بعد 5 دقائق"),
+            ]
         test_delay_dropdown = ft.Dropdown(
-            width=190, value="30", dense=True, border_radius=Radius.SM,
+            width=190, value="30" if background_ok else "0", dense=True, border_radius=Radius.SM,
             filled=True, bgcolor=Colors.BACKGROUND_ALT, border_color=Colors.BORDER,
             content_padding=ft.padding.symmetric(horizontal=10, vertical=8),
             options=[ft.dropdown.Option(key=v, text=t) for v, t in _TEST_DELAY_OPTIONS],
@@ -431,10 +436,9 @@ class NotificationCenter:
 
         def send_test_notification(_=None):
             if not self.native_files:
-                # Desktop/dev preview -- there's no Android notification
-                # panel to land in, so say so plainly instead of pretending
-                # it worked.
-                self.notify("الإشعارات الفعلية تعمل على أندرويد فقط")
+                # No bridge at all in this build -- say so plainly instead
+                # of pretending it worked.
+                self.notify("جسر الإشعارات غير متاح في هذه النسخة")
                 return
 
             delay_seconds = int(test_delay_dropdown.value or "0")
@@ -446,7 +450,14 @@ class NotificationCenter:
                             title="إشعار اختبار",
                             body="وصل هذا الإشعار بنجاح -- نظام التنبيهات يعمل.",
                         )
-                        self.notify("تم إرسال إشعار الاختبار -- تحقق من لوحة الإشعارات" if ok else "تعذر إرسال إشعار الاختبار")
+                        if ok:
+                            self.notify(
+                                "تم إرسال إشعار الاختبار -- تحقق من لوحة الإشعارات"
+                                if background_ok else
+                                "تم إرسال إشعار الاختبار -- تحقق من إشعارات النظام"
+                            )
+                        else:
+                            self.notify("تعذر إرسال إشعار الاختبار -- قد تكون إشعارات النظام معطّلة لهذا التطبيق")
                     else:
                         ok = await self.native_files.schedule_test_notification(
                             delay_seconds=delay_seconds,
@@ -463,18 +474,25 @@ class NotificationCenter:
 
             self.page.run_task(_run)
 
+        test_controls = [ft.OutlinedButton("اختبار", icon=ft.Icons.SEND_OUTLINED, on_click=send_test_notification)]
+        if background_ok:
+            test_controls.insert(0, test_delay_dropdown)
         test_notification_card = ft.Container(
             ft.Column(
                 [
                     ft.Row(
                         [
                             ft.Container(ft.Icon(ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED, size=18, color=Colors.PRIMARY), width=36, height=36, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=Radius.MD),
-                            ft.Column([ft.Text("تجربة الإشعارات", size=14, weight=ft.FontWeight.BOLD), ft.Text("اختر مدة، ثم أغلق التطبيق قبل انتهائها للتأكد من وصول الإشعار وأنت خارج التطبيق", size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
+                            ft.Column([ft.Text("تجربة الإشعارات", size=14, weight=ft.FontWeight.BOLD), ft.Text(
+                                "اختر مدة، ثم أغلق التطبيق قبل انتهائها للتأكد من وصول الإشعار وأنت خارج التطبيق"
+                                if background_ok else
+                                "يعرض إشعارًا فوريًا من نظام التشغيل أثناء تشغيل التطبيق (الإشعارات أثناء الإغلاق متاحة على أندرويد فقط)",
+                                size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
                         ],
                         spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row(
-                        [test_delay_dropdown, ft.OutlinedButton("اختبار", icon=ft.Icons.SEND_OUTLINED, on_click=send_test_notification)],
+                        test_controls,
                         spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
@@ -765,7 +783,14 @@ class NotificationCenter:
             rule_card("license", *_RULE_META[3][1:], license_extra),
             rule_card("insights", *_RULE_META[4][1:], insights_extra),
             quiet_card,
-            daily_hour_card,
+        ]
+        if background_ok:
+            # Only the Android WorkManager check anchors its first run to
+            # this hour; the Windows open-app refresh is a fixed 5-minute
+            # loop, so showing the field there would imply an effect it
+            # does not have. The value is still loaded/saved untouched.
+            cards.append(daily_hour_card)
+        cards += [
             ext_header,
             telegram_card,
             email_card,

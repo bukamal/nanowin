@@ -32,7 +32,7 @@ from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core.theme import Colors, Shadow
-from nano_offline.core.platform_capabilities import supports
+from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
 from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
 
@@ -910,6 +910,59 @@ def main(page: ft.Page):
 
     page.run_task(_dispatch_external_alerts)
 
+    # Windows system notifications (app-open only): the rules engine calls
+    # hooks from its own worker thread, so capture the Flet event loop here
+    # and hop back onto it for each alert. Android keeps using WorkManager
+    # (closed-app) + flutter_local_notifications; there is no desktop
+    # equivalent for a closed app, which is why background_notifications is
+    # reported as off:app-open-only in platform_capabilities.
+    desktop_alert_loop_started = {"value": False}
+    desktop_shell_active = {"value": False}
+    desktop_system_dispatch = {"fn": None}
+    if IS_WINDOWS:
+        async def _show_desktop_alert(alert):
+            try:
+                await native_files.show_system_notification(title=alert.title, body=alert.body)
+            except Exception:
+                pass
+
+        async def _register_desktop_notifications():
+            loop = asyncio.get_running_loop()
+
+            def _dispatch(alerts):
+                for alert in alerts:
+                    try:
+                        asyncio.run_coroutine_threadsafe(_show_desktop_alert(alert), loop)
+                    except Exception:
+                        pass
+
+            # Store only; open_shell arms it after a successful login so no
+            # business toast can appear on the splash/activation/login gates.
+            # The flag covers the rare case where the login gate is already
+            # gone by the time this task first runs.
+            desktop_system_dispatch["fn"] = _dispatch
+            if desktop_shell_active["value"]:
+                ctx.notifications.set_system_hook(_dispatch)
+
+        page.run_task(_register_desktop_notifications)
+
+        async def _desktop_alert_loop():
+            # The in-app engine normally runs on navigation. While Nano is
+            # open (possibly minimized) on Windows, refresh it every five
+            # minutes so a condition that appears after login still reaches
+            # the Action Center without the user clicking anything.
+            while True:
+                await asyncio.sleep(300)
+                if not desktop_shell_active["value"]:
+                    continue
+                try:
+                    # Same throttled/daemon-thread path navigation uses, so
+                    # this can never race a navigation-triggered pass on
+                    # the SQLite transaction.
+                    ctx.notifications.sync_in_background(min_interval=0.0)
+                except Exception:
+                    pass
+
     page.title = "Nano | نانو"
     page.rtl = True
     _apply_rtl_to_sheets(page)
@@ -933,6 +986,18 @@ def main(page: ft.Page):
 
     def open_shell():
         current_screen["value"] = "shell"
+        if IS_WINDOWS:
+            # Re-arm desktop toasts after a logout cleared them, and start
+            # the periodic refresh only once the user is past activation/
+            # login -- no business alert should pop up on the splash or
+            # login screen. Theme rebuilds call open_shell again; the flag
+            # keeps them from stacking a second loop.
+            desktop_shell_active["value"] = True
+            if desktop_system_dispatch["fn"] is not None:
+                ctx.notifications.set_system_hook(desktop_system_dispatch["fn"])
+            if not desktop_alert_loop_started["value"]:
+                desktop_alert_loop_started["value"] = True
+                page.run_task(_desktop_alert_loop)
         reset_page()
         try:
             build_shell(page, ctx, on_logout=logout, native_files=native_files, on_theme_changed=open_shell)
@@ -995,11 +1060,17 @@ def main(page: ft.Page):
 
     def show_activation():
         current_screen["value"] = "activation"
+        if IS_WINDOWS:
+            desktop_shell_active["value"] = False
+            ctx.notifications.set_system_hook(None)
         reset_page()
         ActivationGate(page, ctx, on_success=show_auth).show()
 
     def show_auth():
         current_screen["value"] = "auth"
+        if IS_WINDOWS:
+            desktop_shell_active["value"] = False
+            ctx.notifications.set_system_hook(None)
         reset_page()
         LoginGate(page, ctx, on_success=open_shell).show()
 

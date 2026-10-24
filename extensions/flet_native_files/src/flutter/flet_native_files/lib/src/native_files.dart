@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:local_notifier/local_notifier.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -153,6 +154,53 @@ Future<void> _showLocalTestNotification({required String title, required String 
       ),
     ),
   );
+}
+
+// -- Desktop (Windows/Linux/macOS) system notifications --------------------
+//
+// Android's closed-app path above cannot cover the Windows build: there is
+// no WorkManager, and the app only exists while its Python process runs.
+// What *is* possible on desktop is a real OS notification while Nano is
+// open (the in-app rules engine already runs on navigation / the settings
+// test), so that is what local_notifier provides here. Windows only shows
+// toasts for apps that have a Start Menu shortcut, which is why setup()
+// uses ShortcutPolicy.requireCreate instead of the fire-and-forget default.
+bool _desktopNotifierReady = false;
+bool _desktopNotifierUnavailable = false;
+
+Future<bool> _ensureDesktopNotifierInitialized() async {
+  if (_desktopNotifierReady) return true;
+  if (_desktopNotifierUnavailable) return false;
+  if (Platform.isAndroid || Platform.isIOS) return false;
+  try {
+    await localNotifier.setup(
+      appName: 'Nano',
+      shortcutPolicy: ShortcutPolicy.requireCreate,
+    );
+    _desktopNotifierReady = true;
+    return true;
+  } catch (error) {
+    // Missing Start Menu access, a locked-down desktop, or a Linux session
+    // without a notification daemon -- all recoverable by simply not
+    // showing the toast; never let it break the caller.
+    _desktopNotifierUnavailable = true;
+    debugPrint('nano desktop notifications unavailable: $error');
+    return false;
+  }
+}
+
+/// Post one OS-level notification on desktop. Throws when the platform has
+/// no usable notifier, so the Python caller can report a truthful failure
+/// instead of a silent no-op.
+Future<void> _showDesktopNotification({required String title, required String body}) async {
+  if (!await _ensureDesktopNotifierInitialized()) {
+    throw StateError('إشعارات النظام غير متاحة على هذا الجهاز');
+  }
+  final notification = LocalNotification(
+    title: title.isEmpty ? 'إشعار اختبار' : title,
+    body: body.isEmpty ? 'وصل هذا الإشعار بنجاح -- نظام التنبيهات يعمل.' : body,
+  );
+  await notification.show();
 }
 
 /// Entry point for the background isolate WorkManager spins up. Must stay
@@ -722,28 +770,60 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
           }
           return 'ok';
 
+        case 'show_system_notification':
+          // Desktop counterpart to the Android notification path: a real
+          // OS toast (Windows Action Center / libnotify / macOS) for the
+          // app-open alerts. Android/iOS use flutter_local_notifications
+          // instead, so they report unsupported rather than silently doing
+          // nothing.
+          if (Platform.isAndroid || Platform.isIOS) return 'unsupported';
+          try {
+            await _showDesktopNotification(
+              title: args['title'] ?? '',
+              body: args['body'] ?? '',
+            );
+            return 'ok';
+          } catch (error) {
+            debugPrint('nano system notification failed: $error');
+            return 'error:$error';
+          }
+
         case 'send_test_notification':
-          // Fires one real Android notification through the exact same
-          // channel/plugin instance the closed-app background check uses
-          // (kNotifyChannelId / _localNotifications), so "it worked here"
-          // actually means the real alert channel is reachable -- not just
-          // that some other, unrelated notification path works. No-op on
-          // iOS/desktop/web, same as the rest of this bridge.
-          if (!Platform.isAndroid) return 'ok';
-          await _showLocalTestNotification(
-            title: args['title'] ?? '',
-            body: args['body'] ?? '',
-          );
-          return 'ok';
+          // Fires one real system notification right now: on Android through
+          // the exact same channel/plugin instance the closed-app background
+          // check uses (kNotifyChannelId / _localNotifications), on desktop
+          // through local_notifier. So "it worked here" actually means the
+          // real alert path is reachable, not just some unrelated notification
+          // shim. iOS is the only unsupported target.
+          if (Platform.isAndroid) {
+            await _showLocalTestNotification(
+              title: args['title'] ?? '',
+              body: args['body'] ?? '',
+            );
+            return 'ok';
+          }
+          if (Platform.isIOS) return 'unsupported';
+          try {
+            await _showDesktopNotification(
+              title: args['title'] ?? '',
+              body: args['body'] ?? '',
+            );
+            return 'ok';
+          } catch (error) {
+            debugPrint('nano test notification failed: $error');
+            return 'error:$error';
+          }
 
         case 'schedule_test_notification':
           // The "close the app and wait" variant of the test above: same
           // notification, but fired later by a one-off WorkManager task
           // instead of immediately -- so it can actually prove delivery
           // works while the app is fully closed, which send_test_notification
-          // (fired synchronously, app still open) cannot. No-op on
-          // iOS/desktop/web, same as the rest of this bridge.
-          if (!Platform.isAndroid) return 'ok';
+          // (fired synchronously, app still open) cannot. WorkManager only
+          // exists on Android; desktop must report that explicitly (not a
+          // fake 'ok') so the settings screen never promises a delayed
+          // notification that will never arrive.
+          if (!Platform.isAndroid) return 'unsupported';
           final delaySeconds = int.tryParse(args['delay_seconds'] ?? '') ?? 30;
           await Workmanager().cancelByUniqueName(kTestNotifyUniqueName);
           await Workmanager().registerOneOffTask(

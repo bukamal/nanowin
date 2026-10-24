@@ -47,7 +47,14 @@ _FEATURES: dict[str, dict[str, str]] = {
     # intact (see native_files.dart's nativeHtmlToPdfSupported).
     "print_html": {"android": "native", "windows": "fallback:browser-print"},
     "create_pdf": {"android": "native", "windows": "fallback:browser-print"},
+    # App-open smart alerts: Android posts through
+    # flutter_local_notifications; Windows posts real Action Center toasts
+    # through local_notifier (see native_files.dart's desktop helpers).
     "notifications": {"android": "native", "windows": "native"},
+    # Alerts while the app is closed. Android has WorkManager + a background
+    # SQLite check; desktop processes only exist while Nano runs, so Windows
+    # is explicitly open-app-only (the UI hides the delayed test there).
+    "background_notifications": {"android": "native", "windows": "off:app-open-only"},
     "sound_pool": {"android": "native", "windows": "native"},
     # No phone camera on a desktop: pick an image file instead. The wedge
     # (USB keyboard) barcode path needs no code at all and is already the

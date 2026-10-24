@@ -30,6 +30,14 @@ dependencies:
   # channel back to a Python side that isn't running while the app is closed.
   workmanager: ^0.6.0
   flutter_local_notifications: ^18.0.1
+  # Desktop (Windows/Linux/macOS) system notifications for the app-open
+  # alerts path -- Android keeps using flutter_local_notifications above.
+  # local_notifier posts real OS toasts (Windows Action Center) through a
+  # native plugin, so no Python-side dependency or platform channel of our
+  # own is needed. On Windows it creates the Start Menu shortcut Windows
+  # requires before an app is allowed to raise toasts (see
+  # _ensureDesktopNotifierInitialized in native_files.dart).
+  local_notifier: ^0.1.6
   sqlite3: ^2.4.6
   sqlite3_flutter_libs: ^0.5.24
   # App-wide sound-cue system (core/sound.py): replaces the earlier

@@ -116,6 +116,11 @@ class NotificationService:
         # Kept as a plain callback (not an import) so the rules engine never
         # depends on the external layer -- no service import cycle.
         self._external_hook: Callable[[list[Alert]], None] | None = None
+        # Desktop OS-notification hook (Windows/Linux/macOS), wired by
+        # main.py after the Flet page + native bridge exist. Same shape as
+        # _external_hook: plain callback, called for newly-created alerts
+        # only, and never imported from the UI layer.
+        self._system_hook: Callable[[list[Alert]], None] | None = None
         # Navigation-performance: the rules engine (sync -> generate_alerts)
         # costs ~180ms on a mid-size shop (measured). It used to run on the
         # UI thread on EVERY navigation through unread_summary(); the badge
@@ -440,11 +445,52 @@ class NotificationService:
             # hours + its own delivery log, so the same alert is never sent
             # twice by any path (bell, Telegram, email, webhook, startup).
             self._external_hook(fresh)
+        if fresh and self._system_hook is not None and not self._in_quiet_hours(self.get_config()):
+            # Desktop system notifications (Windows/Linux/macOS). Quiet
+            # hours are enforced here too, not just in the external layer:
+            # an OS toast is just as intrusive as a Telegram message, and
+            # the desktop hook has no delivery log of its own. A failing
+            # hook (e.g. no Start Menu access on Windows) must never break
+            # alert recording, so it is swallowed after one attempt.
+            try:
+                self._system_hook(fresh)
+            except Exception:
+                pass
 
     def set_external_hook(self, hook: Callable[[list[Alert]], None] | None) -> None:
         """Register/unregister the external dispatch callback (set by
         AppContext.create after both services exist)."""
         self._external_hook = hook
+
+    def set_system_hook(self, hook: Callable[[list[Alert]], None] | None) -> None:
+        """Register/unregister the desktop OS-notification callback.
+
+        Wired by main.py on Windows only (see _register_desktop_notifications)
+        because that is the one desktop build where the Flet bridge ships.
+        The callback runs on the rules engine's worker thread, so it must
+        hand alerts back to the Flet event loop itself.
+        """
+        self._system_hook = hook
+
+    @staticmethod
+    def _in_quiet_hours(cfg: dict, now: datetime | None = None) -> bool:
+        """Same overnight-window semantics as ExternalNotificationService.
+
+        Kept as a tiny local copy rather than importing that service, so the
+        rules engine stays independent of the external-delivery layer.
+        """
+        quiet = cfg.get("quiet_hours") or {}
+        if quiet.get("enabled") is not True:
+            return False
+        try:
+            start = int(quiet.get("start_hour", 22)) % 24
+            end = int(quiet.get("end_hour", 8)) % 24
+        except (TypeError, ValueError):
+            return False
+        if start == end:
+            return False
+        hour = (now or datetime.now()).hour
+        return (start < end and start <= hour < end) or (start > end and (hour >= start or hour < end))
 
     def sync_in_background(self, min_interval: float = 90.0) -> None:
         """Run the rules engine off the UI thread, throttled.
