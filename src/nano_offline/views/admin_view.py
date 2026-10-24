@@ -976,13 +976,13 @@ class AdminCenter:
             value=str(invoice_settings.number_padding(iset)),
         )
         invoice_due_days_field = SelectAllTextField(
-            label="مهلة الاستحقاق الافتراضية (أيام)",
+            label="أيام الاستحقاق الظاهرة في طباعة الفاتورة",
             value=str(invoice_settings.default_due_days(iset)),
-            hint_text="0 = بلا تاريخ استحقاق مطبوع (فواتير نقدية)",
+            hint_text="يُحسب تاريخ الطباعة من تاريخ الفاتورة؛ 0 = عدم إظهاره",
             keyboard_type=ft.KeyboardType.NUMBER,
         )
         invoice_overdue_days_field = SelectAllTextField(
-            label="عدد الأيام لاعتبار الفاتورة متأخرة السداد",
+            label="عدد الأيام من تاريخ الفاتورة لاعتبارها متأخرة",
             value=str(invoice_settings.overdue_days(iset)),
             keyboard_type=ft.KeyboardType.NUMBER,
         )

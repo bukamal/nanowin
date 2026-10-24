@@ -59,6 +59,29 @@ def test_unarmed_grid_ignores_navigation():
     assert g.nav.cell == (0, 0)  # never armed
 
 
+def test_disarmed_grid_does_not_steal_search_or_new_shortcuts():
+    calls = []
+    g = SimpleNamespace(
+        _picker_control=None,
+        _edit_field=None,
+        _shortcuts_enabled=False,
+        _on_search_shortcut=lambda: calls.append("search"),
+        _on_new_shortcut=lambda: calls.append("new"),
+        _checked=set(),
+        _range_anchor=None,
+        _armed=False,
+    )
+
+    DataGrid._handle_key(g, FakeKey("/"))
+    DataGrid._handle_key(g, FakeKey("n", ctrl=True))
+    assert calls == []
+
+    g._shortcuts_enabled = True
+    DataGrid._handle_key(g, FakeKey("/"))
+    DataGrid._handle_key(g, FakeKey("n", ctrl=True))
+    assert calls == ["search", "new"]
+
+
 def test_arming_via_click_enables_keyboard_navigation():
     g = make_grid()
     g._on_cell_click(1, 1)  # arm + select

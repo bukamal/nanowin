@@ -177,6 +177,7 @@ class DataGrid(ft.Column):
         # fire while the search box has focus (e.g. Enter there would open a
         # cell editor). The view calls disarm() when its own fields focus.
         self._armed = False
+        self._shortcuts_enabled = True
         self._body = ft.Column(spacing=0)
 
         # Header stays pinned; only the body scrolls. Both live inside one
@@ -246,13 +247,12 @@ class DataGrid(ft.Column):
             if callable(opener):
                 opener()
             return
-        # View-level shortcuts stay live whether or not the grid is armed:
-        # "/" jumps to the screen's search box, Ctrl+N starts the screen's
-        # "new" action.
-        if key == "/" and self._on_search_shortcut is not None:
+        # View-level shortcuts stay live until a view control takes focus:
+        # "/" jumps to search, Ctrl+N starts the screen's "new" action.
+        if self._shortcuts_enabled and key == "/" and self._on_search_shortcut is not None:
             self._on_search_shortcut()
             return
-        if getattr(e, "ctrl", False) and key == "n" and self._on_new_shortcut is not None:
+        if self._shortcuts_enabled and getattr(e, "ctrl", False) and key == "n" and self._on_new_shortcut is not None:
             self._on_new_shortcut()
             return
         if key in ("escape", "esc") and self._checked:
@@ -1040,6 +1040,7 @@ class DataGrid(ft.Column):
     def arm(self) -> None:
         """Enable keyboard navigation without requiring an initial click."""
         self._armed = True
+        self._shortcuts_enabled = True
 
     def set_cell(self, index: int, key: str, value, *, notify: bool = True) -> None:
         """Write ``value`` into one cell and repaint its row.
@@ -1131,6 +1132,7 @@ class DataGrid(ft.Column):
             self._paint_selection()
         was_armed = self._armed
         self._armed = True
+        self._shortcuts_enabled = True
         if self.nav.cell == (r, c):
             # First click on an already-active cell only arms the grid;
             # a second click opens the editor (click-to-select, click-again
@@ -1146,6 +1148,7 @@ class DataGrid(ft.Column):
         """Stop handling navigation keys (e.g. while a view's search box has
         focus) until the user clicks a cell again."""
         self._armed = False
+        self._shortcuts_enabled = False
 
     def _on_row_hover(self, e: ft.ControlEvent, r: int) -> None:
         # Do not fight the active row's own highlight.

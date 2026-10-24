@@ -12,6 +12,7 @@ from nano_offline.core.toast import toast
 from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
@@ -130,13 +131,38 @@ class FinanceCenter:
             wrap=True, spacing=8, run_spacing=8,
         )
 
+    def _summary_toggle(self, summary: ft.Control) -> ft.OutlinedButton:
+        visible = {"value": self.ctx.settings.get("ui.finance_summary_visible", "true").strip().lower() in ("1", "true", "yes", "on")}
+        summary.visible = visible["value"]
+
+        def toggle(_=None):
+            visible["value"] = not visible["value"]
+            summary.visible = visible["value"]
+            self.ctx.settings.set("ui.finance_summary_visible", str(visible["value"]).lower())
+            button.text = "إخفاء الملخص" if visible["value"] else "إظهار الملخص"
+            button.icon = ft.Icons.VISIBILITY_OFF_OUTLINED if visible["value"] else ft.Icons.INSIGHTS_OUTLINED
+            self.page.update()
+
+        button = ft.OutlinedButton(
+            "إخفاء الملخص" if visible["value"] else "إظهار الملخص",
+            icon=ft.Icons.VISIBILITY_OFF_OUTLINED if visible["value"] else ft.Icons.INSIGHTS_OUTLINED,
+            on_click=toggle,
+        )
+        return button
+
     def show_center(self) -> None:
         self.show_vouchers()
 
     def show_vouchers(self) -> None:
         self._set_header("السندات", "سندات القبض والدفع والمصروفات وربطها بالفواتير")
-        search = SelectAllTextField(label="بحث في السندات", hint_text="رقم السند، الحساب أو المرجع", prefix_icon=ft.Icons.SEARCH)
+        search = SelectAllTextField(
+            label="بحث في السندات",
+            hint_text="رقم السند، الحساب أو المرجع",
+            prefix_icon=ft.Icons.SEARCH,
+            on_focus=lambda e: grid.disarm(),
+        )
         summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
+        summary_toggle = self._summary_toggle(summary)
         filter_state = {"type": "all"}
         # Same client-visible paging as parties/items/invoices (see
         # parties_view.py): vouchers only accumulate over the life of the
@@ -393,6 +419,7 @@ class FinanceCenter:
             activate_tooltip="فتح السند",
             empty_text="لا توجد سندات",
         )
+        type_filter.on_focus = lambda e: grid.disarm()
         grid_more = ft.Container(visible=False)
         desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
         list_switch = ft.Container(content=desktop_list)
@@ -487,6 +514,7 @@ class FinanceCenter:
                         [ft.Container(search, expand=True), type_filter, columns_button, export_button, density_button],
                         spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
+                    ft.Row([summary_toggle], alignment=ft.MainAxisAlignment.END),
                 ],
                 spacing=10,
             ),
@@ -590,10 +618,20 @@ class FinanceCenter:
         async def print_voucher(_=None):
             if self.native_files is None:
                 self.notify("الطباعة الأصلية غير مهيأة في هذا البناء"); return
-            try:
-                await self.native_files.print_html(self._voucher_html(voucher), name=f"nano-voucher-{voucher_id}")
-            except Exception as exc:
-                self.notify(str(exc), kind="error")
+
+            async def print_selected(layout: str, width: int) -> None:
+                try:
+                    html = apply_print_profile(self._voucher_html(voucher), layout, width)
+                    await self.native_files.print_html(
+                        html,
+                        name=f"nano-voucher-{voucher_id}",
+                        paper_layout=layout,
+                        roll_width_mm=width,
+                    )
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
 
         # Same explicit-height approach as the other converted detail
         # sheets: outer Container height computed from the real screen
@@ -628,7 +666,7 @@ class FinanceCenter:
                             [
                                 ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _: (close(), self.confirm_delete_voucher(voucher_id))),
                                 ft.TextButton("تكرار", icon=ft.Icons.CONTENT_COPY, on_click=duplicate),
-                                ft.OutlinedButton("طباعة 80mm", icon=ft.Icons.PRINT_OUTLINED, on_click=print_voucher),
+                                ft.OutlinedButton("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=print_voucher),
                                 ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit),
                                 ft.FilledButton("إغلاق", on_click=close),
                             ],
@@ -844,8 +882,14 @@ class FinanceCenter:
 
     def show_expenses(self) -> None:
         self._set_header("المصروفات", "تسجيل ومتابعة مصروفات النشاط")
-        search = SelectAllTextField(label="بحث في المصروفات", hint_text="البيان، التصنيف أو المرجع", prefix_icon=ft.Icons.SEARCH)
+        search = SelectAllTextField(
+            label="بحث في المصروفات",
+            hint_text="البيان، التصنيف أو المرجع",
+            prefix_icon=ft.Icons.SEARCH,
+            on_focus=lambda e: grid.disarm(),
+        )
         summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
+        summary_toggle = self._summary_toggle(summary)
         filter_state = {"month_only": False}
         # Same client-visible paging as parties/items/invoices/vouchers —
         # see parties_view.py.
@@ -1150,6 +1194,7 @@ class FinanceCenter:
                         [ft.Container(search, expand=True), columns_button, export_button, density_button],
                         spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
+                    ft.Row([summary_toggle], alignment=ft.MainAxisAlignment.END),
                 ],
                 spacing=10,
             ),
@@ -1360,16 +1405,25 @@ class FinanceCenter:
             if self.native_files is None:
                 self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
                 return
-            try:
-                html = self.ctx.documents.statement_html(
-                    party_type,
-                    int(party_dd.value),
-                    date_from=(date_from.value or "").strip() or None,
-                    date_to=(date_to.value or "").strip() or None,
-                )
-                await self.native_files.print_html(html, name=f"nano-statement-{party_type}-{party_dd.value}")
-            except Exception as exc:
-                self.notify(str(exc), kind="error")
+            async def print_selected(layout: str, width: int) -> None:
+                try:
+                    html = self.ctx.documents.statement_html(
+                        party_type,
+                        int(party_dd.value),
+                        date_from=(date_from.value or "").strip() or None,
+                        date_to=(date_to.value or "").strip() or None,
+                    )
+                    html = apply_print_profile(html, layout, width)
+                    await self.native_files.print_html(
+                        html,
+                        name=f"nano-statement-{party_type}-{party_dd.value}",
+                        paper_layout=layout,
+                        roll_width_mm=width,
+                    )
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
 
         async def share_statement_pdf(_):
             if not party_dd.value:
@@ -1378,18 +1432,27 @@ class FinanceCenter:
             if self.native_files is None:
                 self.notify("تصدير PDF غير مهيأ في هذا البناء")
                 return
-            try:
-                html = self.ctx.documents.statement_html(
-                    party_type,
-                    int(party_dd.value),
-                    date_from=(date_from.value or "").strip() or None,
-                    date_to=(date_to.value or "").strip() or None,
-                )
-                await self.native_files.share_pdf(
-                    html, filename=f"nano_statement_{party_type}_{party_dd.value}.pdf"
-                )
-            except Exception as exc:
-                self.notify(str(exc), kind="error")
+            async def share_selected(layout: str, width: int) -> None:
+                try:
+                    html = self.ctx.documents.statement_html(
+                        party_type,
+                        int(party_dd.value),
+                        date_from=(date_from.value or "").strip() or None,
+                        date_to=(date_to.value or "").strip() or None,
+                    )
+                    html = apply_print_profile(html, layout, width)
+                    await self.native_files.share_pdf(
+                        html,
+                        filename=f"nano_statement_{party_type}_{party_dd.value}.pdf",
+                        paper_layout=layout,
+                        roll_width_mm=width,
+                    )
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            open_print_profile_dialog(
+                self.page, self.ctx.settings, share_selected, title="تنسيق كشف PDF"
+            )
 
         export_actions.controls = [
             ft.OutlinedButton("طباعة الكشف", icon=ft.Icons.PRINT_OUTLINED, on_click=print_statement),

@@ -14,6 +14,7 @@ from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption
 from nano_offline.components.buttons import header_close_button, inline_icon_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.money_text import money_row
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, IconSize, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import barcode_quality
@@ -530,7 +531,7 @@ class ItemsCenter:
         def print_selected_barcodes(_=None) -> None:
             entries = [(row, 1) for row in selected_state["rows"]]
             if entries:
-                open_barcode_print_dialog(entries)
+                open_barcode_with_profile(entries)
 
         def toggle_density(_=None) -> None:
             compact = not density_state["compact"]
@@ -561,7 +562,7 @@ class ItemsCenter:
             on_selection_change=render_bulk_bar,
             on_row_menu=lambda row: [
                 ("تعديل", ft.Icons.EDIT_OUTLINED, lambda r=row: open_item_editor(r)),
-                ("طباعة باركود", ft.Icons.QR_CODE_2, lambda r=row: open_barcode_print_dialog([(r, 1)])),
+                ("طباعة باركود", ft.Icons.QR_CODE_2, lambda r=row: open_barcode_with_profile([(r, 1)])),
                 None,
                 ("حذف", ft.Icons.DELETE_OUTLINE, lambda r=row: confirm_delete_item(r)),
             ],
@@ -622,6 +623,7 @@ class ItemsCenter:
             border_color=Colors.BORDER,
             width=190,
         )
+        sort_dd.on_focus = lambda e: grid.disarm()
 
         def sort_changed(_=None):
             sort_state["key"] = sort_dd.value or "name"
@@ -1494,7 +1496,12 @@ class ItemsCenter:
                     notify("الطباعة الأصلية غير مهيأة في هذا البناء")
                     return
                 try:
-                    await self.native_files.print_html(build_html(), name="nano-barcode-labels")
+                    await self.native_files.print_html(
+                        build_html(),
+                        name="nano-barcode-labels",
+                        paper_layout=layout,
+                        roll_width_mm=roll_width_mm,
+                    )
                 except Exception as exc:
                     notify(str(exc), kind="error")
 
@@ -1504,7 +1511,12 @@ class ItemsCenter:
                     notify("تصدير PDF غير مهيأ في هذا البناء")
                     return
                 try:
-                    await self.native_files.share_pdf(build_html(), filename="nano_barcode_labels.pdf")
+                    await self.native_files.share_pdf(
+                        build_html(),
+                        filename="nano_barcode_labels.pdf",
+                        paper_layout=layout,
+                        roll_width_mm=roll_width_mm,
+                    )
                 except Exception as exc:
                     notify(str(exc), kind="error")
 
@@ -1525,6 +1537,20 @@ class ItemsCenter:
                 ft.FilledButton("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=do_print),
             ]
             page.open(dialog)
+
+        def open_barcode_with_profile(entries: list[tuple[dict, int]]) -> None:
+            async def open_labels(layout: str, width: int) -> None:
+                await asyncio.sleep(0.1)
+                open_barcode_print_dialog(entries, layout=layout, roll_width_mm=width)
+
+            open_print_profile_dialog(
+                page,
+                ctx.settings,
+                open_labels,
+                title="نوع ورق ملصقات الباركود",
+                initial_layout=barcode_settings.label_layout(ctx.settings),
+                initial_roll_width=barcode_settings.label_roll_width(ctx.settings),
+            )
 
         def open_item_card_sheet(item: dict) -> None:
             """Issue a signed QR 'item card' for one item -- a two-page
@@ -1564,34 +1590,54 @@ class ItemsCenter:
                 cb.on_change = on_option_change
 
             async def do_print(_=None):
-                try:
-                    html = ctx.documents.item_card_html(
-                        payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
-                        purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
-                        selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
-                        unit=base_unit_name if include_unit.value else None,
-                        category=item.get("category_name") if include_category.value else None,
-                    )
-                    if self.native_files is None:
-                        notify("الطباعة الأصلية غير مهيأة في هذا البناء"); return
-                    await self.native_files.print_html(html, name="nano-item-card")
-                except Exception as exc:
-                    notify(str(exc), kind="error")
+                if self.native_files is None:
+                    notify("الطباعة الأصلية غير مهيأة في هذا البناء")
+                    return
+
+                async def print_selected(layout: str, width: int) -> None:
+                    try:
+                        html = ctx.documents.item_card_html(
+                            payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
+                            purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
+                            selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
+                            unit=base_unit_name if include_unit.value else None,
+                            category=item.get("category_name") if include_category.value else None,
+                        )
+                        await self.native_files.print_html(
+                            apply_print_profile(html, layout, width),
+                            name="nano-item-card",
+                            paper_layout=layout,
+                            roll_width_mm=width,
+                        )
+                    except Exception as exc:
+                        notify(str(exc), kind="error")
+
+                open_print_profile_dialog(page, ctx.settings, print_selected)
 
             async def do_pdf(_=None):
-                try:
-                    html = ctx.documents.item_card_html(
-                        payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
-                        purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
-                        selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
-                        unit=base_unit_name if include_unit.value else None,
-                        category=item.get("category_name") if include_category.value else None,
-                    )
-                    if self.native_files is None:
-                        notify("تصدير PDF غير مهيأ في هذا البناء"); return
-                    await self.native_files.share_pdf(html, filename=f"nano_item_card_{item.get('id')}.pdf")
-                except Exception as exc:
-                    notify(str(exc), kind="error")
+                if self.native_files is None:
+                    notify("تصدير PDF غير مهيأ في هذا البناء")
+                    return
+
+                async def share_selected(layout: str, width: int) -> None:
+                    try:
+                        html = ctx.documents.item_card_html(
+                            payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
+                            purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
+                            selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
+                            unit=base_unit_name if include_unit.value else None,
+                            category=item.get("category_name") if include_category.value else None,
+                        )
+                        await self.native_files.share_pdf(
+                            apply_print_profile(html, layout, width),
+                            filename=f"nano_item_card_{item.get('id')}.pdf",
+                            paper_layout=layout,
+                            roll_width_mm=width,
+                        )
+                    except Exception as exc:
+                        notify(str(exc), kind="error")
+
+                open_print_profile_dialog(page, ctx.settings, share_selected, title="تنسيق ملف PDF")
 
             def render_page(idx: int, nav):
                 if idx == 0:
@@ -2933,7 +2979,7 @@ class ItemsCenter:
                                 [
                                     ft.Row(
                                         (
-                                            [ft.OutlinedButton("طباعة الباركود", icon=ft.Icons.QR_CODE_2, on_click=lambda _, i=data: (close(), open_barcode_print_dialog([(i, 1)], layout=barcode_settings.label_layout(ctx.settings), roll_width_mm=barcode_settings.label_roll_width_mm(ctx.settings))), expand=True)]
+                                            [ft.OutlinedButton("طباعة الباركود", icon=ft.Icons.QR_CODE_2, on_click=lambda _, i=data: (close(), open_barcode_with_profile([(i, 1)])), expand=True)]
                                             if str(data.get("barcode") or "").strip() else []
                                         ) + [ft.OutlinedButton("بطاقة QR", icon=ft.Icons.SHARE_ROUNDED, on_click=lambda _, i=data: (close(), open_item_card_sheet(i)), expand=True)],
                                         spacing=10,

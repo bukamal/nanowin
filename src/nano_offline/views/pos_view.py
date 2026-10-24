@@ -11,6 +11,11 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SelectAllTextField, empty_state
 from nano_offline.components.form_sheet import render_form_sheet
+from nano_offline.components.print_profile import (
+    apply_print_profile,
+    open_print_profile_dialog,
+    saved_print_profile,
+)
 from nano_offline.components.buttons import hero_button, stepper_icon_button
 from nano_offline.services.invoice_service import InvoiceLineInput
 from nano_offline.core.theme import Colors, IconSize, LazyPalette, Radius, Shadow
@@ -926,7 +931,7 @@ class POSCenter:
                 self._undo_state = None
                 self._remember_recent_customer(self.customer_id)
                 if auto_print_switch.value and self.native_files is not None:
-                    self.page.run_task(self._print_receipt, invoice_id)
+                    self.page.run_task(self._print_receipt, invoice_id, interactive=False)
                 # Keep cart data for the success screen; clear after user taps «بيع جديد»
                 if self.on_saved:
                     self.on_saved()
@@ -2594,27 +2599,46 @@ class POSCenter:
         if code:
             self._add_by_barcode(code)
 
-    async def _print_receipt(self, invoice_id: int) -> None:
-        try:
-            html = self.ctx.documents.invoice_html(invoice_id)
-            await self.native_files.print_html(html, name=f"nano-invoice-{invoice_id}")
+    async def _print_receipt(self, invoice_id: int, *, interactive: bool = True) -> None:
+        if self.native_files is None:
+            self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
+            return
+
+        async def print_selected(layout: str, width: int) -> None:
             try:
-                session = self.ctx.auth.current()
-                username = getattr(session, "username", None) if session else None
-                user_id = getattr(session, "id", None) if session else None
-            except Exception:
-                username, user_id = None, None
-            try:
-                with self.ctx.db.transaction() as conn:
-                    conn.execute(
-                        """INSERT INTO audit_log(action,entity_type,entity_id,details,user_id,username)
-                           VALUES('print','invoice',?,?,?,?)""",
-                        (int(invoice_id), "pos", user_id, username),
-                    )
-            except Exception:
-                pass
-        except Exception as exc:
-            self.notify(str(exc), kind="error")
+                html = apply_print_profile(
+                    self.ctx.documents.invoice_html(invoice_id), layout, width
+                )
+                await self.native_files.print_html(
+                    html,
+                    name=f"nano-invoice-{invoice_id}",
+                    paper_layout=layout,
+                    roll_width_mm=width,
+                )
+                try:
+                    session = self.ctx.auth.current()
+                    username = getattr(session, "username", None) if session else None
+                    user_id = getattr(session, "id", None) if session else None
+                except Exception:
+                    username, user_id = None, None
+                try:
+                    with self.ctx.db.transaction() as conn:
+                        conn.execute(
+                            """INSERT INTO audit_log(action,entity_type,entity_id,details,user_id,username)
+                               VALUES('print','invoice',?,?,?,?)""",
+                            (int(invoice_id), "pos", user_id, username),
+                        )
+                except Exception:
+                    pass
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        if not interactive:
+            layout, width = saved_print_profile(self.ctx.settings)
+            await print_selected(layout, width)
+            return
+
+        open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
 
 
 __all__ = ["POSCenter"]

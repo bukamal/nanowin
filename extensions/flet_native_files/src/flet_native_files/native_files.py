@@ -89,15 +89,37 @@ class NativeFiles(Control):
             raise RuntimeError(str(raw)[6:])
         return raw == "ok"
 
-    async def print_html(self, html: str, *, name: str = "nano-report") -> bool:
+    async def print_html(
+        self,
+        html: str,
+        *,
+        name: str = "nano-report",
+        paper_layout: str = "sheet",
+        roll_width_mm: int = 80,
+    ) -> bool:
         raw = await self.invoke_method_async(
-            "print_html", {"html": html, "name": name}, wait_for_result=True, wait_timeout=_INTERACTIVE_TIMEOUT
+            "print_html",
+            {
+                "html": html,
+                "name": name,
+                "paper_layout": paper_layout,
+                "roll_width_mm": int(roll_width_mm),
+            },
+            wait_for_result=True,
+            wait_timeout=_INTERACTIVE_TIMEOUT,
         )
         if str(raw).startswith("error:"):
             raise RuntimeError(str(raw)[6:])
         return raw == "ok"
 
-    async def create_pdf(self, html: str, *, filename: str = "nano-report.pdf") -> str:
+    async def create_pdf(
+        self,
+        html: str,
+        *,
+        filename: str = "nano-report.pdf",
+        paper_layout: str = "sheet",
+        roll_width_mm: int = 80,
+    ) -> str:
         """Render ``html`` to a real PDF and return its path.
 
         On Windows/Linux the ``printing`` plugin has no native HTML->PDF
@@ -107,8 +129,16 @@ class NativeFiles(Control):
         """
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
-        raw = await self.invoke_method_async("create_pdf", {"html": html, "filename": filename},
-            wait_for_result=True, wait_timeout=_INTERACTIVE_TIMEOUT,
+        raw = await self.invoke_method_async(
+            "create_pdf",
+            {
+                "html": html,
+                "filename": filename,
+                "paper_layout": paper_layout,
+                "roll_width_mm": int(roll_width_mm),
+            },
+            wait_for_result=True,
+            wait_timeout=_INTERACTIVE_TIMEOUT,
         )
         if str(raw).startswith("error:"):
             raise RuntimeError(str(raw)[6:])
@@ -360,7 +390,14 @@ class NativeFiles(Control):
         except (TypeError, ValueError) as exc:
             return {"bridge_error": f"malformed response: {exc!r} raw={raw!r}"}
 
-    async def share_pdf(self, html: str, *, filename: str = "nano-report.pdf") -> bool:
+    async def share_pdf(
+        self,
+        html: str,
+        *,
+        filename: str = "nano-report.pdf",
+        paper_layout: str = "sheet",
+        roll_width_mm: int = 80,
+    ) -> bool:
         """Create a real PDF file, then share it through share_file/shareXFiles.
 
         Backups and PDFs therefore use the same Android share-sheet code path.
@@ -371,7 +408,12 @@ class NativeFiles(Control):
         document is on screen for the user to print/save -- so this returns
         True rather than letting the caller report a failed/dismissed share.
         """
-        path = await self.create_pdf(html, filename=filename)
+        path = await self.create_pdf(
+            html,
+            filename=filename,
+            paper_layout=paper_layout,
+            roll_width_mm=roll_width_mm,
+        )
         if path == PDF_OPENED_IN_BROWSER:
             return True
         return await self.share_file(

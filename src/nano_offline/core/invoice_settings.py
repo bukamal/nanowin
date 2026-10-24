@@ -5,8 +5,10 @@ from __future__ import annotations
 Same pattern as ``core/barcode_settings.py`` (see that module's docstring):
 everything lives in the open-ended ``settings`` key/value table already used
 for currency/branding/barcode, so no schema migration is needed and every
-setting takes effect immediately in the invoice list, the invoice editor,
-and the printed/PDF invoice document.
+setting takes effect in its owning surface: invoice numbering in the invoice
+register, editor, and printed/PDF invoice; payment-age thresholds in the
+invoice register; and due-date, footer, and verification options in printed
+documents.
 
 This module only knows about *reading* settings with sane defaults. The
 admin "الفواتير" tab (views/admin_view.py) is the only place that writes

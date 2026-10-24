@@ -32,6 +32,7 @@ from nano_offline.components import (
 from nano_offline.services.invoice_service import InvoiceLineInput
 from nano_offline.components.buttons import stepper_icon_button, header_close_button
 from nano_offline.components.money_text import money_row
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core.margin_guard import check_sale_margin
@@ -111,6 +112,9 @@ class InvoiceCenter:
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
+    def _display_invoice_number(self, invoice_id: int) -> str:
+        return invoice_settings.format_invoice_number(invoice_id, self.ctx.settings)
+
 
     def _log_invoice_print(self, invoice_id: int, *, channel: str = "print") -> None:
         """Record reprint activity in audit_log for management transparency."""
@@ -137,40 +141,58 @@ class InvoiceCenter:
             return 0
 
     def _print_handler(self, invoice_id: int):
-        async def handler(_):
+        def handler(_):
             if self.native_files is None:
                 self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
                 return
-            self.notify("جارٍ تحضير الطباعة...")
-            try:
-                html = self.ctx.documents.invoice_html(invoice_id)
-                await self.native_files.print_html(html, name=f"nano-invoice-{invoice_id}")
-                count = self._log_invoice_print(invoice_id, channel="print")
-                if count and count > 1:
-                    self.notify(f"طُبعت الفاتورة (مرة رقم {count})")
-            except Exception as exc:
-                self.notify(str(exc), kind="error")
+
+            async def print_selected(layout: str, width: int) -> None:
+                self.notify("جارٍ تحضير الطباعة...")
+                try:
+                    html = apply_print_profile(
+                        self.ctx.documents.invoice_html(invoice_id), layout, width
+                    )
+                    await self.native_files.print_html(
+                        html,
+                        name=f"nano-invoice-{invoice_id}",
+                        paper_layout=layout,
+                        roll_width_mm=width,
+                    )
+                    count = self._log_invoice_print(invoice_id, channel="print")
+                    if count and count > 1:
+                        self.notify(f"طُبعت الفاتورة (مرة رقم {count})")
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
         return handler
 
     def _pdf_handler(self, invoice_id: int):
-        async def handler(_):
+        def handler(_):
             if self.native_files is None:
                 self.notify("تصدير PDF غير مهيأ في هذا البناء")
                 return
-            self.notify("جارٍ تجهيز ملف PDF...")
-            try:
-                html = self.ctx.documents.invoice_html(invoice_id)
-                shared = await self.native_files.share_pdf(html, filename=f"nano_invoice_{invoice_id}.pdf")
-                if shared:
-                    self._log_invoice_print(invoice_id, channel="pdf")
-                # share_pdf() returns False when the user simply dismissed the
-                # native share sheet without picking an app -- without this,
-                # that looked identical to "nothing happened" / "broken",
-                # since neither an error nor any other feedback followed it.
-                if not shared:
-                    self.notify("تم إلغاء المشاركة")
-            except Exception as exc:
-                self.notify(str(exc), kind="error")
+
+            async def share_selected(layout: str, width: int) -> None:
+                self.notify("جارٍ تجهيز ملف PDF...")
+                try:
+                    html = apply_print_profile(
+                        self.ctx.documents.invoice_html(invoice_id), layout, width
+                    )
+                    shared = await self.native_files.share_pdf(
+                        html,
+                        filename=f"nano_invoice_{invoice_id}.pdf",
+                        paper_layout=layout,
+                        roll_width_mm=width,
+                    )
+                    if shared:
+                        self._log_invoice_print(invoice_id, channel="pdf")
+                    if not shared:
+                        self.notify("تم إلغاء المشاركة")
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            open_print_profile_dialog(self.page, self.ctx.settings, share_selected, title="تنسيق ملف PDF")
         return handler
 
     def _party_insight_text(self, is_sale: bool, party_id: int) -> str | None:
@@ -352,12 +374,12 @@ class InvoiceCenter:
             # animation, so the SnackBar can silently never render. A short
             # yield lets the close animation finish first.
             await asyncio.sleep(0.1)
-            await self._print_handler(invoice_id)(None)
+            self._print_handler(invoice_id)(None)
 
         async def do_pdf(_):
             close()
             await asyncio.sleep(0.1)
-            await self._pdf_handler(invoice_id)(None)
+            self._pdf_handler(invoice_id)(None)
 
         def do_delete(_):
             close()
@@ -375,7 +397,7 @@ class InvoiceCenter:
             icon=ft.Icons.RECEIPT_LONG_ROUNDED,
             icon_color=Colors.PRIMARY,
             icon_bg=Colors.PRIMARY_BG,
-            title=f"فاتورة {'بيع' if sale else 'شراء'} #{invoice_id}",
+            title=f"فاتورة {'بيع' if sale else 'شراء'} #{self._display_invoice_number(invoice_id)}",
             subtitle=party,
             body=body,
         )
@@ -501,12 +523,12 @@ class InvoiceCenter:
         async def do_print(_):
             close()
             await asyncio.sleep(0.1)
-            await self._print_handler(invoice_id)(None)
+            self._print_handler(invoice_id)(None)
 
         async def do_pdf(_):
             close()
             await asyncio.sleep(0.1)
-            await self._pdf_handler(invoice_id)(None)
+            self._pdf_handler(invoice_id)(None)
 
         async def do_pay(_=None):
             # Same close-then-yield-then-open dance as _invoice_more_dialog:
@@ -570,7 +592,7 @@ class InvoiceCenter:
             icon=ft.Icons.TRENDING_UP if sale else ft.Icons.TRENDING_DOWN,
             icon_color=accent,
             icon_bg=accent_bg,
-            title=f"فاتورة {kind} #{invoice_id}",
+            title=f"فاتورة {kind} #{self._display_invoice_number(invoice_id)}",
             subtitle=f"{party} • {invoice.get('invoice_date') or '—'}",
             body=body,
         )
@@ -633,6 +655,7 @@ class InvoiceCenter:
                 haystack = " ".join(
                     [
                         str(inv.get("id") or ""),
+                        self._display_invoice_number(int(inv.get("id") or 0)),
                         str(inv.get("party_name") or "نقدي"),
                         str(inv.get("reference") or ""),
                         str(inv.get("invoice_date") or ""),
@@ -642,7 +665,7 @@ class InvoiceCenter:
 
             def _grid_formatter(col, value, row):
                 if col.key == "id":
-                    return f"#{int(row.get('id') or 0)}"
+                    return f"#{self._display_invoice_number(int(row.get('id') or 0))}"
                 if col.key == "type":
                     if row.get("type") == "sale":
                         return ("بيع", Colors.SUCCESS_DARKER, Colors.SUCCESS_BG)
@@ -713,7 +736,7 @@ class InvoiceCenter:
                         writer.writerow(["الفاتورة", "النوع", "الطرف", "التاريخ", "الإجمالي", "المدفوع", "المتبقي", "الحالة", "المرجع"])
                         for inv in rows:
                             writer.writerow([
-                                inv.get("id") or "",
+                                self._display_invoice_number(int(inv.get("id") or 0)),
                                 "بيع" if inv.get("type") == "sale" else "شراء",
                                 inv.get("party_name") or "نقدي",
                                 inv.get("invoice_date") or "",
@@ -1075,13 +1098,29 @@ class InvoiceCenter:
                 kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
                 kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
             ], spacing=8)
-            kpi_container = ft.Container(kpi_cards, padding=ft.padding.only(left=16, right=16, top=12), visible=True)
-            kpi_toggle_icon = ft.Icon(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, size=18, color=Colors.TEXT_SECONDARY)
-            kpi_toggle_text = ft.Text("إخفاء الإحصائيات", size=11, color=Colors.TEXT_SECONDARY)
-            kpi_collapsed = {"v": False}
+            kpi_collapsed = {
+                "v": self.ctx.settings.get("ui.invoices_kpi_collapsed", "true").strip().lower()
+                in ("1", "true", "yes", "on")
+            }
+            kpi_container = ft.Container(
+                kpi_cards,
+                padding=ft.padding.only(left=16, right=16, top=12),
+                visible=not kpi_collapsed["v"],
+            )
+            kpi_toggle_icon = ft.Icon(
+                ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if kpi_collapsed["v"] else ft.Icons.KEYBOARD_ARROW_UP_ROUNDED,
+                size=18,
+                color=Colors.TEXT_SECONDARY,
+            )
+            kpi_toggle_text = ft.Text(
+                "إظهار الإحصائيات" if kpi_collapsed["v"] else "إخفاء الإحصائيات",
+                size=11,
+                color=Colors.TEXT_SECONDARY,
+            )
             def _toggle_kpis(e=None):
                 kpi_collapsed["v"] = not kpi_collapsed["v"]
                 kpi_container.visible = not kpi_collapsed["v"]
+                self.ctx.settings.set("ui.invoices_kpi_collapsed", str(kpi_collapsed["v"]).lower())
                 kpi_toggle_icon.name = ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if kpi_collapsed["v"] else ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
                 kpi_toggle_text.value = "إظهار الإحصائيات" if kpi_collapsed["v"] else "إخفاء الإحصائيات"
                 self.page.update()
@@ -1175,7 +1214,7 @@ class InvoiceCenter:
 
         render_form_sheet(
             self.page, sheet,
-            title=f"تسجيل دفعة — فاتورة #{invoice_id}",
+            title=f"تسجيل دفعة — فاتورة #{self._display_invoice_number(invoice_id)}",
             fields=[
                 ft.Row(
                     [
@@ -1207,7 +1246,7 @@ class InvoiceCenter:
             try:
                 self.ctx.invoices.delete_invoice(invoice_id)
                 self.page.close(dialog)
-                self.notify(f"تم حذف الفاتورة #{invoice_id} وعكس آثارها المحاسبية والمخزنية", kind="success", sound_kind="delete")
+                self.notify(f"تم حذف الفاتورة #{self._display_invoice_number(invoice_id)} وعكس آثارها المحاسبية والمخزنية", kind="success", sound_kind="delete")
                 self.show_center()
                 if self.on_saved:
                     self.on_saved()
@@ -1217,7 +1256,7 @@ class InvoiceCenter:
 
         dialog.title = ft.Text("تأكيد حذف الفاتورة")
         dialog.content = ft.Text(
-            f"سيتم حذف الفاتورة #{invoice_id} وإعادة احتساب المخزون والأرصدة والتكلفة. لا يمكن التراجع عن العملية."
+            f"سيتم حذف الفاتورة #{self._display_invoice_number(invoice_id)} وإعادة احتساب المخزون والأرصدة والتكلفة. لا يمكن التراجع عن العملية."
         )
         dialog.actions = [
             ft.TextButton("إلغاء", on_click=close),
@@ -1647,7 +1686,7 @@ class InvoiceCenter:
                 draft_saved["saved"] = True
                 clear_draft()
                 close()
-                self.notify(f"تم حفظ الفاتورة #{saved_id}", sound_kind="save")
+                self.notify(f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}", sound_kind="save")
                 self.show_center()
                 if is_sale:
                     # Same PHASE10 refresh the page editor triggers: a sale
@@ -2404,10 +2443,10 @@ class InvoiceCenter:
                 if invoice_id:
                     self.ctx.invoices.update_invoice(invoice_id, **common)
                     saved_id = invoice_id
-                    message = f"تم تعديل الفاتورة #{saved_id} وإعادة احتساب المخزون والأرصدة"
+                    message = f"تم تعديل الفاتورة #{self._display_invoice_number(saved_id)} وإعادة احتساب المخزون والأرصدة"
                 else:
                     saved_id = self.ctx.invoices.create_invoice(**common)
-                    message = f"تم حفظ الفاتورة #{saved_id}"
+                    message = f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}"
                 close()
                 self.notify(message, sound_kind="save")
                 self.show_center()
@@ -2532,7 +2571,7 @@ class InvoiceCenter:
                             ft.Column(
                                 [
                                     ft.Text(
-                                        f"تعديل فاتورة #{invoice_id}" if invoice_id else "فاتورة شاملة (جدول)",
+                                        f"تعديل فاتورة #{self._display_invoice_number(invoice_id)}" if invoice_id else "فاتورة شاملة (جدول)",
                                         size=17,
                                         weight=ft.FontWeight.BOLD,
                                     ),
@@ -2646,7 +2685,7 @@ class InvoiceCenter:
         if self.on_title_change:
             kind_label = "بيع" if self.invoice_type == "sale" else "شراء"
             self.on_title_change(
-                f"تعديل فاتورة #{invoice_id}" if invoice_id else f"فاتورة {kind_label}",
+                f"تعديل فاتورة #{self._display_invoice_number(invoice_id)}" if invoice_id else f"فاتورة {kind_label}",
                 "إدارة بيانات الفاتورة والبنود والدفع" if invoice_id else f"إنشاء فاتورة {kind_label} جديدة — النقدي افتراضيًا",
             )
         customers = self.ctx.customers.list()
@@ -3579,10 +3618,10 @@ class InvoiceCenter:
                 if self.editing_id:
                     self.ctx.invoices.update_invoice(self.editing_id, **common)
                     saved_id = self.editing_id
-                    message = f"تم تعديل الفاتورة #{saved_id} وإعادة احتساب المخزون والأرصدة"
+                    message = f"تم تعديل الفاتورة #{self._display_invoice_number(saved_id)} وإعادة احتساب المخزون والأرصدة"
                 else:
                     saved_id = self.ctx.invoices.create_invoice(**common)
-                    message = f"تم حفظ الفاتورة #{saved_id}"
+                    message = f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}"
                 self.notify(message, sound_kind="save")
                 self.show_center()
                 if type_dd.value == "sale":

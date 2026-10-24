@@ -11,6 +11,7 @@ from nano_offline.core.toast import toast
 from nano_offline.core.party_reliability import grade_party
 
 from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import currency
 
@@ -66,6 +67,7 @@ class PartyCenter:
             hint_text="الاسم أو الهاتف",
             prefix_icon=ft.Icons.SEARCH,
             expand=True,
+            on_focus=lambda e: grid.disarm(),
         )
         # Same paging as the items/invoices screens: build only a page of
         # rows at a time instead of every matching customer/supplier.
@@ -363,21 +365,43 @@ class PartyCenter:
                 if self.native_files is None:
                     notify("الطباعة الأصلية غير مهيأة في هذا البناء")
                     return
-                try:
-                    html = self.ctx.documents.party_card_html(party_type, data)
-                    await self.native_files.print_html(html, name=f"nano-party-{data['id']}")
-                except Exception as exc:
-                    notify(str(exc), kind="error")
+
+                async def print_selected(layout: str, width: int) -> None:
+                    try:
+                        html = apply_print_profile(
+                            self.ctx.documents.party_card_html(party_type, data), layout, width
+                        )
+                        await self.native_files.print_html(
+                            html,
+                            name=f"nano-party-{data['id']}",
+                            paper_layout=layout,
+                            roll_width_mm=width,
+                        )
+                    except Exception as exc:
+                        notify(str(exc), kind="error")
+
+                open_print_profile_dialog(page, self.ctx.settings, print_selected)
 
             async def share_party_card_pdf(_=None):
                 if self.native_files is None:
                     notify("تصدير PDF غير مهيأ في هذا البناء")
                     return
-                try:
-                    html = self.ctx.documents.party_card_html(party_type, data)
-                    await self.native_files.share_pdf(html, filename=f"nano_party_{data['id']}.pdf")
-                except Exception as exc:
-                    notify(str(exc), kind="error")
+
+                async def share_selected(layout: str, width: int) -> None:
+                    try:
+                        html = apply_print_profile(
+                            self.ctx.documents.party_card_html(party_type, data), layout, width
+                        )
+                        await self.native_files.share_pdf(
+                            html,
+                            filename=f"nano_party_{data['id']}.pdf",
+                            paper_layout=layout,
+                            roll_width_mm=width,
+                        )
+                    except Exception as exc:
+                        notify(str(exc), kind="error")
+
+                open_print_profile_dialog(page, self.ctx.settings, share_selected, title="تنسيق ملف PDF")
 
             # Same explicit-height approach as the item detail sheet: an
             # outer Container height computed from the real screen height,
@@ -701,6 +725,25 @@ class PartyCenter:
             refresh()
 
         search.on_change = refresh_from_search
+        summary_visible = {
+            "value": self.ctx.settings.get("ui.parties_summary_visible", "true").strip().lower()
+            in ("1", "true", "yes", "on")
+        }
+        summary_row.visible = summary_visible["value"]
+
+        def toggle_summary(_=None):
+            summary_visible["value"] = not summary_visible["value"]
+            summary_row.visible = summary_visible["value"]
+            self.ctx.settings.set("ui.parties_summary_visible", str(summary_visible["value"]).lower())
+            summary_button.icon = ft.Icons.VISIBILITY_OFF_OUTLINED if summary_visible["value"] else ft.Icons.INSIGHTS_OUTLINED
+            summary_button.tooltip = "إخفاء الملخص" if summary_visible["value"] else "إظهار الملخص"
+            page.update()
+
+        summary_button = ft.IconButton(
+            icon=ft.Icons.VISIBILITY_OFF_OUTLINED if summary_visible["value"] else ft.Icons.INSIGHTS_OUTLINED,
+            tooltip="إخفاء الملخص" if summary_visible["value"] else "إظهار الملخص",
+            on_click=toggle_summary,
+        )
 
         # Same sticky_top/scroll_body/bottom_bar treatment as the items and
         # stocktake screens: search stays reachable while scrolling a long
@@ -708,7 +751,7 @@ class PartyCenter:
         # the bottom instead of scrolling off with the list.
         sticky_top = ft.Container(
             ft.Row(
-                [ft.Container(search, expand=True), columns_button, export_button, density_button],
+                [ft.Container(search, expand=True), summary_button, columns_button, export_button, density_button],
                 spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             padding=ft.padding.only(left=18, right=18, top=14, bottom=10),

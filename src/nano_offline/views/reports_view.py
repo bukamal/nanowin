@@ -7,6 +7,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SmartDateField, empty_state, metric_row
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import reporting_settings
@@ -59,7 +60,7 @@ class ReportsCenter:
         self.on_open_invoice = on_open_invoice
         self._report_key: str = "pnl"
         self._refresh_generation = 0
-        self.report_dropdown: ft.Dropdown | None = None
+        self.report_chips: dict[str, ft.Container] = {}
         self.date_from: ft.TextField | None = None
         self.date_to: ft.TextField | None = None
         self.body = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -262,15 +263,18 @@ class ReportsCenter:
         )
 
     # -- report tab chips -----------------------------------------------------
-    def _on_report_dropdown_change(self, e: ft.ControlEvent) -> None:
-        self._select_report(e.control.value)
-
     def _select_report(self, key: str) -> None:
         if key == self._report_key:
             return
         self._report_key = key
-        if self.report_dropdown is not None:
-            self.report_dropdown.value = key
+        for chip_key, chip in self.report_chips.items():
+            active = chip_key == key
+            chip.bgcolor = Colors.PRIMARY if active else Colors.WHITE
+            chip.border = ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER)
+            row: ft.Row = chip.content
+            row.controls[0].color = Colors.WHITE if active else Colors.TEXT_MUTED
+            row.controls[1].color = Colors.WHITE if active else Colors.TEXT_MUTED
+            row.controls[1].weight = ft.FontWeight.BOLD if active else ft.FontWeight.W_500
         self._refresh()
 
     # -- screen shell ---------------------------------------------------------
@@ -323,15 +327,14 @@ class ReportsCenter:
         self.date_from = SmartDateField(label="من تاريخ YYYY-MM-DD", hint_text="اتركه فارغًا لكل الفترة", value=_default_from)
         self.date_to = SmartDateField(label="إلى تاريخ / كما في YYYY-MM-DD", hint_text="اتركه فارغًا حتى آخر حركة", value=_default_to)
 
-        self.report_dropdown = ft.Dropdown(
-            label="نوع التقرير",
-            value=self._report_key,
-            options=[ft.dropdown.Option(key=key, text=label) for key, label, icon in _REPORT_TABS],
-            on_change=self._on_report_dropdown_change,
-            filled=True,
-            bgcolor=Colors.BACKGROUND_ALT,
-            border_radius=Radius.MD,
-            border_color=Colors.BORDER,
+        self.report_chips = {}
+        report_picker = ft.Row(
+            [
+                self._report_chip(key, label, icon)
+                for key, label, icon in _REPORT_TABS
+            ],
+            spacing=8,
+            scroll=ft.ScrollMode.AUTO,
         )
 
         # Sticky header: the report picker + date range stay reachable while
@@ -341,7 +344,7 @@ class ReportsCenter:
         sticky_top = ft.Container(
             ft.Column(
                 [
-                    self.report_dropdown,
+                    report_picker,
                     ft.ResponsiveRow(
                         [
                             ft.Container(self.date_from, col={"xs": 6, "md": 4}),
@@ -389,6 +392,34 @@ class ReportsCenter:
             expand=True,
         )
         self._refresh()
+
+    def _report_chip(self, key: str, label: str, icon: str) -> ft.Container:
+        active = key == self._report_key
+        chip = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(icon, size=15, color=Colors.WHITE if active else Colors.TEXT_MUTED),
+                    ft.Text(
+                        label,
+                        size=12,
+                        color=Colors.WHITE if active else Colors.TEXT_MUTED,
+                        weight=ft.FontWeight.BOLD if active else ft.FontWeight.W_500,
+                        max_lines=1,
+                    ),
+                ],
+                spacing=6,
+                tight=True,
+            ),
+            padding=ft.padding.symmetric(horizontal=13, vertical=9),
+            bgcolor=Colors.PRIMARY if active else Colors.WHITE,
+            border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
+            border_radius=20,
+            ink=True,
+            animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+            on_click=lambda _, report_key=key: self._select_report(report_key),
+        )
+        self.report_chips[key] = chip
+        return chip
 
     def _dates(self) -> tuple[str | None, str | None]:
         return (
@@ -515,23 +546,41 @@ class ReportsCenter:
         if self.native_files is None:
             self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
             return
-        try:
-            html = await self._report_html()
-            report = self._report_key or "pnl"
-            await self.native_files.print_html(html, name=f"nano-report-{report}")
-        except Exception as exc:
-            self.notify(str(exc), kind="error")
+
+        async def print_selected(layout: str, width: int) -> None:
+            try:
+                html = apply_print_profile(await self._report_html(), layout, width)
+                report = self._report_key or "pnl"
+                await self.native_files.print_html(
+                    html,
+                    name=f"nano-report-{report}",
+                    paper_layout=layout,
+                    roll_width_mm=width,
+                )
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
 
     async def _share_report_pdf(self, _=None) -> None:
         if self.native_files is None:
             self.notify("تصدير PDF غير مهيأ في هذا البناء")
             return
-        try:
-            html = await self._report_html()
-            report = self._report_key or "pnl"
-            await self.native_files.share_pdf(html, filename=f"nano_report_{report}.pdf")
-        except Exception as exc:
-            self.notify(str(exc), kind="error")
+
+        async def share_selected(layout: str, width: int) -> None:
+            try:
+                html = apply_print_profile(await self._report_html(), layout, width)
+                report = self._report_key or "pnl"
+                await self.native_files.share_pdf(
+                    html,
+                    filename=f"nano_report_{report}.pdf",
+                    paper_layout=layout,
+                    roll_width_mm=width,
+                )
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        open_print_profile_dialog(self.page, self.ctx.settings, share_selected, title="تنسيق ملف PDF")
 
     def _render_pnl(self, report: dict) -> list[ft.Control]:
         metrics = metric_row([

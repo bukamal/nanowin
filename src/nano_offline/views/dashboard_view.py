@@ -10,6 +10,7 @@ from nano_offline.core import currency
 from nano_offline.core.expiring import cached_insight
 from nano_offline.core.toast import toast
 from nano_offline.components import SelectAllTextField, new_form_sheet, render_form_sheet, metric_row
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 
 
 #: Advisory insights tolerate a couple of minutes of staleness; explicit
@@ -941,7 +942,19 @@ class DashboardCenter:
                 except Exception:
                     today_sum = {}
                 html = self.ctx.documents.day_close_html(result, movement=movement, summary=today_sum)
-                self.page.run_task(self.native_files.print_html, html, name="nano-day-close")
+
+                async def print_selected(layout: str, width: int) -> None:
+                    try:
+                        await self.native_files.print_html(
+                            apply_print_profile(html, layout, width),
+                            name="nano-day-close",
+                            paper_layout=layout,
+                            roll_width_mm=width,
+                        )
+                    except Exception as exc:
+                        self._notify(f"تعذر طباعة التقرير: {exc}", kind="warning")
+
+                open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
             except Exception as exc:
                 self._notify(f"تعذر طباعة التقرير: {exc}", kind="warning")
 

@@ -57,6 +57,13 @@ import 'sound_pool.dart';
 bool get nativeHtmlToPdfSupported =>
     Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
+PdfPageFormat _printPageFormat(Map<dynamic, dynamic> args) {
+  if (args['paper_layout'] != 'roll') return PdfPageFormat.a4;
+  final requestedWidth = int.tryParse('${args['roll_width_mm'] ?? ''}');
+  final width = requestedWidth == 58 ? 58 : 80;
+  return PdfPageFormat(width * PdfPageFormat.mm, double.infinity, marginAll: 0);
+}
+
 // -- Closed-app smart notifications ----------------------------------------
 //
 // Everything below this comment (down to FletNativeFilesControl) supports
@@ -501,11 +508,15 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
     return out.path;
   }
 
-  Future<File> createPdfFile(String html, String requestedName) async {
+  Future<File> createPdfFile(
+    String html,
+    String requestedName,
+    PdfPageFormat format,
+  ) async {
     if (html.isEmpty) {
       throw Exception('محتوى التقرير فارغ');
     }
-    final bytes = await Printing.convertHtml(format: PdfPageFormat.a4, html: html);
+    final bytes = await Printing.convertHtml(format: format, html: html);
     final dir = await getTemporaryDirectory();
     var safeName = requestedName.trim().isEmpty ? 'nano-report.pdf' : requestedName.trim();
     if (!safeName.toLowerCase().endsWith('.pdf')) safeName = '$safeName.pdf';
@@ -603,6 +614,7 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
           }
           await Printing.layoutPdf(
             name: docName,
+            format: _printPageFormat(args),
             onLayout: (PdfPageFormat format) => Printing.convertHtml(format: format, html: html),
           );
           return 'ok';
@@ -615,7 +627,11 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
             // Python maps it to "already delivered to the browser".
             return 'browser';
           }
-          final file = await createPdfFile(pdfHtml, args['filename'] ?? 'nano-report.pdf');
+          final file = await createPdfFile(
+            pdfHtml,
+            args['filename'] ?? 'nano-report.pdf',
+            _printPageFormat(args),
+          );
           return file.path;
 
         case 'capture_receipt':
@@ -786,7 +802,11 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
           // Backward-compatible native method. New Python code calls create_pdf
           // then share_file, but this path deliberately uses the same shareXFiles
           // mechanism as backup sharing too.
-          final file = await createPdfFile(args['html'] ?? '', args['filename'] ?? 'nano-report.pdf');
+          final file = await createPdfFile(
+            args['html'] ?? '',
+            args['filename'] ?? 'nano-report.pdf',
+            _printPageFormat(args),
+          );
           final result = await Share.shareXFiles(
             [XFile(file.path, mimeType: 'application/pdf')],
             subject: args['filename'],

@@ -23,6 +23,9 @@ third-party library, no schema change (SCHEMA_VERSION stays 13).
 from __future__ import annotations
 
 import hashlib
+import re
+
+from nano_offline.core import invoice_settings
 
 __all__ = ["public_fingerprint", "verify_manual"]
 
@@ -58,17 +61,31 @@ def verify_manual(db, invoice_number: str, token: str) -> tuple[bool, str, dict 
     """Check a handwritten/printed token against the stored invoice.
 
     ``invoice_number`` accepts a plain id ("12") or a display number that
-    embeds the id ("INV-00012" or "#12"). Returns ``(is_valid, reason,
-    invoice_row_or_None)`` with an Arabic ``reason`` ready for the
-    verification dialog.
+    embeds the id ("INV-00012" or "#12"). The configured display prefix is
+    removed before parsing, so prefixes that contain digits remain valid.
+    Returns ``(is_valid, reason, invoice_row_or_None)`` with an Arabic
+    ``reason`` ready for the verification dialog.
     """
     token = (token or "").strip().upper()
     raw = (invoice_number or "").strip()
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if not digits:
+    if not raw:
         return False, "أدخل رقم الفاتورة المطبوع", None
-    invoice_id = int(digits)
+
     with db.connect() as conn:
+        setting = conn.execute(
+            "SELECT value FROM settings WHERE key=?",
+            (invoice_settings.NUMBER_PREFIX_KEY,),
+        ).fetchone()
+        prefix = str(setting["value"] or "") if setting else ""
+        candidate = raw[len(prefix):].strip() if prefix and raw.startswith(prefix) else raw
+        match = re.search(r"(\d+)\s*$", candidate)
+        if match is None:
+            return False, "أدخل رقم الفاتورة المطبوع", None
+        try:
+            invoice_id = int(match.group(1))
+        except ValueError:
+            return False, "أدخل رقم فاتورة صالحًا", None
+
         row = conn.execute(
             """SELECT i.id, i.invoice_date, i.total, i.customer_id, i.supplier_id,
                       c.name AS customer_name, s.name AS supplier_name,
