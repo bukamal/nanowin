@@ -1852,18 +1852,28 @@ class InvoiceCenter:
         self.page.open(sheet)
         step["opened"] = True
 
-    def show_table_invoice_sheet(self, invoice_type: str | None = None) -> None:
+    def show_table_invoice_sheet(
+        self,
+        invoice_type: str | None = None,
+        invoice_id: int | None = None,
+    ) -> None:
         """Comprehensive invoice entry: one wide table sheet for sale/purchase.
 
         Same table language as the materials bulk-entry sheet: the full grid
         toolkit (column visibility, density, sorting, multi-select with batch
         duplicate/delete, per-row menu, CSV export and live footer totals)
         plus a per-line unit picker with the page editor's smart price chain
-        (per-unit override, else base price x factor). Saving reuses the
-        wizard's exact rules: the same ``InvoiceLineInput`` shape and the
-        same margin guard before ``create_invoice``.
+        (per-unit override, else base price x factor). It supports both new
+        invoices and editing an existing invoice in the same sheet.
         """
+        existing = self.ctx.invoices.get_invoice(invoice_id) if invoice_id else None
+        if invoice_id and not existing:
+            self.notify("الفاتورة غير موجودة")
+            return
         invoice_type = invoice_type if invoice_type in ("sale", "purchase") else "sale"
+        if existing:
+            invoice_type = existing["type"]
+        self.editing_id = invoice_id
         self.invoice_type = invoice_type
         settings = self.ctx.settings
         rate = currency.get_effective_rate(settings)
@@ -1891,10 +1901,13 @@ class InvoiceCenter:
             value=invoice_type,
         )
         party_dd = SearchSelect(label="العميل")
-        party_insight = ft.Container(visible=False)
-        invoice_date = SmartDateField(label="التاريخ", value=date.today().isoformat())
-        reference = SelectAllTextField(label="المرجع")
-        notes = SelectAllTextField(label="ملاحظات", multiline=True, min_lines=1, max_lines=2)
+        invoice_date = SmartDateField(
+            label="التاريخ",
+            value=str(existing["invoice_date"] if existing else date.today().isoformat()),
+        )
+        reference = SelectAllTextField(label="المرجع", value=(existing.get("reference") or "") if existing else "")
+        notes = SelectAllTextField(label="ملاحظات", value=(existing.get("notes") or "") if existing else "", multiline=True, min_lines=1, max_lines=2)
+        paid_initial = existing.get("initial_paid_amount", 0) if existing else 0
 
         def party_options() -> None:
             is_sale = (type_dd.value or "sale") == "sale"
@@ -1903,27 +1916,6 @@ class InvoiceCenter:
             party_dd.set_choices([(str(p["id"]), p["name"]) for p in source])
             if party_dd.value and not any(str(p["id"]) == party_dd.value for p in source):
                 party_dd.value = None
-
-        def update_party_insight() -> None:
-            is_sale = (type_dd.value or "sale") == "sale"
-            text = self._party_insight_text(is_sale, int(party_dd.value)) if party_dd.value else None
-            if not text:
-                party_insight.visible = False
-                _safe_update(party_insight)
-                return
-            party_insight.content = ft.Row(
-                [
-                    ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=15, color=Colors.PRIMARY),
-                    ft.Text(text, size=11, color=Colors.PRIMARY_DARK, expand=True),
-                ],
-                spacing=8,
-            )
-            party_insight.padding = ft.padding.symmetric(horizontal=10, vertical=8)
-            party_insight.bgcolor = Colors.PRIMARY_BG
-            party_insight.border = ft.border.all(1, Colors.PRIMARY_BORDER)
-            party_insight.border_radius = 10
-            party_insight.visible = True
-            _safe_update(party_insight)
 
         # ------------------------------------------------- lines: units/prices
         def _units_of(item_id: int) -> list[dict]:
@@ -1972,7 +1964,7 @@ class InvoiceCenter:
                     total = 0.0
                 return currency.format_plain(round(total, 2)) if total else ""
             if col.key == "_status":
-                if not row.get("item"):
+                if not row.get("item") and not str(row.get("description") or "").strip():
                     return ("بلا مادة", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
                 try:
                     qty = float(row.get("qty") or 0)
@@ -2118,14 +2110,15 @@ class InvoiceCenter:
         # -------------------------------------------------- selection / menu
         def duplicate_rows(rows: list[dict]) -> None:
             for row in rows:
-                if not row.get("item"):
+                if not row.get("item") and not str(row.get("description") or "").strip():
                     continue
                 index = lines_grid.add_row({
                     "qty": row.get("qty") or 1,
                     "price": row.get("price"),
                     "description": row.get("description") or "",
                 })
-                lines_grid.set_cell(index, "item", int(row["item"]))
+                if row.get("item"):
+                    lines_grid.set_cell(index, "item", int(row["item"]))
                 if row.get("unit"):
                     lines_grid.set_cell(index, "unit", int(row["unit"]))
             if rows:
@@ -2219,7 +2212,10 @@ class InvoiceCenter:
             self.page.update()
 
         async def export_csv(_=None) -> None:
-            rows = [row for row in lines_grid.rows if row.get("item")]
+            rows = [
+                row for row in lines_grid.rows
+                if row.get("item") or str(row.get("description") or "").strip()
+            ]
             if not rows:
                 self.notify("لا توجد بنود جاهزة للتصدير", kind="warning")
                 return
@@ -2232,11 +2228,11 @@ class InvoiceCenter:
                     writer = _csv.writer(fh)
                     writer.writerow(["المادة", "البيان", "الوحدة", "الكمية", "السعر", "الإجمالي"])
                     for row in rows:
-                        item_row = item_map.get(int(row["item"])) or {}
+                        item_row = item_map.get(int(row["item"])) or {} if row.get("item") else {}
                         unit_row = next(
                             (u for u in _units_of(int(row["item"])) if int(u["id"]) == int(row.get("unit") or 0)),
                             None,
-                        )
+                        ) if row.get("item") else None
                         try:
                             total = float(row.get("qty") or 0) * float(row.get("price") or 0)
                         except (TypeError, ValueError):
@@ -2257,7 +2253,7 @@ class InvoiceCenter:
         # ------------------------------------------------------ payment / save
         paid = SmartAmountField(
             label=currency.amount_field_label("الدفعة الأولى", settings),
-            value="0",
+            value=currency.to_input_text(paid_initial, settings),
             on_change=lambda e: refresh_summary(),
         )
         lines_summary_text = ft.Text("لا بنود بعد", size=10, color=Colors.TEXT_SECONDARY)
@@ -2277,11 +2273,13 @@ class InvoiceCenter:
 
         def refresh_summary(_=None) -> None:
             total = rows_total_display()
-            count = sum(1 for row in lines_grid.rows if row.get("item"))
+            invoice_rows = [
+                row for row in lines_grid.rows
+                if row.get("item") or str(row.get("description") or "").strip()
+            ]
+            count = len(invoice_rows)
             qty_total = 0.0
-            for row in lines_grid.rows:
-                if not row.get("item"):
-                    continue
+            for row in invoice_rows:
                 try:
                     qty_total += float(row.get("qty") or 0)
                 except (TypeError, ValueError):
@@ -2344,9 +2342,10 @@ class InvoiceCenter:
         def build_inputs() -> list[InvoiceLineInput]:
             inputs: list[InvoiceLineInput] = []
             for idx, row in enumerate(lines_grid.rows, start=1):
-                if not row.get("item"):
+                item_id = int(row["item"]) if row.get("item") else None
+                description = str(row.get("description") or "").strip()
+                if item_id is None and not description:
                     continue
-                item_id = int(row["item"])
                 try:
                     qty = float(row.get("qty") or 0)
                 except (TypeError, ValueError):
@@ -2361,7 +2360,7 @@ class InvoiceCenter:
                     )
                 except Exception as exc:
                     raise ValueError(f"سعر البند {idx} غير صحيح") from exc
-                units = _units_of(item_id)
+                units = _units_of(item_id) if item_id is not None else []
                 unit_row = None
                 if row.get("unit"):
                     unit_row = next((u for u in units if int(u["id"]) == int(row["unit"])), None)
@@ -2369,10 +2368,10 @@ class InvoiceCenter:
                     unit_row = _default_invoice_unit(units)
                 inputs.append(
                     InvoiceLineInput(
-                        description=str(row.get("description") or "").strip(),
+                        description=description,
                         item_id=item_id,
                         unit_id=int(unit_row["id"]) if unit_row else None,
-                        conversion_factor=float((unit_row or {}).get("conversion_factor") or 1),
+                        conversion_factor=float((unit_row or {}).get("conversion_factor") or row.get("_factor") or 1),
                         quantity=qty,
                         unit_price=unit_price,
                     )
@@ -2392,7 +2391,7 @@ class InvoiceCenter:
                         return
                 self._margin_override = False
                 is_sale = (type_dd.value or "sale") == "sale"
-                saved_id = self.ctx.invoices.create_invoice(
+                common = dict(
                     invoice_type=type_dd.value or "sale",
                     lines=inputs,
                     customer_id=int(party_dd.value) if (is_sale and party_dd.value) else None,
@@ -2402,8 +2401,15 @@ class InvoiceCenter:
                     notes=notes.value,
                     paid_amount=currency.parse_display_input(paid.value, settings),
                 )
+                if invoice_id:
+                    self.ctx.invoices.update_invoice(invoice_id, **common)
+                    saved_id = invoice_id
+                    message = f"تم تعديل الفاتورة #{saved_id} وإعادة احتساب المخزون والأرصدة"
+                else:
+                    saved_id = self.ctx.invoices.create_invoice(**common)
+                    message = f"تم حفظ الفاتورة #{saved_id}"
                 close()
-                self.notify(f"تم حفظ الفاتورة #{saved_id}", sound_kind="save")
+                self.notify(message, sound_kind="save")
                 self.show_center()
                 if is_sale:
                     # Same PHASE10 refresh the wizard/page editor trigger.
@@ -2433,11 +2439,10 @@ class InvoiceCenter:
                 if unit_row is None:
                     unit_row = _default_invoice_unit(units)
                 lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row))
-            update_party_insight()
             refresh_summary()
 
         type_dd.on_change = type_changed
-        party_dd.on_change = lambda e: (update_party_insight(), refresh_summary())
+        party_dd.on_change = lambda e: refresh_summary()
 
         # ---------------------------------------------------------- controls
         columns_button = ft.PopupMenuButton(
@@ -2494,8 +2499,27 @@ class InvoiceCenter:
 
         # ----------------------------------------------------------- initial
         party_options()
-        lines_grid.add_row({"qty": 1})
-        update_party_insight()
+        if existing:
+            is_sale = existing["type"] == "sale"
+            party_id = existing.get("customer_id") if is_sale else existing.get("supplier_id")
+            if party_id:
+                party_dd.value = str(party_id)
+            party_options()
+            initial_rows = []
+            for line in existing.get("lines") or []:
+                item_id = int(line["item_id"]) if line.get("item_id") else None
+                unit_id = int(line["unit_id"]) if line.get("unit_id") else None
+                initial_rows.append({
+                    "item": item_id,
+                    "description": line.get("description") or "",
+                    "unit": unit_id,
+                    "_factor": float(line.get("conversion_factor") or 1),
+                    "qty": float(line.get("quantity") or 1),
+                    "price": round(currency.to_display(float(line.get("unit_price") or 0), rate), 2),
+                })
+            lines_grid.set_rows(initial_rows or [{"qty": 1}])
+        else:
+            lines_grid.add_row({"qty": 1})
         refresh_summary()
 
         sheet.content = ft.Container(
@@ -2507,8 +2531,18 @@ class InvoiceCenter:
                             icon_bubble,
                             ft.Column(
                                 [
-                                    ft.Text("فاتورة شاملة (جدول)", size=17, weight=ft.FontWeight.BOLD),
-                                    ft.Text("بيع أو شراء: كل البيانات والبنود في جدول واحد، ثم احفظ مباشرة", size=11, color=Colors.TEXT_SECONDARY),
+                                    ft.Text(
+                                        f"تعديل فاتورة #{invoice_id}" if invoice_id else "فاتورة شاملة (جدول)",
+                                        size=17,
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
+                                    ft.Text(
+                                        "عدّل بيانات الفاتورة وبنودها من الجدول ثم احفظ التغييرات"
+                                        if invoice_id
+                                        else "بيع أو شراء: كل البيانات والبنود في جدول واحد، ثم احفظ مباشرة",
+                                        size=11,
+                                        color=Colors.TEXT_SECONDARY,
+                                    ),
                                 ],
                                 spacing=1, expand=True,
                             ),
@@ -2516,29 +2550,23 @@ class InvoiceCenter:
                         ],
                         spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Row(
+                    ft.ResponsiveRow(
                         [
-                            ft.Column([ft.Text("نوع الفاتورة", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd], spacing=4, tight=True),
-                            ft.Container(party_dd, width=240),
-                            ft.Container(invoice_date, width=180),
-                            ft.Container(reference, width=220),
+                            ft.Container(
+                                ft.Column(
+                                    [ft.Text("نوع الفاتورة", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd],
+                                    spacing=4,
+                                    tight=True,
+                                ),
+                                col={"xs": 12, "sm": 6, "md": 2},
+                            ),
+                            ft.Container(party_dd, col={"xs": 12, "sm": 6, "md": 3}),
+                            ft.Container(invoice_date, col={"xs": 6, "md": 2}),
+                            ft.Container(reference, col={"xs": 6, "md": 2}),
+                            ft.Container(notes, col={"xs": 12, "md": 3}),
                         ],
-                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    party_insight,
-                    ft.Container(
-                        ft.Column(
-                            [
-                                ft.Text("ملاحظات الفاتورة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
-                                notes,
-                            ],
-                            spacing=7,
-                            tight=True,
-                        ),
-                        padding=12,
-                        bgcolor=Colors.WHITE,
-                        border=ft.border.all(1, Colors.BORDER),
-                        border_radius=Radius.MD,
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row(
                         [
@@ -2570,7 +2598,11 @@ class InvoiceCenter:
                             quick_chips,
                             ft.Container(width=12),
                             ft.Container(paid, width=220),
-                            ft.FilledButton("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                            ft.FilledButton(
+                                "حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
+                                icon=ft.Icons.SAVE_OUTLINED,
+                                on_click=save,
+                            ),
                         ],
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -2598,10 +2630,12 @@ class InvoiceCenter:
     ) -> None:
         if invoice_id is None:
             # Creating a new invoice now goes through the 3-step bottom
-            # sheet (same pattern as creating a material); the full-page
-            # editor below stays for editing existing invoices.
+            # sheet (same pattern as creating a material).
             self.show_new_invoice_sheet(invoice_type, prefill_lines=prefill_lines, party_id=party_id)
             return
+        self.show_table_invoice_sheet(invoice_type, invoice_id)
+        return
+
         existing = self.ctx.invoices.get_invoice(invoice_id) if invoice_id else None
         if invoice_id and not existing:
             self.notify("الفاتورة غير موجودة")
