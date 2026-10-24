@@ -414,8 +414,18 @@ class ItemsCenter:
                 moves = ctx.items.movements(item_id, limit=1)
                 if moves:
                     mv = moves[0]
-                    kind_label = mv.get("movement_type") or mv.get("kind") or "حركة"
-                    last_move = f"{kind_label} • {mv.get('quantity')} • {str(mv.get('movement_date') or '')[:10]}"
+                    def movement_text(value) -> str:
+                        if value is None:
+                            return ""
+                        text = str(value).strip()
+                        return "" if text.casefold() == "none" else text
+
+                    kind_label = movement_text(mv.get("movement_type") or mv.get("kind"))
+                    quantity_label = movement_text(mv.get("quantity"))
+                    date_label = movement_text(mv.get("movement_date"))[:10]
+                    last_move = " • ".join(
+                        part or "—" for part in (kind_label or "حركة", quantity_label, date_label)
+                    )
             except Exception:
                 pass
 
@@ -1031,148 +1041,60 @@ class ItemsCenter:
                 spacing=2,
             )
 
-            # Secondary barcodes (e.g. a separate code printed on the
-            # carton vs the single piece): only meaningful once the item
-            # actually has an id to attach them to, so this section is
-            # edit-mode only -- a new item shows a hint instead and the
-            # staff member adds alternates after the first save.
-            extra_status = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+            # Unit-linked barcodes are managed with their units on step 4.
+            # Keep legacy unassigned codes visible/removable here, without
+            # offering a second barcode-entry path.
             extra_list_column = ft.Column(spacing=4)
 
-            def render_extra_barcodes() -> None:
-                rows = ctx.items.list_barcodes(int(item["id"])) if item else []
+            def render_unassigned_barcodes() -> None:
+                rows = (
+                    [
+                        row for row in ctx.items.list_barcodes(int(item["id"]))
+                        if row.get("unit_id") is None
+                    ]
+                    if item else []
+                )
                 controls = []
                 for row in rows:
-                    unit_label = f" — {row['unit_name']}" if row.get("unit_name") else ""
                     label_suffix = f" ({row['label']})" if row.get("label") else ""
                     controls.append(
                         ft.Row(
                             [
-                                ft.Text(f"{row['barcode']}{unit_label}{label_suffix}", size=12, expand=True),
-                                inline_icon_button(ft.Icons.DELETE_OUTLINE, lambda _, rid=row["id"]: remove_extra_barcode(rid), color=Colors.DANGER),
+                                ft.Text(f"{row['barcode']}{label_suffix}", size=12, expand=True),
+                                inline_icon_button(
+                                    ft.Icons.DELETE_OUTLINE,
+                                    lambda _, rid=row["id"]: remove_unassigned_barcode(rid),
+                                    color=Colors.DANGER,
+                                ),
                             ],
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         )
                     )
                 extra_list_column.controls = controls
-                # This is called once during editor construction (line ~668
-                # below), *before* the sheet's content tree is attached to
-                # the page -- calling .update() on a control that isn't on
-                # the page yet raises, which was silently aborting the
-                # whole open_item_editor() build for every existing item
-                # (the "تعديل" button appeared to do nothing at all). Only
-                # refresh here if this control is actually already on the
-                # page, i.e. this is a later re-render after add/remove.
                 if extra_list_column.page is not None:
                     extra_list_column.update()
 
-            def remove_extra_barcode(row_id: int) -> None:
+            def remove_unassigned_barcode(row_id: int) -> None:
                 ctx.items.remove_barcode(row_id)
-                render_extra_barcodes()
-
-            new_alt_barcode = SelectAllTextField(label="باركود إضافي (قطعة/كرتون)", expand=True)
-            new_alt_unit = SearchSelect(label="للوحدة (اختياري)", choices=[(str(u["id"]), u["name"]) for u in units])
-            alt_checksum_text = ft.Text("", size=10, color=Colors.WARNING_DARK)
-
-            def on_alt_barcode_change(_=None) -> None:
-                alt_checksum_text.value = (barcode_quality.checksum_warning(new_alt_barcode.value or "") or "") if _checksum_enabled else ""
-                alt_checksum_text.update()
-
-            new_alt_barcode.on_change = on_alt_barcode_change
-
-            def generate_alt_barcode(_=None) -> None:
-                kind = barcode_type.value or barcode_settings.default_kind(ctx.settings)
-                prefix = barcode_settings.internal_prefix(ctx.settings) if kind == "EAN13" else None
-                new_alt_barcode.value = barcode_quality.generate_barcode_value(kind, prefix=prefix)
-                new_alt_barcode.update()
-                on_alt_barcode_change()
-
-            async def scan_for_alt_barcode(_=None) -> None:
-                if self.native_files is None:
-                    extra_status.value = "مسح الباركود غير مهيأ في هذا البناء"
-                    extra_status.color = Colors.DANGER
-                    extra_status.update()
-                    return
-                extra_status.value = "جارٍ فتح الكاميرا..."
-                extra_status.color = Colors.TEXT_SECONDARY
-                extra_status.update()
-                try:
-                    code = await self.native_files.scan_barcode()
-                except Exception as exc:
-                    extra_status.value = str(exc)
-                    extra_status.color = Colors.DANGER
-                    extra_status.update()
-                    return
-                if code:
-                    new_alt_barcode.value = code
-                    new_alt_barcode.update()
-                    on_alt_barcode_change()
-                    extra_status.value = f"تم قراءة الباركود: {code}"
-                    extra_status.color = Colors.SUCCESS
-                    extra_status.update()
-                else:
-                    extra_status.value = "لم تتم قراءة أي باركود (تم الإلغاء أو رفض إذن الكاميرا)"
-                    extra_status.color = Colors.DANGER
-                    extra_status.update()
-
-            def add_extra_barcode(_=None) -> None:
-                code = (new_alt_barcode.value or "").strip()
-                if not code:
-                    return
-
-                def do_add() -> None:
-                    try:
-                        ctx.items.add_barcode(
-                            int(item["id"]), code,
-                            unit_id=int(new_alt_unit.value) if new_alt_unit.value else None,
-                        )
-                        new_alt_barcode.value = ""
-                        new_alt_unit.value = None
-                        extra_status.value = ""
-                        new_alt_barcode.update(); new_alt_unit.update(); extra_status.update()
-                        render_extra_barcodes()
-                    except Exception as exc:
-                        extra_status.value = str(exc)
-                        extra_status.color = Colors.DANGER
-                        extra_status.update()
-
-                if barcode_settings.similar_warning_enabled(ctx.settings):
-                    similar = ctx.items.find_similar_barcodes(code, exclude_item_id=int(item["id"]))
-                    if similar:
-                        _confirm_similar_barcode(page, similar, do_add)
-                        return
-                if _checksum_enabled:
-                    warn = barcode_quality.checksum_warning(code)
-                    if warn:
-                        extra_status.value = warn
-                        extra_status.color = Colors.WARNING_DARK
-                        extra_status.update()
-                do_add()
+                render_unassigned_barcodes()
 
             extra_barcodes_section: ft.Control
             if item:
-                render_extra_barcodes()
+                render_unassigned_barcodes()
                 extra_barcodes_section = ft.Column(
                     [
-                        ft.Text("باركودات إضافية (قطعة/كرتون/كود قديم) — لكل وحدة باركود مستقل", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
-                        extra_list_column,
-                        ft.Row(
-                            [
-                                new_alt_barcode,
-                                ft.IconButton(icon=ft.Icons.QR_CODE_SCANNER, tooltip="مسح الباركود بالكاميرا", on_click=scan_for_alt_barcode, visible=supports("barcode_camera_scan")),
-                                ft.IconButton(icon=ft.Icons.CASINO_OUTLINED, tooltip="توليد باركود عشوائي", on_click=generate_alt_barcode),
-                            ],
-                            spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ft.Text(
+                            "الباركودات المرتبطة بالوحدات تُدار في الخطوة الرابعة.",
+                            size=10,
+                            color=Colors.TEXT_SECONDARY,
                         ),
-                        alt_checksum_text,
-                        ft.Row([new_alt_unit, ft.IconButton(icon=ft.Icons.ADD_CIRCLE_OUTLINE, tooltip="إضافة", on_click=add_extra_barcode)], spacing=6),
-                        extra_status,
+                        extra_list_column,
                     ],
                     spacing=6,
                 )
             else:
                 extra_barcodes_section = ft.Text(
-                    "يمكنك إضافة باركودات إضافية (قطعة/كرتون) بعد حفظ المادة أول مرة.",
+                    "أضف باركود كل وحدة فرعية من الخطوة الرابعة.",
                     size=10, color=Colors.TEXT_FAINT,
                 )
             kind = SearchSelect(label="النوع", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")], value=(item or {}).get("item_type") or "مخزون", allow_clear=False)

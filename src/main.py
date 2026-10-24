@@ -147,7 +147,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         animate_opacity=180,
     )
 
-    header_title = ft.Text("لوحة التحكم", size=22, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY)
+    header_title = ft.Text("الرئيسية", size=22, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY)
     header_subtitle = ft.Text("نظرة عامة على أداء عملك", size=12, color=Colors.TEXT_SECONDARY)
 
     def set_header(title: str, subtitle: str = "") -> None:
@@ -322,7 +322,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         raise RuntimeError("لا توجد جلسة مستخدم")
 
     page_meta = {
-        "dashboard": ("لوحة التحكم", "نظرة عامة على أداء عملك"),
+        "dashboard": ("الرئيسية", "نظرة عامة على أداء عملك"),
         "items": ("المواد", "إدارة المخزون والخدمات والتصنيفات والوحدات"),
         "customers": ("العملاء", "إدارة العملاء والذمم المدينة"),
         "suppliers": ("الموردون", "إدارة الموردين والذمم الدائنة"),
@@ -493,7 +493,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     on_click=lambda _=None: invoice_center.show_table_invoice_sheet(),
                 ),
             ]
-        if key in ("dashboard", "items"):
+        if key in ("dashboard", "items", "pos", "sale", "purchase"):
             return invoice_actions
         if key == "finance":
             return [
