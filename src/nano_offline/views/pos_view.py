@@ -203,6 +203,9 @@ class POSCenter:
         if self.on_fullscreen_exit:
             self.on_fullscreen_exit()
         try:
+            self._pos_active = False
+            if hasattr(self, "_pos_focus_state"):
+                self._pos_focus_state["modal_open"] = False
             if hasattr(self, "_prev_on_keyboard"):
                 self.page.on_keyboard_event = self._prev_on_keyboard
         except Exception:
@@ -246,6 +249,7 @@ class POSCenter:
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
+        self._pos_active = True
         items = self.ctx.items.pos_catalog()
         self.item_map = {int(i["id"]): i for i in items}
         categories = self.ctx.definitions.list_categories()
@@ -253,6 +257,7 @@ class POSCenter:
         customer_map = {int(c["id"]): c for c in customers}
 
         state = {"query": "", "category_id": None}
+        focus_state = {"modal_open": False}
 
         # ---- today's running total ---------------------------------------
         # A quick "how's today going" glance from inside the sale screen
@@ -272,7 +277,25 @@ class POSCenter:
         refresh_today_summary()
 
         # ---- recent items (session recall) ---------------------------------
+        recent_state = {"expanded": False}
         recent_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, wrap=False, visible=False)
+        recent_toggle_icon = ft.Icon(ft.Icons.EXPAND_MORE, size=16, color=Colors.TEXT_SECONDARY)
+        recent_toggle_label = ft.Text("أضيفت مؤخرًا", size=11, color=Colors.TEXT_SECONDARY)
+        recent_toggle = ft.Container(
+            ft.Row([ft.Icon(ft.Icons.HISTORY, size=15, color=Colors.TEXT_SECONDARY), recent_toggle_label, recent_toggle_icon], spacing=5, tight=True),
+            padding=ft.padding.symmetric(horizontal=8, vertical=5),
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.SM,
+            ink=True,
+            visible=False,
+        )
+
+        def toggle_recent(_=None):
+            recent_state["expanded"] = not recent_state["expanded"]
+            render_recent()
+            self.page.update()
+
+        recent_toggle.on_click = toggle_recent
 
         def render_recent():
             controls = []
@@ -296,7 +319,11 @@ class POSCenter:
                     )
                 )
             recent_row.controls = controls
-            recent_row.visible = bool(controls)
+            has_recent = bool(controls)
+            recent_toggle.visible = has_recent
+            recent_row.visible = has_recent and recent_state["expanded"]
+            recent_toggle_icon.name = ft.Icons.EXPAND_LESS if recent_state["expanded"] else ft.Icons.EXPAND_MORE
+            recent_toggle_label.value = f"أضيفت مؤخرًا · {len(controls)}"
 
         render_recent()
 
@@ -314,6 +341,9 @@ class POSCenter:
             prefix_icon=ft.Icons.QR_CODE_2,
             dense=True,
             expand=True,
+            bgcolor=Colors.WHITE,
+            border_color=Colors.PRIMARY_BORDER,
+            focused_border_color=Colors.PRIMARY,
             # keyboard_type=NONE keeps this field focusable -- still
             # needed for the hardware/USB "wedge" scanner to type into
             # and for Enter to trigger barcode_submit() -- without ever
@@ -337,10 +367,22 @@ class POSCenter:
             # tap first -- keyboard_type=NONE on the field itself is what
             # keeps this from ever popping the on-screen keyboard.
             await asyncio.sleep(0.2)
-            barcode_field.focus()
-            self.page.update()
+            if self._pos_active and not focus_state["modal_open"]:
+                barcode_field.focus()
+                self.page.update()
 
         self.page.run_task(_focus_barcode_after_mount)
+
+        def _resume_barcode_focus(_=None) -> None:
+            focus_state["modal_open"] = False
+            self.page.run_task(_focus_barcode_after_mount)
+
+        def _mark_overlay_open() -> None:
+            focus_state["modal_open"] = True
+
+        self._pos_focus_state = focus_state
+        self._pos_resume_barcode_focus = _resume_barcode_focus
+        self._pos_mark_overlay_open = _mark_overlay_open
 
         def scan_button_handler(_):
             self.page.run_task(self._scan_with_camera)
@@ -351,6 +393,7 @@ class POSCenter:
         # product grid never drags the categories out of reach.
         cat_list = ft.Column(spacing=4)
         best_list = ft.Column(spacing=4)
+        best_state = {"expanded": False}
 
         def set_category(cat_id: int | None):
             state["category_id"] = cat_id
@@ -386,8 +429,31 @@ class POSCenter:
             reverse=True,
         )[:8]
 
+        best_toggle_icon = ft.Icon(ft.Icons.EXPAND_MORE, size=16, color=Colors.TEXT_SECONDARY)
+        best_toggle_label = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+        best_toggle = ft.Container(
+            ft.Row([ft.Icon(ft.Icons.STAR_OUTLINE, size=15, color=Colors.TEXT_SECONDARY), best_toggle_label, best_toggle_icon], spacing=5, tight=True),
+            padding=ft.padding.symmetric(horizontal=8, vertical=5),
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.SM,
+            ink=True,
+            visible=False,
+        )
+
+        def toggle_bestsellers(_=None):
+            best_state["expanded"] = not best_state["expanded"]
+            render_bestsellers()
+            self.page.update()
+
+        best_toggle.on_click = toggle_bestsellers
+
         def render_bestsellers():
             best_list.controls = [self._rail_product(it) for it in best_sellers]
+            has_sellers = bool(best_sellers)
+            best_toggle.visible = has_sellers
+            best_list.visible = has_sellers and best_state["expanded"]
+            best_toggle_label.value = f"الأكثر مبيعًا · {len(best_sellers)}"
+            best_toggle_icon.name = ft.Icons.EXPAND_LESS if best_state["expanded"] else ft.Icons.EXPAND_MORE
 
         # ---- item grid ------------------------------------------------
         # ResponsiveRow (not GridView) so tiles reflow by column count and
@@ -462,7 +528,8 @@ class POSCenter:
             # so this is just a safety net -- forces the cart visible after
             # every scan regardless of what else may have hidden it.
             cart_wrap.visible = True
-            barcode_field.focus()
+            if not focus_state["modal_open"]:
+                barcode_field.focus()
             self.page.update()
 
         barcode_field.on_submit = barcode_submit
@@ -898,6 +965,7 @@ class POSCenter:
             enable_drag=True,
             maintain_bottom_view_insets_padding=True,
         )
+        payment_sheet.on_dismiss = _resume_barcode_focus
 
         def confirm_payment(_=None):
             if do_checkout():
@@ -1138,6 +1206,7 @@ class POSCenter:
                 bgcolor=Colors.WHITE,
                 border_radius=ft.border_radius.only(top_left=24, top_right=24),
             )
+            _mark_overlay_open()
             self.page.open(payment_sheet)
 
         checkout_btn.on_click = open_payment_sheet
@@ -1161,20 +1230,41 @@ class POSCenter:
 
         catalog_pane = ft.Column(
             [
-                ft.Row([search_field], spacing=10),
-                ft.Row(
-                    [
-                        barcode_field,
-                        ft.IconButton(
-                            icon=ft.Icons.CAMERA_ALT_OUTLINED,
-                            tooltip="مسح بالكاميرا",
-                            on_click=scan_button_handler,
-                            icon_color=Colors.PRIMARY,
-                            visible=supports("barcode_camera_scan"),
-                        ),
-                    ],
-                    spacing=10,
+                ft.Container(
+                    ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=14, color=Colors.PRIMARY),
+                                    ft.Text("جاهز لقارئ الباركود", size=10, color=Colors.PRIMARY_DARK),
+                                ],
+                                spacing=5,
+                                tight=True,
+                            ),
+                            ft.Row(
+                                [
+                                    barcode_field,
+                                    ft.IconButton(
+                                        icon=ft.Icons.CAMERA_ALT_OUTLINED,
+                                        tooltip="مسح بالكاميرا",
+                                        on_click=scan_button_handler,
+                                        icon_color=Colors.PRIMARY,
+                                        visible=supports("barcode_camera_scan"),
+                                    ),
+                                ],
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                        ],
+                        spacing=5,
+                    ),
+                    padding=10,
+                    bgcolor=Colors.PRIMARY_BG,
+                    border=ft.border.all(1, Colors.PRIMARY_BORDER),
+                    border_radius=Radius.MD,
                 ),
+                ft.Row([search_field], spacing=10),
+                recent_toggle,
                 recent_row,
                 grid,
                 empty_box,
@@ -1316,10 +1406,7 @@ class POSCenter:
                 [
                     ft.Text("التصنيفات", size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                     cat_list,
-                    ft.Text(
-                        "الأكثر مبيعًا", size=12, weight=ft.FontWeight.BOLD,
-                        color=Colors.TEXT_SECONDARY, visible=bool(best_sellers),
-                    ),
+                    best_toggle,
                     best_list,
                 ],
                 spacing=6,
@@ -1474,6 +1561,8 @@ class POSCenter:
         except Exception:
             self._prev_on_keyboard = None
         def _pos_keyboard(e):
+            if focus_state["modal_open"]:
+                return
             try:
                 k = (e.key or "").strip().lower().replace(" ", "")
                 if k == "escape" or k == "esc":
@@ -1518,6 +1607,8 @@ class POSCenter:
         self._refresh_cart = refresh_cart
         self._search_field = search_field
         self._barcode_field = barcode_field
+        self._recent_toggle = recent_toggle
+        self._recent_row = recent_row
         self._render_recent = render_recent
         self._refresh_today_summary = refresh_today_summary
         self._clear_cart = clear_cart
@@ -1702,6 +1793,7 @@ class POSCenter:
                 enable_drag=True,
                 maintain_bottom_view_insets_padding=True,
             )
+            qty_sheet.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
             render_form_sheet(
                 self.page,
                 qty_sheet,
@@ -1710,6 +1802,9 @@ class POSCenter:
                 on_close=lambda _: self.page.close(qty_sheet),
                 on_save=apply,
             )
+            mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
+            if callable(mark_overlay_open):
+                mark_overlay_open()
             self.page.open(qty_sheet)
 
         def qty_shortcut(label: str, value: float) -> ft.Container:
@@ -1777,6 +1872,7 @@ class POSCenter:
                 enable_drag=True,
                 maintain_bottom_view_insets_padding=True,
             )
+            price_sheet.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
             render_form_sheet(
                 self.page,
                 price_sheet,
@@ -1785,6 +1881,9 @@ class POSCenter:
                 on_close=lambda _: self.page.close(price_sheet),
                 on_save=apply,
             )
+            mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
+            if callable(mark_overlay_open):
+                mark_overlay_open()
             self.page.open(price_sheet)
 
         # Informational only (see item tile note above) -- InvoiceService
@@ -2460,6 +2559,7 @@ class POSCenter:
             return
         sound_engine.play(self.page, "barcode_error")
         dialog = ft.AlertDialog(modal=True, title=ft.Text("لا توجد مادة بهذا الباركود"))
+        dialog.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
 
         def create(_=None) -> None:
             self.page.close(dialog)
@@ -2470,17 +2570,27 @@ class POSCenter:
 
         dialog.content = ft.Text(f"الباركود الممسوح: {code}\nهل تريد إنشاء مادة جديدة بهذا الباركود؟")
         dialog.actions = [ft.TextButton("إلغاء", on_click=cancel), ft.FilledButton("إنشاء مادة جديدة", on_click=create)]
+        mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
+        if callable(mark_overlay_open):
+            mark_overlay_open()
         self.page.open(dialog)
 
     async def _scan_with_camera(self) -> None:
         if self.native_files is None:
             self.notify("مسح الباركود غير مهيأ في هذا البناء")
             return
+        focus_state = getattr(self, "_pos_focus_state", None)
+        if focus_state is not None:
+            focus_state["modal_open"] = True
         try:
             code = await self.native_files.scan_barcode()
         except Exception as exc:
             self.notify(str(exc), kind="error")
             return
+        finally:
+            resume_focus = getattr(self, "_pos_resume_barcode_focus", None)
+            if callable(resume_focus):
+                resume_focus()
         if code:
             self._add_by_barcode(code)
 

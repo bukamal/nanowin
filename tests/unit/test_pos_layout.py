@@ -132,3 +132,16 @@ def test_pos_header_has_no_voice_or_mode_toggle():
     assert len(pos_header.content.controls) == 2
     assert not hasattr(pos, "apply_voice_command")
     assert not hasattr(pos, "voice_add_by_name")
+
+
+def test_recent_items_stay_collapsed_until_requested():
+    pos = _build_real_pos(1200)
+    item_id = next(iter(pos.item_map))
+    pos.recent_item_ids = [item_id]
+    pos._render_recent()
+
+    assert pos._recent_toggle.visible is True
+    assert pos._recent_row.visible is False
+
+    pos._recent_toggle.on_click(None)
+    assert pos._recent_row.visible is True
