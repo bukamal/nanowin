@@ -14,7 +14,6 @@ from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import Colors, Shadow
-from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import barcode_settings
@@ -65,11 +64,47 @@ class AdminCenter:
         self.page.open(error_dialog)
 
     def _section(self, title: str, controls: list[ft.Control]) -> ft.Container:
+        section_icons = (
+            ("المظهر", ft.Icons.DARK_MODE_OUTLINED),
+            ("المستخدمون", ft.Icons.PEOPLE_ALT_OUTLINED),
+            ("نسخ", ft.Icons.BACKUP_OUTLINED),
+            ("التفعيل", ft.Icons.VERIFIED_USER_OUTLINED),
+            ("هوية", ft.Icons.PALETTE_OUTLINED),
+            ("التدقيق", ft.Icons.HISTORY),
+            ("باركود", ft.Icons.QR_CODE_2_OUTLINED),
+            ("الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED),
+            ("البيع", ft.Icons.POINT_OF_SALE_OUTLINED),
+            ("الجرد", ft.Icons.FACT_CHECK_OUTLINED),
+            ("الصوت", ft.Icons.VOLUME_UP_OUTLINED),
+            ("التقارير", ft.Icons.BAR_CHART_OUTLINED),
+            ("الطوارئ", ft.Icons.WARNING_AMBER_ROUNDED),
+        )
+        icon = next((value for label, value in section_icons if label in title), ft.Icons.TUNE_ROUNDED)
         return ft.Container(
-            ft.Column([ft.Text(title, size=18, weight=ft.FontWeight.BOLD), *controls], spacing=10),
-            padding=14,
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Container(
+                                ft.Icon(icon, size=19, color=Colors.PRIMARY),
+                                width=40,
+                                height=40,
+                                alignment=ft.alignment.center,
+                                bgcolor=Colors.PRIMARY_BG,
+                                border_radius=13,
+                            ),
+                            ft.Text(title, size=17, weight=ft.FontWeight.BOLD, expand=True),
+                        ],
+                        spacing=10,
+                    ),
+                    ft.Divider(height=1, color=Colors.BORDER_ALT),
+                    *controls,
+                ],
+                spacing=12,
+            ),
+            padding=16,
             border=ft.border.all(1, Colors.BORDER_ALT),
-            border_radius=12,
+            border_radius=16,
             bgcolor=Colors.WHITE,
             shadow=Shadow.SM,
         )
@@ -1273,7 +1308,6 @@ class AdminCenter:
                 self._notify(str(exc), kind="error")
 
         audit_list = ft.Column(spacing=6)
-        audit_filter = {"entity": "all", "query": ""}
         audit_search = SelectAllTextField(
             label="بحث في السجل",
             hint_text="إجراء، نوع، مستخدم، تفاصيل…",
@@ -1455,7 +1489,9 @@ class AdminCenter:
         total_users_count = len(all_users_now)
         license_status_now = self.ctx.license.status()
         backup_files_now = sorted(
-            list(backups_dir.glob("*.nanobackup")) + list(backups_dir.glob("*.qeidbackup")), reverse=True
+            list(backups_dir.glob("*.nanobackup")) + list(backups_dir.glob("*.qeidbackup")),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
         )
         last_backup_label = backup_files_now[0].name if backup_files_now else "لا توجد بعد"
         if len(last_backup_label) > 22:
@@ -2177,79 +2213,133 @@ class AdminCenter:
             ("reports", "التقارير", ft.Icons.BAR_CHART_OUTLINED),
             ("audit", "سجل التدقيق", ft.Icons.HISTORY),
         ]
+        ADMIN_GROUPS = [
+            ("setup", "الإعداد والتخصيص", ft.Icons.TUNE_ROUNDED, ("appearance", "branding", "users", "license")),
+            ("operations", "العمليات والمخزون", ft.Icons.STORE_OUTLINED, ("barcode", "invoice", "pos", "stocktake", "crisis")),
+            ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED, ("backup", "reports", "audit")),
+            ("assistant", "الصوت والمساعد", ft.Icons.RECORD_VOICE_OVER_OUTLINED, ("sound", "voice")),
+        ]
         initial = getattr(self, "_pending_section", None) or "users"
         self._pending_section = None
-        tab_state = {"active": initial or "users"}
-        tab_chips: dict[str, ft.Container] = {}
+        group_for_section = {section_key: group_key for group_key, _, _, section_keys in ADMIN_GROUPS for section_key in section_keys}
+        tab_state = {"active": initial, "group": group_for_section.get(initial, "setup")}
+        group_bar = ft.Row(spacing=8, wrap=True)
+        section_bar = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
 
         for key, panel in section_panels.items():
             panel.visible = key == tab_state["active"]
 
-        def switch_tab(key: str):
+        def _nav_chip(
+            label: str,
+            icon: str,
+            *,
+            selected: bool,
+            primary: bool,
+            on_click,
+        ) -> ft.Container:
+            active_color = Colors.PRIMARY if primary else Colors.PRIMARY_BG
+            active_text = Colors.WHITE if primary else Colors.PRIMARY
+            return ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Icon(icon, size=15, color=active_text if selected else Colors.TEXT_MUTED),
+                        ft.Text(
+                            label,
+                            size=12.5 if primary else 12,
+                            color=active_text if selected else Colors.TEXT_MUTED,
+                            weight=ft.FontWeight.BOLD if selected else ft.FontWeight.W_500,
+                        ),
+                    ],
+                    spacing=7,
+                    tight=True,
+                ),
+                padding=ft.padding.symmetric(horizontal=14 if primary else 12, vertical=9 if primary else 8),
+                bgcolor=active_color if selected else Colors.WHITE,
+                border=ft.border.all(1, Colors.PRIMARY if selected else Colors.BORDER_ALT),
+                border_radius=13 if primary else 11,
+                ink=True,
+                animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+                on_click=on_click,
+            )
+
+        def _render_navigation() -> None:
+            group_bar.controls = [
+                _nav_chip(
+                    label,
+                    icon,
+                    selected=group_key == tab_state["group"],
+                    primary=True,
+                    on_click=lambda _, key=group_key: switch_group(key),
+                )
+                for group_key, label, icon, _ in ADMIN_GROUPS
+            ]
+            section_bar.controls = [
+                _nav_chip(
+                    section_label,
+                    section_icon,
+                    selected=section_key == tab_state["active"],
+                    primary=False,
+                    on_click=lambda _, key=section_key: switch_section(key),
+                )
+                for section_key, section_label, section_icon in TABS
+                if group_for_section[section_key] == tab_state["group"]
+            ]
+
+        def switch_section(key: str):
             if key == tab_state["active"]:
                 return
             tab_state["active"] = key
             for k, panel in section_panels.items():
                 panel.visible = k == key
-            for k, chip in tab_chips.items():
-                is_active = k == key
-                chip.bgcolor = Colors.PRIMARY if is_active else Colors.WHITE
-                chip.border = ft.border.all(1, Colors.PRIMARY if is_active else Colors.BORDER)
-                row: ft.Row = chip.content
-                row.controls[0].color = Colors.WHITE if is_active else Colors.TEXT_MUTED
-                row.controls[1].color = Colors.WHITE if is_active else Colors.TEXT_MUTED
-                row.controls[1].weight = ft.FontWeight.BOLD if is_active else ft.FontWeight.W_500
+            _render_navigation()
             self.page.update()
 
-        def _tab_chip(key: str, label: str, icon: str) -> ft.Container:
-            is_active = key == tab_state["active"]
-            chip = ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Icon(icon, size=15, color=Colors.WHITE if is_active else Colors.TEXT_MUTED),
-                        ft.Text(
-                            label,
-                            size=12.5,
-                            color=Colors.WHITE if is_active else Colors.TEXT_MUTED,
-                            weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.W_500,
-                        ),
-                    ],
-                    spacing=6,
-                    tight=True,
-                ),
-                padding=ft.padding.symmetric(horizontal=14, vertical=9),
-                bgcolor=Colors.PRIMARY if is_active else Colors.WHITE,
-                border=ft.border.all(1, Colors.PRIMARY if is_active else Colors.BORDER),
-                border_radius=20,
-                ink=True,
-                animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
-                on_click=lambda _, k=key: switch_tab(k),
-            )
-            tab_chips[key] = chip
-            return chip
+        def switch_group(key: str):
+            if key == tab_state["group"]:
+                return
+            tab_state["group"] = key
+            group = next(group for group in ADMIN_GROUPS if group[0] == key)
+            switch_section(group[3][0])
 
-        tab_bar = ft.Row(
-            [_tab_chip(key, label, icon) for key, label, icon in TABS] + [ft.Container(width=8)],
-            spacing=8,
-            scroll=ft.ScrollMode.AUTO,
-        )
+        _render_navigation()
 
         self.content.content = ft.Column(
             [
-                ft.Row(
-                    [
-                        ft.Column(
-                            [
-                                ft.Text("الإدارة والأمان", size=24, weight=ft.FontWeight.BOLD),
-                                ft.Text(f"المستخدم الحالي: {session.full_name} ({ROLE_LABELS.get(session.role, session.role)})", size=12, color=Colors.TEXT_SECONDARY),
-                            ],
-                            expand=True,
-                        ),
-                        ft.OutlinedButton("تسجيل الخروج", icon=ft.Icons.LOGOUT, on_click=lambda _: self.on_logout()),
-                    ]
+                ft.Container(
+                    ft.Row(
+                        [
+                            ft.Container(
+                                ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED, size=24, color=Colors.PRIMARY),
+                                width=48,
+                                height=48,
+                                alignment=ft.alignment.center,
+                                bgcolor=Colors.PRIMARY_BG,
+                                border_radius=16,
+                            ),
+                            ft.Column(
+                                [
+                                    ft.Text("الإدارة والأمان", size=22, weight=ft.FontWeight.BOLD),
+                                    ft.Text(f"المستخدم الحالي: {session.full_name} ({ROLE_LABELS.get(session.role, session.role)})", size=12, color=Colors.TEXT_SECONDARY),
+                                ],
+                                expand=True,
+                                spacing=3,
+                            ),
+                            ft.OutlinedButton("تسجيل الخروج", icon=ft.Icons.LOGOUT, on_click=lambda _: self.on_logout()),
+                        ],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=14,
+                    bgcolor=Colors.WHITE,
+                    border=ft.border.all(1, Colors.BORDER_ALT),
+                    border_radius=16,
                 ),
                 status_strip,
-                tab_bar,
+                group_bar,
+                ft.Container(
+                    section_bar,
+                    padding=ft.padding.only(bottom=2),
+                ),
                 ft.Column(list(section_panels.values()), spacing=12),
             ],
             scroll=ft.ScrollMode.AUTO,
