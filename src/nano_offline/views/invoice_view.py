@@ -2039,14 +2039,11 @@ class InvoiceCenter:
             bgcolor=Colors.PRIMARY_BG,
         )
 
-        # A bounded viewport of its own: `expand` inside the sheet's scroll
-        # body collapsed the table to zero height on Flutter (the blank
-        # grey block users saw instead of the grid). Same fix as the
-        # quick-entry sheet: explicit height + scrolling sheet body.
-        grid_viewport = max(240, int(int(self.page.height or 800) * 0.88) - 420)
+        # The sheet now pins its header and footer and lets the grid take the
+        # remaining height, so the table (and its totals row) stay put while
+        # the rows scroll inside their own viewport.
         lines_grid = DataGrid(
             columns=line_columns, rows=[], page=self.page,
-            viewport_height=grid_viewport,
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=set(hidden_state["keys"]),
             formatter=row_formatter,
@@ -2295,9 +2292,18 @@ class InvoiceCenter:
             value=currency.to_input_text(paid_initial, settings),
             on_change=lambda e: refresh_summary(),
         )
-        lines_summary_text = ft.Text("لا بنود بعد", size=10, color=Colors.TEXT_SECONDARY)
-        total_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD)
-        remaining_text = ft.Text("0", size=16, weight=ft.FontWeight.BOLD)
+        lines_summary_text = ft.Text(
+            "لا بنود بعد", size=13, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY,
+            text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        total_text = ft.Text(
+            "0", size=18, weight=ft.FontWeight.BOLD,
+            text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        remaining_text = ft.Text(
+            "0", size=16, weight=ft.FontWeight.BOLD,
+            text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+        )
 
         def rows_total_display() -> float:
             total = 0.0
@@ -2349,11 +2355,13 @@ class InvoiceCenter:
             remaining_text.value = currency.format_display_value(max(0.0, total - paid_value), settings)
             remaining_text.color = Colors.SUCCESS if total - paid_value <= 1e-9 else Colors.ORANGE
             quick_chips.visible = not cash_without_party
+            cash_note.visible = cash_without_party
             _safe_update(lines_summary_text)
             _safe_update(paid)
             _safe_update(total_text)
             _safe_update(remaining_text)
             _safe_update(quick_chips)
+            _safe_update(cash_note)
 
         def quick_pay(ratio: float) -> None:
             paid.value = currency.format_plain(round(rows_total_display() * ratio, 2))
@@ -2376,6 +2384,23 @@ class InvoiceCenter:
                 quick_pay_chip("بدون دفعة", 0.0, ft.Icons.MONEY_OFF_OUTLINED),
             ],
             spacing=6, wrap=True,
+        )
+        # Occupies the same slot as the quick-pay chips when the invoice has
+        # no party, so the footer keeps one stable height instead of jumping
+        # between "chips + paid field" and "paid field only".
+        cash_note = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.PAYMENTS_OUTLINED, size=14, color=Colors.SUCCESS),
+                    ft.Text("دفعة نقدية تلقائية — بدون طرف", size=11, weight=ft.FontWeight.W_600, color=Colors.SUCCESS),
+                ],
+                spacing=5,
+            ),
+            padding=ft.padding.symmetric(horizontal=10, vertical=7),
+            border=ft.border.all(1, Colors.SUCCESS),
+            border_radius=12,
+            bgcolor=Colors.SUCCESS_BG,
+            visible=False,
         )
 
         def build_inputs() -> list[InvoiceLineInput]:
@@ -2619,34 +2644,103 @@ class InvoiceCenter:
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     bulk_bar,
-                    ft.Container(lines_grid, height=grid_viewport, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
-                    ft.Row(
-                        [
-                            lines_summary_text,
-                            ft.Container(expand=True),
-                            ft.Text("إجمالي الفاتورة", size=11, color=Colors.TEXT_SECONDARY),
-                            total_text,
-                            ft.Container(width=14),
-                            ft.Text("المتبقي", size=11, color=Colors.TEXT_SECONDARY),
-                            remaining_text,
-                        ],
-                        spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ft.Container(
+                        lines_grid,
+                        expand=True,
+                        border=ft.border.all(1, Colors.BORDER),
+                        border_radius=Radius.MD,
+                        clip_behavior=ft.ClipBehavior.HARD_EDGE,
                     ),
-                    ft.Row(
-                        [
-                            quick_chips,
-                            ft.Container(width=12),
-                            ft.Container(paid, width=220),
-                            ft.FilledButton(
-                                "حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
-                                icon=ft.Icons.SAVE_OUTLINED,
-                                on_click=save,
-                            ),
-                        ],
-                        spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    # Pinned action footer: it stays at the bottom of the
+                    # sheet while the rows scroll, and keeps the same two-row
+                    # geometry whether the invoice has a party or not.
+                    ft.Container(
+                        ft.Column(
+                            [
+                                ft.ResponsiveRow(
+                                    [
+                                        ft.Container(
+                                            ft.Column(
+                                                [
+                                                    ft.Text("البنود", size=9, color=Colors.TEXT_SECONDARY),
+                                                    lines_summary_text,
+                                                ],
+                                                spacing=0, tight=True,
+                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                            ),
+                                            col={"xs": 4},
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                                            bgcolor=Colors.BACKGROUND,
+                                            border_radius=Radius.SM,
+                                        ),
+                                        ft.Container(
+                                            ft.Column(
+                                                [
+                                                    ft.Text("الإجمالي", size=9, color=Colors.TEXT_SECONDARY),
+                                                    total_text,
+                                                ],
+                                                spacing=0, tight=True,
+                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                            ),
+                                            col={"xs": 4},
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                                            bgcolor=Colors.BACKGROUND,
+                                            border_radius=Radius.SM,
+                                        ),
+                                        ft.Container(
+                                            ft.Column(
+                                                [
+                                                    ft.Text("المتبقي", size=9, color=Colors.TEXT_SECONDARY),
+                                                    remaining_text,
+                                                ],
+                                                spacing=0, tight=True,
+                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                            ),
+                                            col={"xs": 4},
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                                            bgcolor=Colors.BACKGROUND,
+                                            border_radius=Radius.SM,
+                                        ),
+                                    ],
+                                    spacing=8, run_spacing=8,
+                                ),
+                                ft.ResponsiveRow(
+                                    [
+                                        ft.Container(
+                                            ft.Row(
+                                                [quick_chips, cash_note],
+                                                spacing=8, wrap=True,
+                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                            ),
+                                            col={"xs": 12, "md": 7},
+                                        ),
+                                        ft.Container(
+                                            ft.Row(
+                                                [
+                                                    ft.Container(paid, width=220),
+                                                    ft.FilledButton(
+                                                        "حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
+                                                        icon=ft.Icons.SAVE_OUTLINED,
+                                                        on_click=save,
+                                                    ),
+                                                ],
+                                                spacing=8, wrap=True,
+                                                alignment=ft.MainAxisAlignment.END,
+                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                            ),
+                                            col={"xs": 12, "md": 5},
+                                        ),
+                                    ],
+                                    spacing=8, run_spacing=8,
+                                ),
+                            ],
+                            spacing=8, tight=True,
+                        ),
+                        padding=ft.padding.only(top=10),
+                        border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
                     ),
                 ],
-                spacing=10, tight=True, scroll=ft.ScrollMode.AUTO,
+                spacing=10, expand=True,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
             width=sheet_w,

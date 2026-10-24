@@ -2438,16 +2438,11 @@ class ItemsCenter:
                 bgcolor=Colors.PRIMARY_BG,
             )
 
-            # The table needs its own bounded height to become a real
-            # viewport inside the sheet. Leaving it to `expand` inside a
-            # bottom-sheet scroll view let Flutter collapse it to zero
-            # (the "grey empty block" the table used to render as); the
-            # proven pattern from the invoice quick-entry sheet is an
-            # explicit viewport height with the sheet body scrolling.
-            grid_viewport = max(240, int(int(page.height or 800) * 0.85) - 330)
+            # The sheet pins its header and action footer; the grid takes
+            # whatever height is left, so the table and its totals row stay
+            # put while the rows scroll in their own viewport.
             bulk_grid = DataGrid(
                 columns=bulk_columns, rows=[], page=page,
-                viewport_height=grid_viewport,
                 row_height=36 if bulk_density_state["compact"] else 48,
                 hidden_keys=set(bulk_hidden_state["keys"]),
                 formatter=bulk_formatter,
@@ -2836,17 +2831,35 @@ class ItemsCenter:
                             spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         bulk_bar,
-                        ft.Container(bulk_grid, height=grid_viewport, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD, clip_behavior=ft.ClipBehavior.HARD_EDGE),
-                        ft.Row(
-                            [
-                                ft.Text("الحفظ يتجاهل الصفوف بلا اسم", size=10, color=Colors.TEXT_SECONDARY),
-                                ft.Container(expand=True),
-                                ft.FilledButton("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ft.Container(
+                            bulk_grid,
+                            expand=True,
+                            border=ft.border.all(1, Colors.BORDER),
+                            border_radius=Radius.MD,
+                            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                        ),
+                        # Pinned action footer: always visible under the
+                        # scrolling rows, with the same layout in every state.
+                        ft.Container(
+                            ft.Row(
+                                [
+                                    ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=Colors.TEXT_SECONDARY),
+                                    ft.Text(
+                                        "الحفظ يتجاهل الصفوف بلا اسم — أضف سطرًا أو كرر الأخير",
+                                        size=10,
+                                        color=Colors.TEXT_SECONDARY,
+                                        expand=True,
+                                    ),
+                                    ft.FilledButton("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all),
+                                ],
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            padding=ft.padding.only(top=10),
+                            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
                         ),
                     ],
-                    spacing=10, tight=True, scroll=ft.ScrollMode.AUTO,
+                    spacing=10, expand=True,
                     horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
                 width=sheet_w,

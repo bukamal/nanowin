@@ -179,16 +179,21 @@ class DataGrid(ft.Column):
         self._armed = False
         self._shortcuts_enabled = True
         self._body = ft.Column(spacing=0)
+        # Footer (e.g. invoice totals) lives outside the scrolling body so it
+        # stays pinned at the bottom of the table instead of drifting with the
+        # rows. It shares the header's column geometry, so cells line up.
+        self._footer_slot = ft.Container(visible=False)
 
-        # Header stays pinned; only the body scrolls. Both live inside one
-        # rounded, clipped card so the tinted header's top corners and the
-        # last row's bottom corners follow the table's radius instead of
-        # squaring off against it.
+        # Header and footer stay pinned; only the body scrolls. All three live
+        # inside one rounded, clipped card so the tinted header's top corners
+        # and the last row's bottom corners follow the table's radius instead
+        # of squaring off against it.
         card = ft.Container(
             ft.Column(
                 [
                     self._build_header(),
                     ft.Column([self._body], scroll=ft.ScrollMode.AUTO, expand=True),
+                    self._footer_slot,
                 ],
                 spacing=0,
                 expand=True,
@@ -478,6 +483,7 @@ class DataGrid(ft.Column):
         self._prev_cell = None
         self._refresh_header()
         self._render_body()
+        self._refresh_footer()
         self._safe_update(self._body)
 
     @property
@@ -882,6 +888,12 @@ class DataGrid(ft.Column):
             border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER_STRONG)),
         )
 
+    def _refresh_footer(self) -> None:
+        footer = self._build_footer()
+        self._footer_slot.content = footer
+        self._footer_slot.visible = footer is not None
+        self._safe_update(self._footer_slot)
+
     def _render_body(self) -> None:
         self._cell_boxes.clear()
         self._row_boxes.clear()
@@ -939,9 +951,6 @@ class DataGrid(ft.Column):
                                 border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
                             )
                         )
-        footer = self._build_footer()
-        if footer is not None:
-            controls.append(footer)
         self._body.controls = controls
         self._painted_selection = self._selection_cells() if self._cell_boxes else set()
         self._prev_cell = self.nav.cell if self._cell_boxes else None
@@ -992,8 +1001,7 @@ class DataGrid(ft.Column):
         footer cell. Pass ``None`` to remove the footer.
         """
         self._footer_values = dict(values) if values else None
-        self._render_body()
-        self._safe_update(self._body)
+        self._refresh_footer()
 
     def add_row(self, row: dict | None = None) -> int:
         """Append a (blank) row, move the cursor to its first editable cell

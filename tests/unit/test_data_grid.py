@@ -423,10 +423,15 @@ def test_zebra_stripes_alternate_and_can_be_disabled():
     assert plain._row_bg_for(1) == Colors.WHITE
 
 
-def test_footer_row_is_appended_and_removed():
+def test_footer_row_is_pinned_outside_the_scrolling_body_and_removed():
     g = make_grid()
+    assert g._footer_slot.visible is False
     assert len(g._body.controls) == len(ROWS)
     g.set_footer({"name": "الإجمالي", "price": "11.5"})
-    assert len(g._body.controls) == len(ROWS) + 1
-    g.set_footer(None)
+    assert g._footer_slot.visible is True
+    assert g._footer_slot.content is not None
+    # Pinned: the footer must not be part of the scrollable row list.
     assert len(g._body.controls) == len(ROWS)
+    g.set_footer(None)
+    assert g._footer_slot.visible is False
+    assert g._footer_slot.content is None
