@@ -28,7 +28,9 @@ for token in [
     '"سند مصروف"',
     '"إجمالي القبض"',
     '"إجمالي الدفع"',
-    '"طباعة 80mm"',
+    # Print now goes through the shared paper-profile dialog (sheet/roll,
+    # 58/80mm) instead of a fixed "طباعة 80mm" action.
+    'open_print_profile_dialog',
     '"تكرار"',
     'show_voucher_detail',
 ]:

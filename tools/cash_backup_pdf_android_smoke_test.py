@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from nano_offline.app_context import AppContext
@@ -57,8 +58,10 @@ invoice_ui = (ROOT / "src/nano_offline/views/invoice_view.py").read_text(encodin
 pos_ui = (ROOT / "src/nano_offline/views/pos_view.py").read_text(encoding="utf-8")
 
 # PDF must be materialized, then shared through the same share_file/shareXFiles path as backups.
-for needle in ['invoke_method_async("create_pdf"', 'mime_type="application/pdf"']:
-    assert needle in native_py, needle
+# Match the call, not a single-line formatting: the argument list is multi-line
+# now that create_pdf takes the paper-profile arguments (paper_layout/roll_width_mm).
+assert re.search(r'invoke_method_async\(\s*"create_pdf"', native_py), "create_pdf bridge call"
+assert 'mime_type="application/pdf"' in native_py
 for needle in ["shareXFiles", "XFile"]:
     assert needle in native_dart, needle
 assert "Printing.sharePdf" not in native_dart
