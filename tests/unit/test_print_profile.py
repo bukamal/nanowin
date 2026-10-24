@@ -17,6 +17,10 @@ def test_thermal_profile_overrides_document_page_size_and_width():
     assert "@page { size: 58mm auto; margin: 0; }" in result
     assert "width: 58mm !important" in result
     assert result.index('id="nano-print-profile"') < result.lower().index("</head>")
+    # The injected style block must be closed: an unclosed <style> makes the
+    # browser treat the rest of the document as CSS and print a blank page
+    # (barcode labels worked only because they skip this wrapper).
+    assert result.count("<style") == result.count("</style>")
 
 
 def test_a4_profile_overrides_preexisting_thermal_template():
@@ -26,6 +30,7 @@ def test_a4_profile_overrides_preexisting_thermal_template():
 
     assert "@page { size: A4; margin: 12mm; }" in result
     assert "max-width: 100% !important" in result
+    assert result.count("<style") == result.count("</style>")
 
 
 def test_profile_can_be_applied_to_html_without_head():

@@ -129,6 +129,7 @@ body {{ font-size: 9px !important; line-height: 1.4 !important; }}
 .metric {{ margin: 4px 0 !important; padding: 6px !important; }}
 table {{ width: 100% !important; table-layout: fixed !important; font-size: 8px !important; }}
 th, td {{ padding: 3px 2px !important; overflow-wrap: anywhere !important; }}
+</style>
 """
     else:
         style = """
@@ -136,6 +137,7 @@ th, td {{ padding: 3px 2px !important; overflow-wrap: anywhere !important; }}
 @page { size: A4; margin: 12mm; }
 html, body { width: auto !important; min-width: 0 !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
 .sheet { width: 100% !important; max-width: 100% !important; }
+</style>
 """
 
     marker = "</head>"
