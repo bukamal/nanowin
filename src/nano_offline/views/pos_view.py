@@ -840,6 +840,9 @@ class POSCenter:
                 self._remember_undo()
             self.cart = {}
             self.cart_order = []
+            # A manual USD/SYP flip is per-sale: clear it with the cart so
+            # the next sale starts on the app's display currency again.
+            self._receive_currency = None
             if not keep_customer:
                 customer_dd.value = None
                 self.customer_id = None
@@ -1047,7 +1050,7 @@ class POSCenter:
             if not self.cart_order:
                 self.notify("السلة فارغة")
                 return
-            # Reset received to exact total for a one-tap confirm path
+            # Reset received to exact total for a one-tap confirm path.
             self.received_digits = ""
             _sync_received_display()
             render_quick_cash()

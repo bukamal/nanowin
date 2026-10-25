@@ -138,3 +138,16 @@ def test_checkout_clears_cart_so_a_second_click_cannot_duplicate_the_sale(tmp_pa
     # a second invoice from the same lines.
     assert pos._do_checkout() is False
     assert len(ctx.invoices.list_invoices(limit=10)) == 1
+
+
+def test_completed_sale_resets_a_manual_currency_choice(tmp_path):
+    pos, ctx, item_id, carton = _pos(tmp_path)
+    pos._receive_currency = "USD"
+    pos._add_by_barcode("222")
+
+    assert pos._do_checkout() is True
+
+    # The flip is per-sale: after a sale the next amount field must follow
+    # the app display currency again, otherwise one USD sale leaves every
+    # later field showing dollars while the app is back on SYP.
+    assert pos._receive_currency is None
