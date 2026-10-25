@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,8 +33,8 @@ def test_vendored_serious_python_windows_uses_wide_char_paths():
 
 
 def test_windows_build_overrides_the_vendored_plugin():
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert (
-        'serious_python_windows = { path = "../../vendor/serious_python_windows" }'
-        in pyproject
-    )
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    override = pyproject["tool"]["flet"]["flutter"]["pubspec"][
+        "dependency_overrides"
+    ]["serious_python_windows"]
+    assert override["path"] == "../../vendor/serious_python_windows"

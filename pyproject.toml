@@ -151,8 +151,8 @@ no_pub_get = true
 # "ImportError: No module named main". Vendor a 0.9.11-compatible copy with
 # the upstream 4.3.6 wide-char fix (plus direct sys.path/os.environ setup) so
 # the same installer works for Arabic and English Windows accounts alike.
-[tool.flet.flutter.pubspec.dependency_overrides]
-serious_python_windows = { path = "../../vendor/serious_python_windows" }
+[tool.flet.flutter.pubspec.dependency_overrides.serious_python_windows]
+path = "../../vendor/serious_python_windows"
 
 [tool.flet.splash]
 color = "#0F766E"
