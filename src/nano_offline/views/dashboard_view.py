@@ -413,6 +413,18 @@ class DashboardCenter:
             shadow=Shadow.SM,
         )
 
+    def _hero_row(self, pulse_card) -> ft.ResponsiveRow:
+        """Equal-width hero cards, currency on the right in RTL."""
+        return ft.ResponsiveRow(
+            [
+                ft.Container(self._rate_chip(), col={"xs": 12, "md": 6}),
+                ft.Container(pulse_card, col={"xs": 12, "md": 6}),
+            ],
+            spacing=12,
+            run_spacing=12,
+            rtl=True,
+        )
+
     # -- decision of the day (smart assistant) ------------------------------
     def _decision_of_day_card(self, decision) -> ft.Container:
         """Hero card: the single most important next step for the owner."""
@@ -1251,16 +1263,11 @@ class DashboardCenter:
         elif decision_today is not None:
             pulse_card = self._decision_of_day_card(decision_today)
 
-        # Hero row: Owner Pulse beside the display-currency control, so the
-        # currency toggle stays reachable without a whole pinned top row.
-        hero_row = ft.ResponsiveRow(
-            [
-                ft.Container(pulse_card, col={"xs": 12, "md": 8}),
-                ft.Container(self._rate_chip(), col={"xs": 12, "md": 4}),
-            ],
-            spacing=12,
-            run_spacing=12,
-        )
+        # Hero row: display-currency control beside Owner Pulse. The row is
+        # explicitly RTL, so the first child sits on the right -- the
+        # currency card the user asked for, with Owner Pulse on the left.
+        # Both cards share the same column width (6/12 on desktop).
+        hero_row = self._hero_row(pulse_card)
 
         # Quick actions as one thin strip -- was a tall standalone card that
         # only repeated the same six icons with a header.

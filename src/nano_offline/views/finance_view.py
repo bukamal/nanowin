@@ -11,6 +11,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.command_bar import RibbonAction
+from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.services.statement_service import StatementService
@@ -205,33 +206,17 @@ class FinanceCenter:
         density_state = {"compact": self.ctx.settings.get("ui.vouchers_density", "comfortable") == "compact"}
         selected_state = {"rows": []}
         export_state = {"rows": []}
-        hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.vouchers_hidden_columns", "").split(",")))}
-        auto_hidden = {"keys": {"voucher_date", "unallocated_amount"} if (self.page.width or 1200) < 720 else set()}
-
-        def current_hidden() -> set[str]:
-            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
-
-        def toggle_column(key: str) -> None:
-            if key in hidden_state["keys"]:
-                hidden_state["keys"].discard(key)
-            else:
-                hidden_state["keys"].add(key)
-            self.ctx.settings.set("ui.vouchers_hidden_columns", ",".join(sorted(hidden_state["keys"])))
-            grid.set_hidden_keys(current_hidden())
-            self.page.update()
-
-        columns_button = ft.PopupMenuButton(
-            icon=ft.Icons.VIEW_COLUMN,
-            tooltip="إظهار/إخفاء الأعمدة",
-            items=[
-                ft.PopupMenuItem(
-                    text=c.label,
-                    checked=c.key not in hidden_state["keys"],
-                    on_click=lambda _, k=c.key: toggle_column(k),
-                )
-                for c in VOUCHER_GRID_COLUMNS
-            ],
+        columns_visibility = ColumnVisibility(
+            columns=VOUCHER_GRID_COLUMNS,
+            settings=self.ctx.settings,
+            preference_key="ui.vouchers_hidden_columns",
+            auto_hidden={"voucher_date", "unallocated_amount"} if (self.page.width or 1200) < 720 else set(),
+            on_change=lambda: (
+                grid.set_hidden_keys(columns_visibility.hidden_keys),
+                self.page.update(),
+            ),
         )
+        columns_button = columns_visibility.button()
 
         async def export_csv(_=None) -> None:
             rows_out = export_state["rows"]
@@ -403,7 +388,7 @@ class FinanceCenter:
             page=self.page,
             row_height=36 if density_state["compact"] else 48,
             viewport_height=grid_height,
-            hidden_keys=current_hidden(),
+            hidden_keys=columns_visibility.hidden_keys,
             on_row_activate=lambda row: self.show_voucher_detail(int(row.get("id") or 0)),
             on_sort=apply_grid_sort,
             selectable=True,
@@ -457,7 +442,7 @@ class FinanceCenter:
 
                 filtered.sort(key=sort_value, reverse=reverse)
             export_state["rows"] = filtered
-            grid.set_hidden_keys(current_hidden())
+            grid.set_hidden_keys(columns_visibility.hidden_keys)
             if not filtered:
                 grid.set_rows([])
                 if vouchers:
@@ -900,33 +885,17 @@ class FinanceCenter:
         density_state = {"compact": self.ctx.settings.get("ui.expenses_density", "comfortable") == "compact"}
         selected_state = {"rows": []}
         export_state = {"rows": []}
-        hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.expenses_hidden_columns", "").split(",")))}
-        auto_hidden = {"keys": {"reference"} if (self.page.width or 1200) < 720 else set()}
-
-        def current_hidden() -> set[str]:
-            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
-
-        def toggle_column(key: str) -> None:
-            if key in hidden_state["keys"]:
-                hidden_state["keys"].discard(key)
-            else:
-                hidden_state["keys"].add(key)
-            self.ctx.settings.set("ui.expenses_hidden_columns", ",".join(sorted(hidden_state["keys"])))
-            grid.set_hidden_keys(current_hidden())
-            self.page.update()
-
-        columns_button = ft.PopupMenuButton(
-            icon=ft.Icons.VIEW_COLUMN,
-            tooltip="إظهار/إخفاء الأعمدة",
-            items=[
-                ft.PopupMenuItem(
-                    text=c.label,
-                    checked=c.key not in hidden_state["keys"],
-                    on_click=lambda _, k=c.key: toggle_column(k),
-                )
-                for c in EXPENSE_GRID_COLUMNS
-            ],
+        columns_visibility = ColumnVisibility(
+            columns=EXPENSE_GRID_COLUMNS,
+            settings=self.ctx.settings,
+            preference_key="ui.expenses_hidden_columns",
+            auto_hidden={"reference"} if (self.page.width or 1200) < 720 else set(),
+            on_change=lambda: (
+                grid.set_hidden_keys(columns_visibility.hidden_keys),
+                self.page.update(),
+            ),
         )
+        columns_button = columns_visibility.button()
 
         async def export_csv(_=None) -> None:
             rows_out = export_state["rows"]
@@ -1087,7 +1056,7 @@ class FinanceCenter:
             page=self.page,
             row_height=36 if density_state["compact"] else 48,
             viewport_height=grid_height,
-            hidden_keys=current_hidden(),
+            hidden_keys=columns_visibility.hidden_keys,
             on_row_activate=lambda row: self.show_expense_dialog(int(row.get("id") or 0)),
             on_sort=apply_grid_sort,
             selectable=True,
@@ -1142,7 +1111,7 @@ class FinanceCenter:
 
                 filtered.sort(key=sort_value, reverse=reverse)
             export_state["rows"] = filtered
-            grid.set_hidden_keys(current_hidden())
+            grid.set_hidden_keys(columns_visibility.hidden_keys)
             if not filtered:
                 grid.set_rows([])
                 if expenses:

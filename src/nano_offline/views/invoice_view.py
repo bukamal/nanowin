@@ -31,6 +31,7 @@ from nano_offline.components import (
 
 from nano_offline.services.invoice_service import InvoiceLineInput
 from nano_offline.components.buttons import stepper_icon_button, header_close_button
+from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -694,33 +695,17 @@ class InvoiceCenter:
             selected_state = {"rows": []}
             grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
             export_state = {"rows": []}
-            hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.invoices_hidden_columns", "").split(",")))}
-            auto_hidden = {"keys": {"invoice_date"} if (self.page.width or 1200) < 720 else set()}
-
-            def current_hidden() -> set[str]:
-                return set(hidden_state["keys"]) | set(auto_hidden["keys"])
-
-            def toggle_column(key: str) -> None:
-                if key in hidden_state["keys"]:
-                    hidden_state["keys"].discard(key)
-                else:
-                    hidden_state["keys"].add(key)
-                self.ctx.settings.set("ui.invoices_hidden_columns", ",".join(sorted(hidden_state["keys"])))
-                invoice_grid.set_hidden_keys(current_hidden())
-                self.page.update()
-
-            columns_button = ft.PopupMenuButton(
-                icon=ft.Icons.VIEW_COLUMN,
-                tooltip="إظهار/إخفاء الأعمدة",
-                items=[
-                    ft.PopupMenuItem(
-                        text=c.label,
-                        checked=c.key not in hidden_state["keys"],
-                        on_click=lambda _, k=c.key: toggle_column(k),
-                    )
-                    for c in INVOICE_GRID_COLUMNS
-                ],
+            invoice_visibility = ColumnVisibility(
+                columns=INVOICE_GRID_COLUMNS,
+                settings=self.ctx.settings,
+                preference_key="ui.invoices_hidden_columns",
+                auto_hidden={"invoice_date"} if (self.page.width or 1200) < 720 else set(),
+                on_change=lambda: (
+                    invoice_grid.set_hidden_keys(invoice_visibility.hidden_keys),
+                    self.page.update(),
+                ),
             )
+            columns_button = invoice_visibility.button()
 
             async def export_csv(_=None) -> None:
                 rows = export_state["rows"]
@@ -946,7 +931,7 @@ class InvoiceCenter:
                 page=self.page,
                 row_height=36 if density_state["compact"] else 48,
                 viewport_height=grid_height,
-                hidden_keys=current_hidden(),
+                hidden_keys=invoice_visibility.hidden_keys,
                 on_row_activate=lambda row: self.show_invoice_detail(int(row.get("id") or 0)),
                 on_sort=apply_grid_sort,
                 selectable=True,
@@ -990,7 +975,7 @@ class InvoiceCenter:
                     # group banners narrate "متأخرة السداد / اليوم / أمس…".
                     matched.sort(key=lambda inv: 0 if invoice_is_overdue(inv) else 1)
                 export_state["rows"] = matched
-                invoice_grid.set_hidden_keys(current_hidden())
+                invoice_grid.set_hidden_keys(invoice_visibility.hidden_keys)
                 invoice_grid.set_group_by(None if grid_sort["key"] else invoice_group)
                 shown = matched[: render_limit["n"]]
                 if not shown:
@@ -1364,13 +1349,24 @@ class InvoiceCenter:
                 return currency.format_plain(value) if value else ""
             return None
 
+        line_columns = [
+            GridColumn("item", "المادة", editable=True, kind="picker"),
+            GridColumn("qty", "الكمية", editable=True, kind="number", width=100, align="end"),
+            GridColumn("price", currency.amount_field_label("السعر", settings), editable=True, kind="money", width=150, align="end"),
+        ]
+        line_visibility = ColumnVisibility(
+            columns=line_columns,
+            settings=settings,
+            preference_key="ui.new_invoice_hidden_columns",
+            on_change=lambda: (
+                lines_grid.set_hidden_keys(line_visibility.hidden_keys),
+                self.page.update(),
+            ),
+        )
         lines_grid = DataGrid(
-            columns=[
-                GridColumn("item", "المادة", editable=True, kind="picker"),
-                GridColumn("qty", "الكمية", editable=True, kind="number", width=100, align="end"),
-                GridColumn("price", currency.amount_field_label("السعر", settings), editable=True, kind="money", width=150, align="end"),
-            ],
+            columns=line_columns,
             rows=[], page=self.page,
+            hidden_keys=line_visibility.hidden_keys,
             picker_options=lambda _col, _row: [
                 (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
                 for item_row in items
@@ -1379,6 +1375,7 @@ class InvoiceCenter:
             formatter=row_formatter,
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
         )
+        line_columns_button = line_visibility.button()
 
         def add_blank(_=None) -> None:
             lines_grid.add_row({"qty": 1})
@@ -1744,6 +1741,7 @@ class InvoiceCenter:
                     [
                         ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                         ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
+                        line_columns_button,
                     ],
                     spacing=8, wrap=True,
                 ),
@@ -1931,7 +1929,6 @@ class InvoiceCenter:
             except Exception:
                 pass
 
-        hidden_state = {"keys": set(filter(None, settings.get("ui.table_invoice_hidden_columns", "").split(",")))}
         density_state = {"compact": settings.get("ui.table_invoice_density", "comfortable") == "compact"}
 
         # ------------------------------------------------------------- header
@@ -2034,6 +2031,16 @@ class InvoiceCenter:
             GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
             GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
         ]
+        line_visibility = ColumnVisibility(
+            columns=line_columns,
+            settings=settings,
+            preference_key="ui.table_invoice_hidden_columns",
+            on_change=lambda: (
+                lines_grid.set_hidden_keys(line_visibility.hidden_keys),
+                self.page.update(),
+            ),
+        )
+        columns_button = line_visibility.button()
 
         bulk_bar = ft.Container(
             visible=False,
@@ -2048,7 +2055,7 @@ class InvoiceCenter:
         lines_grid = DataGrid(
             columns=line_columns, rows=[], page=self.page,
             row_height=36 if density_state["compact"] else 48,
-            hidden_keys=set(hidden_state["keys"]),
+            hidden_keys=line_visibility.hidden_keys,
             formatter=row_formatter,
             on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
             picker_options=lambda col, row: (
@@ -2231,15 +2238,6 @@ class InvoiceCenter:
 
                 lines_grid.set_rows(sorted(lines_grid.rows, key=sort_value, reverse=direction == "desc"))
             refresh_summary()
-
-        def toggle_column(key: str) -> None:
-            if key in hidden_state["keys"]:
-                hidden_state["keys"].discard(key)
-            else:
-                hidden_state["keys"].add(key)
-            settings.set("ui.table_invoice_hidden_columns", ",".join(sorted(hidden_state["keys"])))
-            lines_grid.set_hidden_keys(hidden_state["keys"])
-            self.page.update()
 
         def toggle_density(_=None) -> None:
             compact = not density_state["compact"]
@@ -2513,18 +2511,6 @@ class InvoiceCenter:
         party_dd.on_change = lambda e: refresh_summary()
 
         # ---------------------------------------------------------- controls
-        columns_button = ft.PopupMenuButton(
-            icon=ft.Icons.VIEW_COLUMN,
-            tooltip="إظهار/إخفاء الأعمدة",
-            items=[
-                ft.PopupMenuItem(
-                    text=col.label,
-                    checked=col.key not in hidden_state["keys"],
-                    on_click=lambda _, k=col.key: toggle_column(k),
-                )
-                for col in line_columns
-            ],
-        )
         density_button = ft.IconButton(
             icon=ft.Icons.DENSITY_SMALL if density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
             tooltip="عرض مريح" if density_state["compact"] else "عرض مضغوط",

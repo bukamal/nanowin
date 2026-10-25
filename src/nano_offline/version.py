@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.4"
-BUILD_NUMBER = 49  # FEAT_0.17.4: stock-policy settings, single-page POS checkout, F12 reprint, KPI toggle
+APP_VERSION = "0.17.5"
+BUILD_NUMBER = 50  # FEAT_0.17.5: column visibility across tables + equal-width dashboard hero
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

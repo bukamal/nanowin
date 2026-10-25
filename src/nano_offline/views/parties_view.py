@@ -11,6 +11,7 @@ from nano_offline.core.toast import toast
 from nano_offline.core.party_reliability import grade_party
 
 from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
+from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import currency
@@ -80,33 +81,17 @@ class PartyCenter:
         selected_state = {"rows": []}
         outstanding_state = {"map": {}}
         export_state = {"rows": []}
-        hidden_state = {"keys": set(filter(None, self.ctx.settings.get("ui.parties_hidden_columns", "").split(",")))}
-        auto_hidden = {"keys": {"phone"} if (page.width or 1200) < 720 else set()}
-
-        def current_hidden() -> set[str]:
-            return set(hidden_state["keys"]) | set(auto_hidden["keys"])
-
-        def toggle_column(key: str) -> None:
-            if key in hidden_state["keys"]:
-                hidden_state["keys"].discard(key)
-            else:
-                hidden_state["keys"].add(key)
-            self.ctx.settings.set("ui.parties_hidden_columns", ",".join(sorted(hidden_state["keys"])))
-            grid.set_hidden_keys(current_hidden())
-            page.update()
-
-        columns_button = ft.PopupMenuButton(
-            icon=ft.Icons.VIEW_COLUMN,
-            tooltip="إظهار/إخفاء الأعمدة",
-            items=[
-                ft.PopupMenuItem(
-                    text=c.label,
-                    checked=c.key not in hidden_state["keys"],
-                    on_click=lambda _, k=c.key: toggle_column(k),
-                )
-                for c in PARTY_GRID_COLUMNS
-            ],
+        columns_visibility = ColumnVisibility(
+            columns=PARTY_GRID_COLUMNS,
+            settings=self.ctx.settings,
+            preference_key="ui.parties_hidden_columns",
+            auto_hidden={"phone"} if (page.width or 1200) < 720 else set(),
+            on_change=lambda: (
+                grid.set_hidden_keys(columns_visibility.hidden_keys),
+                page.update(),
+            ),
         )
+        columns_button = columns_visibility.button()
 
         async def export_csv(_=None) -> None:
             rows_out = export_state["rows"]
@@ -638,7 +623,7 @@ class PartyCenter:
             page=page,
             row_height=36 if density_state["compact"] else 48,
             viewport_height=grid_height,
-            hidden_keys=current_hidden(),
+            hidden_keys=columns_visibility.hidden_keys,
             on_row_activate=lambda row: show_detail(dict(row)),
             on_sort=apply_grid_sort,
             selectable=True,
@@ -684,7 +669,7 @@ class PartyCenter:
 
                 parties.sort(key=sort_value, reverse=reverse)
             export_state["rows"] = parties
-            grid.set_hidden_keys(current_hidden())
+            grid.set_hidden_keys(columns_visibility.hidden_keys)
             if not parties:
                 grid.set_rows([])
                 if all_parties:
