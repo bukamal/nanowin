@@ -144,6 +144,16 @@ module = "main"
 [tool.flet.flutter]
 no_pub_get = true
 
+# Flet 0.28.3's build template pins serious_python 0.9.11, whose Windows
+# bootstrap passes UTF-8 paths to the narrow CRT (_putenv_s/fopen_s). On a
+# machine whose Windows profile (or install path) contains Arabic/non-ASCII
+# characters that corrupts PYTHONPATH and the app dies with
+# "ImportError: No module named main". Vendor a 0.9.11-compatible copy with
+# the upstream 4.3.6 wide-char fix (plus direct sys.path/os.environ setup) so
+# the same installer works for Arabic and English Windows accounts alike.
+[tool.flet.flutter.pubspec.dependency_overrides]
+serious_python_windows = { path = "../../vendor/serious_python_windows" }
+
 [tool.flet.splash]
 color = "#0F766E"
 dark_color = "#115E59"

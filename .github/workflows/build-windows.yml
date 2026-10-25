@@ -182,6 +182,19 @@ jobs:
         # named main" on the user's machine). Fail here, loudly, instead.
         shell: pwsh
         run: |
+          # The Windows bootstrap only uses wide-char paths when the vendored
+          # serious_python_windows override is actually present in the
+          # generated Flutter project. Catch a silently-ignored override here
+          # instead of shipping another "No module named main" installer.
+          $pubspecPath = "build/flutter/pubspec.yaml"
+          if (-not (Test-Path $pubspecPath)) {
+            throw "generated Flutter pubspec not found; cannot verify the vendored serious_python_windows override"
+          }
+          if (-not (Select-String -Path $pubspecPath -Pattern "serious_python_windows" -Quiet)) {
+            throw "vendored serious_python_windows override missing from build/flutter/pubspec.yaml"
+          }
+          echo "vendored serious_python_windows override present"
+
           $candidates = @(
             "build/windows/data/flutter_assets/app/app.zip",
             "build/flutter/windows/runner/Release/data/flutter_assets/app/app.zip",
