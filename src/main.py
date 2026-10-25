@@ -478,22 +478,28 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         the shell-level fallbacks for every other section.
         """
         invoice_actions = [
-            RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
             RibbonAction("sale", "فاتورة بيع", ft.Icons.SHOPPING_CART_CHECKOUT, on_click=lambda _=None: open_sale()),
             RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_purchase()),
             RibbonAction("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: open_verify_invoice()),
         ]
-        if key == "invoices":
-            # The invoices section adds one more surface on top of the shared
-            # invoice actions: the comprehensive single-sheet table entry
-            # (sale or purchase) with the full DataGrid toolkit.
-            return invoice_actions + [
-                RibbonAction(
-                    "table_invoice", "فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED,
-                    on_click=lambda _=None: invoice_center.show_table_invoice_sheet(),
-                ),
-            ]
-        if key in ("dashboard", "items", "pos", "sale", "purchase"):
+        table_invoice_action = RibbonAction(
+            "table_invoice", "فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED,
+            on_click=lambda _=None: invoice_center.show_table_invoice_sheet(),
+        )
+        if key == "dashboard":
+            # POS is a dashboard-first surface: keep its ribbon entry only
+            # here, not on the invoices screen where it duplicated the
+            # sidebar shortcut and crowded the invoice actions.
+            return [
+                RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
+            ] + invoice_actions
+        if key in ("invoices", "sale", "purchase"):
+            # The comprehensive table entry must survive the jump from the
+            # invoices screen into the sale/purchase editors -- otherwise it
+            # vanishes exactly when the user is mid-invoice and most likely
+            # to want it.
+            return invoice_actions + [table_invoice_action]
+        if key in ("items", "pos"):
             return invoice_actions
         if key == "finance":
             return [
