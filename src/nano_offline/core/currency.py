@@ -97,6 +97,40 @@ def get_effective_rate(settings) -> float:
     return get_exchange_rate(settings)
 
 
+def invoice_settings(invoice: dict | None, settings=None):
+    """Return a settings view pinned to an invoice's currency snapshot.
+
+    Invoice rows store the exchange rate and display symbol that were in
+    effect when they were created (``invoice_exchange_rate`` /
+    ``invoice_currency_code`` / ``invoice_currency_symbol``). Payment and
+    detail screens for that invoice must keep using those values -- not
+    today's display currency -- otherwise switching the display currency
+    later would make a historical SYP invoice show a dollar-sized amount
+    in its payment field.
+
+    Falls back to ``settings`` for invoices created before the snapshot
+    columns existed (or with an invalid/zero rate).
+    """
+    if not invoice:
+        return settings
+    try:
+        rate = float(invoice.get("invoice_exchange_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    code = str(invoice.get("invoice_currency_code") or "").strip().upper()
+    if rate <= 0 or code not in SUPPORTED_DISPLAY_CURRENCIES:
+        return settings
+    symbol = str(invoice.get("invoice_currency_symbol") or "").strip()
+    if not symbol:
+        symbol = _DEFAULT_SYMBOL_BY_CURRENCY[code]
+    return {
+        DISPLAY_CURRENCY_KEY: code,
+        EXCHANGE_RATE_KEY: str(rate),
+        DISPLAY_SYMBOL_KEY: symbol if code == DISPLAY_CURRENCY_SYP else DEFAULT_DISPLAY_SYMBOL,
+        USD_DISPLAY_SYMBOL_KEY: symbol if code == DISPLAY_CURRENCY_USD else DEFAULT_USD_DISPLAY_SYMBOL,
+    }
+
+
 def _default_decimals(settings) -> int:
     return _DEFAULT_DECIMALS_BY_CURRENCY.get(get_display_currency(settings), 0)
 
@@ -253,6 +287,7 @@ __all__ = [
     "get_display_currency",
     "get_exchange_rate",
     "get_effective_rate",
+    "invoice_settings",
     "get_display_symbol",
     "to_display",
     "to_stored",

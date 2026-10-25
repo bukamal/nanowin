@@ -417,6 +417,7 @@ class InvoiceCenter:
         sale = invoice.get("type") == "sale"
         kind = "بيع" if sale else "شراء"
         party = invoice.get("party_name") or "نقدي"
+        detail_settings = currency.invoice_settings(invoice, self.ctx.settings)
         total = float(invoice.get("total") or 0)
         paid_amount = float(invoice.get("paid_amount") or 0)
         remaining = max(0.0, float(invoice.get("remaining_amount") or 0))
@@ -490,7 +491,7 @@ class InvoiceCenter:
                                     ft.Row(
                                         [
                                             ft.Text(f"{self._qty(qty)} {unit} × ", size=10, color=Colors.TEXT_SECONDARY),
-                                            money_row(unit_price, self.ctx.settings, size=10, color=Colors.TEXT_SECONDARY),
+                                            money_row(unit_price, detail_settings, size=10, color=Colors.TEXT_SECONDARY),
                                         ],
                                         spacing=0,
                                         tight=True,
@@ -499,7 +500,7 @@ class InvoiceCenter:
                                 + ([ft.Text(equiv_text, size=9, color=Colors.TEXT_FAINT)] if equiv_text else []),
                                 spacing=1, expand=True,
                             ),
-                            money_row(line_total, self.ctx.settings, size=12, weight=ft.FontWeight.BOLD),
+                            money_row(line_total, detail_settings, size=12, weight=ft.FontWeight.BOLD),
                         ],
                     ),
                     padding=8, bgcolor=Colors.BACKGROUND, border_radius=11,
@@ -556,9 +557,9 @@ class InvoiceCenter:
             [
                 ft.Row([status_pill(status, status_fg, status_bg)], alignment=ft.MainAxisAlignment.START),
                 metric_row([
-                    kpi_card("الإجمالي", "", ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, amount_usd=total, settings=self.ctx.settings),
-                    kpi_card("المدفوع", "", ft.Icons.CHECK_CIRCLE_OUTLINE, Colors.SUCCESS, amount_usd=paid_amount, settings=self.ctx.settings),
-                    kpi_card("المتبقي", "", ft.Icons.SCHEDULE, Colors.ORANGE if remaining > 1e-9 else Colors.SUCCESS, amount_usd=remaining, settings=self.ctx.settings),
+                    kpi_card("الإجمالي", "", ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, amount_usd=total, settings=detail_settings),
+                    kpi_card("المدفوع", "", ft.Icons.CHECK_CIRCLE_OUTLINE, Colors.SUCCESS, amount_usd=paid_amount, settings=detail_settings),
+                    kpi_card("المتبقي", "", ft.Icons.SCHEDULE, Colors.ORANGE if remaining > 1e-9 else Colors.SUCCESS, amount_usd=remaining, settings=detail_settings),
                 ], spacing=7),
                 ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                 ft.Text("الأصناف", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
@@ -1183,9 +1184,10 @@ class InvoiceCenter:
             self.notify("الفاتورة مسددة بالكامل")
             return
 
+        pay_settings = currency.invoice_settings(invoice, self.ctx.settings)
         amount = SmartAmountField(
-            label=currency.amount_field_label("المبلغ", self.ctx.settings),
-            value=currency.to_input_text(remaining, self.ctx.settings),
+            label=currency.amount_field_label("المبلغ", pay_settings),
+            value=currency.to_input_text(remaining, pay_settings),
         )
         payment_date = SmartDateField(label="التاريخ", value=date.today().isoformat())
         reference = SelectAllTextField(label="المرجع")
@@ -1199,7 +1201,7 @@ class InvoiceCenter:
             try:
                 voucher_id = self.ctx.payments.register_invoice_payment(
                     invoice_id,
-                    currency.parse_display_input(amount.value, self.ctx.settings),
+                    currency.parse_display_input(amount.value, pay_settings),
                     payment_date=payment_date.value,
                     reference=reference.value,
                     notes=notes.value,
@@ -1219,7 +1221,7 @@ class InvoiceCenter:
                 ft.Row(
                     [
                         ft.Text(f"{invoice.get('party_name') or '—'} • المتبقي ", color=Colors.TEXT_SECONDARY),
-                        ft.Text(self.money(remaining), color=Colors.TEXT_SECONDARY),
+                        ft.Text(currency.format_amount(remaining, pay_settings), color=Colors.TEXT_SECONDARY),
                     ],
                     spacing=0,
                     tight=True,
