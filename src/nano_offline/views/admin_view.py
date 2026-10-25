@@ -4,7 +4,9 @@ from pathlib import Path
 from datetime import datetime
 import asyncio
 import base64
+import re
 import shutil
+import tempfile
 
 import flet as ft
 
@@ -342,35 +344,82 @@ class AdminCenter:
             else:
                 backup_warning_banner.visible = False
 
-        def _backup_target() -> Path:
-            stem = (backup_name.value or "nano_backup").strip().replace("/", "_").replace("\\", "_")
+        def _backup_target(directory: Path | None = None) -> Path:
+            stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", (backup_name.value or "nano_backup")).strip()
+            stem = stem[:80].strip(" .") or "nano_backup"
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            return backups_dir / f"{stem}_{stamp}.nanobackup"
+            return (directory or backups_dir) / f"{stem}_{stamp}.nanobackup"
 
-        async def _create_backup_file() -> Path:
-            target = _backup_target()
+        def _backup_summary(path: Path, validation) -> str:
+            return (
+                f"تم إنشاء {path.name} • schema {validation.schema_version} • "
+                f"البصمة {validation.db_sha256[:12]}…"
+            )
+
+        async def _build_backup_file(target: Path) -> tuple[Path, object]:
             result = await asyncio.to_thread(self.ctx.backup.create_backup, target)
             validation = await asyncio.to_thread(self.ctx.backup.validate_backup, result)
+            return result, validation
+
+        async def _finalize_backup() -> None:
             keep = backup_settings.retention_count(self.ctx.settings)
             if keep > 0:
                 await asyncio.to_thread(self.ctx.backup.prune_backups, backups_dir, keep)
-            backup_info.value = (
-                f"تم إنشاء {result.name} • schema {validation.schema_version} • "
-                f"البصمة {validation.db_sha256[:12]}…"
-            )
-            refresh_backups()
-            self.page.update()
             # Resets the "لم يتم إنشاء نسخة احتياطية" / "حان وقت نسخة جديدة"
             # smart-notification rule so it doesn't immediately re-fire.
             self.ctx.notifications.record_backup_completed()
+            refresh_backups()
+            self.page.update()
+
+        async def _create_backup_file() -> Path:
+            result, validation = await _build_backup_file(_backup_target())
+            await _finalize_backup()
+            backup_info.value = _backup_summary(result, validation)
+            self.page.update()
             return result
 
         async def make_backup(_):
+            if self.native_files is None:
+                try:
+                    await _create_backup_file()
+                    self._notify("تم إنشاء النسخة الاحتياطية بنجاح")
+                except Exception as exc:
+                    self._notify(str(exc), kind="error")
+                return
+
             try:
-                await _create_backup_file()
-                self._notify("تم إنشاء النسخة الاحتياطية بنجاح")
+                temp_dir = Path(tempfile.mkdtemp(prefix="nano_backup_save_"))
             except Exception as exc:
                 self._notify(str(exc), kind="error")
+                return
+            try:
+                result, validation = await _build_backup_file(_backup_target(temp_dir))
+                picked = await self.native_files.save_file(
+                    str(result),
+                    filename=result.name,
+                    dialog_title="حفظ النسخة الاحتياطية",
+                    initial_directory=str(backups_dir),
+                )
+                if not picked:
+                    self._notify("تم إلغاء حفظ النسخة الاحتياطية", kind="warning")
+                    return
+                saved_name = str(picked.get("name") or result.name)
+                saved_path = str(picked.get("path") or "")
+                if saved_path and "://" not in saved_path:
+                    validation = await asyncio.to_thread(
+                        self.ctx.backup.validate_backup, Path(saved_path)
+                    )
+                await _finalize_backup()
+                backup_info.value = (
+                    f"تم حفظ {saved_name} • schema {validation.schema_version} • "
+                    f"البصمة {validation.db_sha256[:12]}…"
+                )
+                self.page.update()
+                self._notify("تم حفظ النسخة الاحتياطية بنجاح")
+            except Exception as exc:
+                self._notify(str(exc), kind="error")
+            finally:
+                await asyncio.to_thread(shutil.rmtree, temp_dir, True)
 
         async def make_and_share_backup(_):
             try:

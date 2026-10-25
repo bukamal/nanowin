@@ -617,6 +617,128 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
     }
   }
 
+  Future<String?> _findPrintBrowser() async {
+    if (!Platform.isWindows) return null;
+    final env = Platform.environment;
+    final roots = <String?>[
+      env['ProgramFiles'],
+      env['ProgramFiles(x86)'],
+      env['ProgramW6432'],
+      env['LOCALAPPDATA'],
+    ];
+    final relative = <String>[
+      r'Microsoft\Edge\Application\msedge.exe',
+      r'Google\Chrome\Application\chrome.exe',
+    ];
+    for (final root in roots) {
+      if (root == null || root.isEmpty) continue;
+      for (final suffix in relative) {
+        final candidate = File('$root\\$suffix');
+        if (await candidate.exists()) return candidate.path;
+      }
+    }
+    return null;
+  }
+
+  Future<File> _renderPdfWithBrowser(File html, String requestedName) async {
+    final browser = await _findPrintBrowser();
+    if (browser == null) {
+      throw Exception('متصفح Edge أو Chrome غير متوفر لإنشاء ملف الطباعة');
+    }
+    final dir = await getTemporaryDirectory();
+    var safeName = requestedName.trim().isEmpty ? 'nano-print' : requestedName.trim();
+    if (safeName.toLowerCase().endsWith('.pdf')) {
+      safeName = safeName.substring(0, safeName.length - 4);
+    }
+    safeName = safeName.replaceAll(RegExp(r'[^A-Za-z0-9._\-\u0600-\u06FF]'), '_');
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final pdf = File('${dir.path}/nano_print_${stamp}_$safeName.pdf');
+    final modes = <String>['--headless=new', '--headless'];
+    for (var i = 0; i < modes.length; i++) {
+      final profile = Directory('${dir.path}/nano_print_profile_${stamp}_$i');
+      await profile.create(recursive: true);
+      try {
+        final result = await Process.run(
+          browser,
+          <String>[
+            modes[i],
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-sync',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--hide-scrollbars',
+            '--run-all-compositor-stages-before-draw',
+            '--virtual-time-budget=2500',
+            '--user-data-dir=${profile.path}',
+            '--no-pdf-header-footer',
+            '--print-to-pdf=${pdf.path}',
+            Uri.file(html.path).toString(),
+          ],
+        ).timeout(const Duration(seconds: 45));
+        if (result.exitCode == 0 && await pdf.exists() && await pdf.length() > 0) {
+          return pdf;
+        }
+      } on TimeoutException {
+        // Try the next headless mode before reporting a failure.
+      } finally {
+        try {
+          await profile.delete(recursive: true);
+        } catch (_) {}
+      }
+    }
+    try {
+      await pdf.delete();
+    } catch (_) {}
+    throw Exception('تعذر إنشاء ملف الطباعة عبر المتصفح');
+  }
+
+  Future<void> _printHtmlDirect(File html, String docName, PdfPageFormat format) async {
+    final pdf = await _renderPdfWithBrowser(html, docName);
+    try {
+      final bytes = await pdf.readAsBytes();
+      final printers = await Printing.listPrinters();
+      Printer? printer;
+      for (final item in printers) {
+        if (item.isDefault && item.isAvailable) {
+          printer = item;
+          break;
+        }
+      }
+      if (printer == null) {
+        for (final item in printers) {
+          if (item.isAvailable) {
+            printer = item;
+            break;
+          }
+        }
+      }
+      if (printer == null) {
+        throw Exception('لا توجد طابعة متاحة');
+      }
+      final printFormat = format.height.isFinite
+          ? format
+          : PdfPageFormat(format.width, PdfPageFormat.a4.height, marginAll: 0);
+      final printed = await Printing.directPrintPdf(
+        printer: printer,
+        name: docName,
+        format: printFormat,
+        usePrinterSettings: true,
+        onLayout: (_) async => bytes,
+      );
+      if (!printed) {
+        throw Exception('لم تُرسل الطباعة إلى الطابعة');
+      }
+    } finally {
+      try {
+        await pdf.delete();
+      } catch (_) {}
+    }
+  }
+
   Future<String?> handleMethod(String method, Map<String, String> args) async {
     try {
       switch (method) {
@@ -640,6 +762,42 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
             'extension': file.extension,
           });
 
+        case 'save_file':
+          final sourcePath = args['path'] ?? '';
+          if (sourcePath.isEmpty || !await File(sourcePath).exists()) {
+            return 'error:الملف غير موجود';
+          }
+          final source = File(sourcePath);
+          final bytes = await source.readAsBytes();
+          final requested = (args['filename'] ?? '').trim().isEmpty
+              ? source.uri.pathSegments.last
+              : args['filename']!.trim();
+          final extension = requested.contains('.')
+              ? requested.split('.').last.toLowerCase()
+              : '';
+          final saved = await FilePicker.platform.saveFile(
+            dialogTitle: (args['dialog_title'] ?? '').isEmpty
+                ? 'حفظ الملف'
+                : args['dialog_title'],
+            fileName: requested,
+            initialDirectory: (args['initial_directory'] ?? '').isEmpty
+                ? null
+                : args['initial_directory'],
+            type: extension.isEmpty ? FileType.any : FileType.custom,
+            allowedExtensions: extension.isEmpty ? null : <String>[extension],
+            bytes: bytes,
+            lockParentWindow: true,
+          );
+          if (saved == null || saved.isEmpty) return 'cancelled';
+          final savedUri = Uri.tryParse(saved);
+          final savedName =
+              saved.contains('://') &&
+                  savedUri != null &&
+                  savedUri.pathSegments.isNotEmpty
+              ? Uri.decodeComponent(savedUri.pathSegments.last)
+              : saved.split(Platform.pathSeparator).last;
+          return jsonEncode({'path': saved, 'name': savedName});
+
         case 'share_file':
           final path = args['path'] ?? '';
           if (path.isEmpty || !await File(path).exists()) return 'error:الملف غير موجود';
@@ -654,7 +812,19 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
           final html = args['html'] ?? '';
           if (html.isEmpty) return 'error:محتوى التقرير فارغ';
           final docName = (args['name'] ?? 'nano-report').isEmpty ? 'nano-report' : args['name']!;
+          final direct = args['direct'] == '1';
           if (!nativeHtmlToPdfSupported) {
+            if (direct && Platform.isWindows) {
+              final htmlFile = await _writeHtmlTempFile(html, docName);
+              try {
+                await _printHtmlDirect(htmlFile, docName, _printPageFormat(args));
+              } finally {
+                try {
+                  await htmlFile.delete();
+                } catch (_) {}
+              }
+              return 'ok';
+            }
             // Windows/Linux: hand the document to the browser instead of
             // asking a platform that never implemented convertHtml.
             await _openInBrowser(await _writeHtmlTempFile(html, docName));

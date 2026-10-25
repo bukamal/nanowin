@@ -71,6 +71,39 @@ class NativeFiles(Control):
         except Exception as exc:
             raise RuntimeError("تعذر قراءة نتيجة اختيار الملف") from exc
 
+    async def save_file(
+        self,
+        path: str,
+        *,
+        filename: str = "",
+        dialog_title: str = "حفظ الملف",
+        initial_directory: str = "",
+    ) -> dict | None:
+        """Ask the OS to save an existing local ``path`` where the user chooses.
+
+        Returns ``{"path": ..., "name": ...}`` or ``None`` when cancelled.
+        """
+        raw = await self.invoke_method_async(
+            "save_file",
+            {
+                "path": str(path),
+                "filename": filename,
+                "dialog_title": dialog_title,
+                "initial_directory": initial_directory,
+            },
+            wait_for_result=True,
+            wait_timeout=_INTERACTIVE_TIMEOUT,
+        )
+        if not raw or raw == "cancelled":
+            return None
+        if str(raw).startswith("error:"):
+            raise RuntimeError(str(raw)[6:])
+        try:
+            value = json.loads(str(raw))
+            return dict(value) if value else None
+        except Exception as exc:
+            raise RuntimeError("تعذر قراءة نتيجة حفظ الملف") from exc
+
     async def share_file(
         self,
         path: str,
@@ -96,7 +129,14 @@ class NativeFiles(Control):
         name: str = "nano-report",
         paper_layout: str = "sheet",
         roll_width_mm: int = 80,
+        direct: bool = False,
     ) -> bool:
+        """Print an HTML document through the native bridge.
+
+        ``direct=True`` currently bypasses the print dialog on Windows only:
+        the document is rendered to PDF with headless Edge/Chrome and sent to
+        the default printer. Other platforms keep their normal print UI.
+        """
         raw = await self.invoke_method_async(
             "print_html",
             {
@@ -104,6 +144,7 @@ class NativeFiles(Control):
                 "name": name,
                 "paper_layout": paper_layout,
                 "roll_width_mm": int(roll_width_mm),
+                "direct": "1" if direct else "0",
             },
             wait_for_result=True,
             wait_timeout=_INTERACTIVE_TIMEOUT,

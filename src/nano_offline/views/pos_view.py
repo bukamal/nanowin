@@ -2689,6 +2689,7 @@ class POSCenter:
                     name=f"nano-invoice-{invoice_id}",
                     paper_layout=layout,
                     roll_width_mm=width,
+                    direct=True,
                 )
                 try:
                     session = self.ctx.auth.current()

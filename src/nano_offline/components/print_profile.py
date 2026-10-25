@@ -97,7 +97,7 @@ def open_print_profile_dialog(
     dialog.title = ft.Text(title)
     dialog.content = ft.Column(
         [
-            ft.Text("اختر تنسيق الورق قبل فتح نافذة الطباعة."),
+            ft.Text("اختر تنسيق الورق قبل متابعة الطباعة."),
             layout,
             width_row,
             hint,
