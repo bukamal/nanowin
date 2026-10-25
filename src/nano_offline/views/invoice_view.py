@@ -1494,7 +1494,7 @@ class InvoiceCenter:
 
         def quick_pay_chip(label: str, ratio: float, icon) -> ft.Container:
             return ft.Container(
-                ft.Row([ft.Icon(icon, size=14, color=Colors.PRIMARY), ft.Text(label, size=11, weight=ft.FontWeight.W_600)], spacing=5),
+                ft.Row([ft.Icon(icon, size=14, color=Colors.PRIMARY), ft.Text(label, size=11, weight=ft.FontWeight.W_600)], spacing=5, tight=True),
                 padding=ft.padding.symmetric(horizontal=10, vertical=7),
                 border=ft.border.all(1, Colors.PRIMARY), border_radius=12,
                 bgcolor=Colors.WHITE, ink=True,
@@ -2370,7 +2370,7 @@ class InvoiceCenter:
 
         def quick_pay_chip(label: str, ratio: float, icon) -> ft.Container:
             return ft.Container(
-                ft.Row([ft.Icon(icon, size=14, color=Colors.PRIMARY), ft.Text(label, size=11, weight=ft.FontWeight.W_600)], spacing=5),
+                ft.Row([ft.Icon(icon, size=14, color=Colors.PRIMARY), ft.Text(label, size=11, weight=ft.FontWeight.W_600)], spacing=5, tight=True),
                 padding=ft.padding.symmetric(horizontal=10, vertical=7),
                 border=ft.border.all(1, Colors.PRIMARY), border_radius=12,
                 bgcolor=Colors.WHITE, ink=True,
@@ -2394,7 +2394,7 @@ class InvoiceCenter:
                     ft.Icon(ft.Icons.PAYMENTS_OUTLINED, size=14, color=Colors.SUCCESS),
                     ft.Text("دفعة نقدية تلقائية — بدون طرف", size=11, weight=ft.FontWeight.W_600, color=Colors.SUCCESS),
                 ],
-                spacing=5,
+                spacing=5, tight=True,
             ),
             padding=ft.padding.symmetric(horizontal=10, vertical=7),
             border=ft.border.all(1, Colors.SUCCESS),
