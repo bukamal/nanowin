@@ -9,9 +9,10 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SelectAllTextField, empty_state
+from nano_offline.components import SearchSelect, SelectAllTextField, SegmentedToggle, SegmentOption, empty_state
 from nano_offline.components.form_sheet import render_form_sheet
 from nano_offline.components.print_profile import (
+    PRINT_LAYOUT_KEY,
     apply_print_profile,
     open_print_profile_dialog,
     saved_print_profile,
@@ -564,6 +565,30 @@ class POSCenter:
         received_display = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD)
         change_text = ft.Text("الباقي: 0.00", size=13, color=Colors.SUCCESS_DARK)
         auto_print_switch = ft.Switch(label="طباعة تلقائية بعد الدفع", value=pos_settings.auto_print_default(self.ctx.settings), scale=0.85)
+        saved_layout, _saved_roll_width = saved_print_profile(self.ctx.settings)
+        print_layout_toggle = SegmentedToggle(
+            options=[
+                SegmentOption("sheet", "ورق A4", ft.Icons.DESCRIPTION_OUTLINED),
+                SegmentOption("roll", "حراري", ft.Icons.RECEIPT_LONG_OUTLINED),
+            ],
+            value=saved_layout,
+        )
+
+        def save_print_layout(_=None):
+            try:
+                self.ctx.settings.set(PRINT_LAYOUT_KEY, print_layout_toggle.value or "sheet")
+            except Exception:
+                pass
+
+        print_layout_toggle.on_change = save_print_layout
+        print_layout_block = ft.Column(
+            [
+                ft.Text("نوع الطباعة", size=12, weight=ft.FontWeight.W_600),
+                print_layout_toggle,
+            ],
+            spacing=6,
+            tight=True,
+        )
 
         checkout_btn = hero_button("دفع", icon=ft.Icons.PAYMENTS_OUTLINED)
 
@@ -884,6 +909,9 @@ class POSCenter:
             if not self.cart_order:
                 self.notify("السلة فارغة")
                 return False
+            if getattr(self, "_checkout_in_progress", False):
+                return False
+            self._checkout_in_progress = True
             try:
                 rows_list = [self.cart[i] for i in self.cart_order]
                 # Margin checks compare a per-*base*-unit price with the
@@ -898,11 +926,31 @@ class POSCenter:
                 margin_issues = cart_margin_warnings(margin_rows, self.ctx.settings)
                 if margin_issues and not getattr(self, "_margin_override", False):
                     names = "، ".join(str(w.get("name") or "") for w in margin_issues[:3])
-                    self.notify(
-                        f"تحذير هامش: {names} — اضغط دفع مرة أخرى للتأكيد",
-                        kind="warning",
+                    dialog = ft.AlertDialog(modal=True)
+
+                    def proceed(_=None):
+                        self.page.close(dialog)
+                        self._margin_override = True
+                        if do_checkout():
+                            payment_sheet = getattr(self, "_payment_sheet", None)
+                            if payment_sheet is not None:
+                                try:
+                                    self.page.close(payment_sheet)
+                                except Exception:
+                                    pass
+
+                    def cancel(_=None):
+                        self.page.close(dialog)
+
+                    dialog.title = ft.Text("تحذير هامش الربح")
+                    dialog.content = ft.Text(
+                        f"بعض البنود تُباع تحت التكلفة أو بهامش منخفض:\n{names}\n\nهل تريد متابعة البيع؟"
                     )
-                    self._margin_override = True
+                    dialog.actions = [
+                        ft.TextButton("إلغاء", on_click=cancel),
+                        ft.FilledButton("متابعة البيع", on_click=proceed),
+                    ]
+                    self.page.open(dialog)
                     return False
                 self._margin_override = False
                 lines = [
@@ -926,28 +974,46 @@ class POSCenter:
                     paid_amount=paid,
                 )
                 change_amt = max(0.0, received - total)
-                # The sale is committed: an old one-step undo snapshot
-                # must never resurrect sold lines into the next sale.
+                # The sale is committed from this point on. Clear the cart
+                # immediately so a second click (or a UI glitch while showing
+                # the success overlay) can never turn one sale into two.
                 self._undo_state = None
                 self._remember_recent_customer(self.customer_id)
+                clear_cart(undoable=False)
+                refresh_cart()
+                refresh_today_summary()
                 if auto_print_switch.value and self.native_files is not None:
                     self.page.run_task(self._print_receipt, invoice_id, interactive=False)
-                # Keep cart data for the success screen; clear after user taps «بيع جديد»
-                if self.on_saved:
-                    self.on_saved()
-                self._show_sale_success(
-                    invoice_id=invoice_id,
-                    total=total,
-                    received=received,
-                    change=change_amt,
-                    clear_cart_fn=clear_cart,
-                    refresh_cart_fn=refresh_cart,
-                    refresh_today_fn=refresh_today_summary,
-                )
+                try:
+                    if self.on_saved:
+                        self.on_saved()
+                except Exception:
+                    pass
+                try:
+                    self._show_sale_success(
+                        invoice_id=invoice_id,
+                        total=total,
+                        received=received,
+                        change=change_amt,
+                        clear_cart_fn=clear_cart,
+                        refresh_cart_fn=refresh_cart,
+                        refresh_today_fn=refresh_today_summary,
+                    )
+                except Exception:
+                    # The invoice already exists; never report a committed
+                    # sale as a failure just because the success overlay
+                    # failed to render.
+                    self.notify(
+                        f"تم البيع بنجاح — فاتورة #{invoice_id}",
+                        kind="success",
+                        sound_kind="save",
+                    )
                 return True
             except Exception as exc:
                 self.notify(str(exc), kind="error")
                 return False
+            finally:
+                self._checkout_in_progress = False
 
         # ---- payment sheet --------------------------------------------
         # Everything needed to actually take money (customer, numpad, quick
@@ -970,6 +1036,7 @@ class POSCenter:
             enable_drag=True,
             maintain_bottom_view_insets_padding=True,
         )
+        self._payment_sheet = payment_sheet
         payment_sheet.on_dismiss = _resume_barcode_focus
 
         def confirm_payment(_=None):
@@ -1149,6 +1216,7 @@ class POSCenter:
                         insight,
                         recent_customers_row(),
                         auto_print_switch,
+                        print_layout_block,
                         ft.Row(
                             [
                                 ft.OutlinedButton("رجوع", on_click=lambda _: go_step(1), expand=True),
@@ -2383,6 +2451,9 @@ class POSCenter:
             last.visible = False
             last.opacity = 0
 
+        async def print_sale(_=None):
+            await self._print_receipt(invoice_id, interactive=True)
+
         def start_new_sale(_=None):
             clear_cart_fn(undoable=False)
             refresh_cart_fn()
@@ -2430,7 +2501,24 @@ class POSCenter:
                     ft.Text(self.money(total), size=40, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                     *change_block,
                     ft.Container(height=20),
-                    hero_button("بيع جديد", icon=ft.Icons.ADD_SHOPPING_CART, on_click=start_new_sale),
+                    ft.Row(
+                        [
+                            ft.OutlinedButton(
+                                "طباعة",
+                                icon=ft.Icons.PRINT_OUTLINED,
+                                on_click=print_sale,
+                                height=52,
+                                expand=True,
+                            ),
+                            hero_button(
+                                "بيع جديد",
+                                icon=ft.Icons.ADD_SHOPPING_CART,
+                                on_click=start_new_sale,
+                                expand=True,
+                            ),
+                        ],
+                        spacing=8,
+                    ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=4,
@@ -2631,10 +2719,18 @@ class POSCenter:
                 except Exception:
                     pass
             except Exception as exc:
-                self.notify(str(exc), kind="error")
+                # A failed print must never sound like a failed sale: the
+                # invoice is already committed, and auto-print runs after
+                # checkout. Use a warning so the cashier does not retry the
+                # sale because of a printer/bridge problem.
+                self.notify(f"تعذرت الطباعة: {exc}", kind="warning")
 
         if not interactive:
-            layout, width = saved_print_profile(self.ctx.settings)
+            try:
+                layout, width = saved_print_profile(self.ctx.settings)
+            except Exception as exc:
+                print(f"nano auto-print profile failed: {exc!r}")
+                return
             await print_selected(layout, width)
             return
 

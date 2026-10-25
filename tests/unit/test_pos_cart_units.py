@@ -124,3 +124,17 @@ def test_undo_restores_removed_line(tmp_path):
     assert pos._restore_undo() is True
     assert len(pos.cart_order) == 1
     assert pos._total_amount() == 100.0
+
+
+def test_checkout_clears_cart_so_a_second_click_cannot_duplicate_the_sale(tmp_path):
+    pos, ctx, item_id, carton = _pos(tmp_path)
+
+    pos._add_by_barcode("222")
+    assert pos._do_checkout() is True
+    assert not pos.cart_order
+
+    # The success overlay keeps the committed totals; the cart itself must
+    # already be empty, so a double-click / repeated confirm cannot create
+    # a second invoice from the same lines.
+    assert pos._do_checkout() is False
+    assert len(ctx.invoices.list_invoices(limit=10)) == 1
