@@ -997,6 +997,14 @@ class AdminCenter:
             label="إظهار رمز التحقق (QR) من صحة الفاتورة عند الطباعة",
             value=invoice_settings.show_verify_qr(iset),
         )
+        invoice_negative_stock_switch = ft.Switch(
+            label="السماح بحفظ فاتورة بيع بكمية أكبر من المخزون (مخزون سالب)",
+            value=invoice_settings.allow_negative_stock(iset),
+        )
+        invoice_show_stock_badge_switch = ft.Switch(
+            label="إظهار تنبيه المخزون المنخفض داخل محرر الفاتورة",
+            value=invoice_settings.show_stock_badge(iset),
+        )
 
         def save_invoice_settings(_):
             try:
@@ -1017,6 +1025,8 @@ class AdminCenter:
                     invoice_settings.OVERDUE_DAYS_KEY: str(overdue_after),
                     invoice_settings.FOOTER_TEXT_KEY: (invoice_footer_field.value or "").strip(),
                     invoice_settings.SHOW_VERIFY_QR_KEY: "1" if invoice_verify_qr_switch.value else "0",
+                    invoice_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if invoice_negative_stock_switch.value else "0",
+                    invoice_settings.SHOW_STOCK_BADGE_KEY: "1" if invoice_show_stock_badge_switch.value else "0",
                 })
                 invoice_due_days_field.value = str(due_days)
                 invoice_overdue_days_field.value = str(overdue_after)
@@ -1039,12 +1049,27 @@ class AdminCenter:
             options=[SegmentOption(str(n), f"{n} أزرار") for n in pos_settings.VALID_QUICK_CASH_COUNT],
             value=str(pos_settings.quick_cash_count(pset)),
         )
+        pos_negative_stock_switch = ft.Switch(
+            label="السماح بالبيع بكمية أكبر من المخزون (مخزون سالب)",
+            value=pos_settings.allow_negative_stock(pset),
+        )
+        pos_show_stock_switch = ft.Switch(
+            label="إظهار الكمية المتوفرة في سلة البيع السريع",
+            value=pos_settings.show_stock_in_cart(pset),
+        )
+        pos_f12_print_switch = ft.Switch(
+            label="تفعيل اختصار F12 لطباعة آخر فاتورة في نقطة البيع",
+            value=pos_settings.f12_print_enabled(pset),
+        )
 
         def save_pos_settings(_):
             try:
                 self.ctx.settings.set_many({
                     pos_settings.AUTO_PRINT_DEFAULT_KEY: "1" if pos_auto_print_switch.value else "0",
                     pos_settings.QUICK_CASH_COUNT_KEY: pos_quick_cash_field.value or str(pos_settings.DEFAULT_QUICK_CASH_COUNT),
+                    pos_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if pos_negative_stock_switch.value else "0",
+                    pos_settings.SHOW_STOCK_IN_CART_KEY: "1" if pos_show_stock_switch.value else "0",
+                    pos_settings.F12_PRINT_ENABLED_KEY: "1" if pos_f12_print_switch.value else "0",
                 })
                 self._notify("تم حفظ إعدادات نقطة البيع — تُطبَّق في المرة القادمة لفتح نقطة البيع")
                 self.page.update()
@@ -2059,6 +2084,11 @@ class AdminCenter:
                     ft.Text("محتوى الطباعة", size=12, weight=ft.FontWeight.W_600),
                     invoice_footer_field,
                     invoice_verify_qr_switch,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("سياسة المخزون", size=12, weight=ft.FontWeight.W_600),
+                    invoice_negative_stock_switch,
+                    invoice_show_stock_badge_switch,
+                    ft.Text("يُحفظ إذن المخزون السالب مع كل فاتورة، فلا تتأثر الفواتير القديمة بتغيير الإعداد لاحقًا.", size=11, color=Colors.TEXT_SECONDARY),
                     ft.FilledButton("حفظ إعدادات الفواتير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_invoice_settings),
                 ],
             ),
@@ -2070,6 +2100,13 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("عدد أزرار المبالغ الجاهزة في شاشة الدفع", size=12, weight=ft.FontWeight.W_600),
                     pos_quick_cash_field,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("سياسة المخزون في السلة", size=12, weight=ft.FontWeight.W_600),
+                    pos_negative_stock_switch,
+                    pos_show_stock_switch,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("اختصارات لوحة المفاتيح", size=12, weight=ft.FontWeight.W_600),
+                    pos_f12_print_switch,
                     ft.FilledButton("حفظ إعدادات نقطة البيع", icon=ft.Icons.SAVE_OUTLINED, on_click=save_pos_settings),
                 ],
             ),

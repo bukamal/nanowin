@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.3"
-BUILD_NUMBER = 48  # FIX_0.17.3: 6-place money storage so SYP prices round-trip exactly
+APP_VERSION = "0.17.4"
+BUILD_NUMBER = 49  # FEAT_0.17.4: stock-policy settings, single-page POS checkout, F12 reprint, KPI toggle
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

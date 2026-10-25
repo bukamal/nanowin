@@ -47,6 +47,7 @@ class AccountingRebuilder:
             """
             SELECT il.*, inv.type AS invoice_type, inv.invoice_date,
                    inv.created_at AS invoice_created_at,
+                   inv.allow_negative_stock AS allow_negative_stock,
                    it.name AS item_name, it.item_type
             FROM invoice_lines il
             JOIN invoices inv ON inv.id=il.invoice_id
@@ -65,7 +66,14 @@ class AccountingRebuilder:
             if row["invoice_type"] == "purchase":
                 unit_cost = line_total / base_qty if base_qty else 0.0
                 new_qty = st["qty"] + base_qty
-                st["avg"] = ((st["qty"] * st["avg"]) + line_total) / new_qty if new_qty else unit_cost
+                if new_qty > EPSILON:
+                    st["avg"] = ((st["qty"] * st["avg"]) + line_total) / new_qty
+                else:
+                    # A purchase that only reduces a negative balance (or
+                    # lands exactly on zero) has no positive quantity to
+                    # spread its value over; use its own unit cost instead
+                    # of dividing by a non-positive quantity.
+                    st["avg"] = unit_cost
                 st["qty"] = new_qty
                 conn.execute(
                     "UPDATE invoice_lines SET unit_cost=?,cost_amount=0 WHERE id=?",
@@ -79,14 +87,15 @@ class AccountingRebuilder:
                 )
                 conn.execute("UPDATE items SET purchase_price=? WHERE id=?", (unit_cost, item_id))
             else:
-                if st["qty"] + EPSILON < base_qty:
+                allow_negative = bool(row.get("allow_negative_stock"))
+                if not allow_negative and st["qty"] + EPSILON < base_qty:
                     raise ValueError(
                         f"المخزون غير كافٍ للمادة: {row['item_name']} — المتاح {st['qty']:.3f} والمطلوب {base_qty:.3f}"
                     )
                 unit_cost = st["avg"]
                 cost_amount = money.quantized(unit_cost * base_qty)
                 st["qty"] -= base_qty
-                if st["qty"] <= EPSILON:
+                if abs(st["qty"]) <= EPSILON:
                     st["qty"] = 0.0
                 conn.execute(
                     "UPDATE invoice_lines SET unit_cost=?,cost_amount=? WHERE id=?",

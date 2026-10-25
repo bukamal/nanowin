@@ -104,6 +104,7 @@ class InvoiceService:
         reference: str | None = None,
         notes: str | None = None,
         paid_amount: float = 0,
+        allow_negative_stock: bool | None = False,
     ) -> int:
         inv_date = invoice_date or date.today().isoformat()
         with self.db.transaction() as conn:
@@ -125,9 +126,9 @@ class InvoiceService:
             }
             cur = conn.execute(
                 """INSERT INTO invoices(type,customer_id,supplier_id,invoice_date,reference,notes,total,
-                                         initial_paid_amount,paid_amount,
+                                         initial_paid_amount,paid_amount,allow_negative_stock,
                                          invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol)
-                   VALUES(?,?,?,?,?,?,?,?,0,?,?,?)""",
+                   VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?)""",
                 (
                     invoice_type,
                     customer_id,
@@ -137,6 +138,7 @@ class InvoiceService:
                     (notes or "").strip() or None,
                     total,
                     paid_amount,
+                    1 if (allow_negative_stock and invoice_type == "sale") else 0,
                     currency.get_effective_rate(settings),
                     currency.get_display_currency(settings),
                     currency.get_display_symbol(settings),
@@ -166,6 +168,7 @@ class InvoiceService:
         reference: str | None = None,
         notes: str | None = None,
         paid_amount: float = 0,
+        allow_negative_stock: bool | None = None,
     ) -> None:
         inv_date = invoice_date or date.today().isoformat()
         with self.db.transaction() as conn:
@@ -184,9 +187,12 @@ class InvoiceService:
                 invoice_type, total, paid_amount, customer_id, supplier_id
             )
             self._require_party_for_credit(invoice_type, total, paid_amount, customer_id, supplier_id)
+            if allow_negative_stock is None:
+                allow_negative_stock = bool(old["allow_negative_stock"])
             conn.execute(
                 """UPDATE invoices
-                   SET type=?,customer_id=?,supplier_id=?,invoice_date=?,reference=?,notes=?,total=?,initial_paid_amount=?
+                   SET type=?,customer_id=?,supplier_id=?,invoice_date=?,reference=?,notes=?,total=?,
+                       initial_paid_amount=?,allow_negative_stock=?
                    WHERE id=?""",
                 (
                     invoice_type,
@@ -197,6 +203,7 @@ class InvoiceService:
                     (notes or "").strip() or None,
                     total,
                     paid_amount,
+                    1 if (allow_negative_stock and invoice_type == "sale") else 0,
                     invoice_id,
                 ),
             )

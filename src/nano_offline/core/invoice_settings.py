@@ -29,12 +29,18 @@ OVERDUE_DAYS_KEY = "invoice_overdue_days"
 FOOTER_TEXT_KEY = "invoice_footer_text"
 SHOW_VERIFY_QR_KEY = "invoice_show_verify_qr"
 
+# --- Stock policy ---------------------------------------------------------#
+ALLOW_NEGATIVE_STOCK_KEY = "invoice_allow_negative_stock"
+SHOW_STOCK_BADGE_KEY = "invoice_show_stock_badge"
+
 DEFAULT_NUMBER_PREFIX = ""
 DEFAULT_NUMBER_PADDING = 0
 DEFAULT_DUE_DAYS = 0  # 0 == no due-date line printed (cash-style invoices)
 DEFAULT_OVERDUE_DAYS = 30
 DEFAULT_FOOTER_TEXT = ""
 DEFAULT_SHOW_VERIFY_QR = True
+DEFAULT_ALLOW_NEGATIVE_STOCK = False
+DEFAULT_SHOW_STOCK_BADGE = True
 
 VALID_NUMBER_PADDING = (0, 4, 5, 6)
 
@@ -105,14 +111,29 @@ def show_verify_qr(settings) -> bool:
     return _flag(settings, SHOW_VERIFY_QR_KEY, DEFAULT_SHOW_VERIFY_QR)
 
 
+def allow_negative_stock(settings) -> bool:
+    """Whether saving a sale invoice may leave an item below zero.
+
+    The permission is snapshotted onto each invoice, so turning this off
+    later never invalidates historical oversold invoices during a rebuild.
+    """
+    return _flag(settings, ALLOW_NEGATIVE_STOCK_KEY, DEFAULT_ALLOW_NEGATIVE_STOCK)
+
+
+def show_stock_badge(settings) -> bool:
+    """Whether the invoice editor shows its low/out-of-stock hint."""
+    return _flag(settings, SHOW_STOCK_BADGE_KEY, DEFAULT_SHOW_STOCK_BADGE)
+
+
 __all__ = [
     "NUMBER_PREFIX_KEY", "NUMBER_PADDING_KEY", "DEFAULT_DUE_DAYS_KEY",
     "OVERDUE_DAYS_KEY", "FOOTER_TEXT_KEY",
-    "SHOW_VERIFY_QR_KEY",
+    "SHOW_VERIFY_QR_KEY", "ALLOW_NEGATIVE_STOCK_KEY", "SHOW_STOCK_BADGE_KEY",
     "DEFAULT_NUMBER_PREFIX", "DEFAULT_NUMBER_PADDING", "DEFAULT_DUE_DAYS",
     "DEFAULT_OVERDUE_DAYS", "DEFAULT_FOOTER_TEXT",
-    "DEFAULT_SHOW_VERIFY_QR", "VALID_NUMBER_PADDING",
+    "DEFAULT_SHOW_VERIFY_QR", "DEFAULT_ALLOW_NEGATIVE_STOCK",
+    "DEFAULT_SHOW_STOCK_BADGE", "VALID_NUMBER_PADDING",
     "number_prefix", "number_padding", "format_invoice_number",
     "default_due_days", "overdue_days", "due_date_for", "footer_text",
-    "show_verify_qr",
+    "show_verify_qr", "allow_negative_stock", "show_stock_badge",
 ]

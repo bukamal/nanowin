@@ -40,6 +40,10 @@ _PERIOD_OPTIONS: list[tuple[str, str, int]] = [
 # alerts have no single-entity target) falls back to the notifications panel.
 _ALERT_NAV = {"customer": "customers", "item": "items"}
 
+# Base key; per-user preference is stored as "<base>.<user_id>" when a
+# session exists, with the bare key as a shared fallback.
+DASHBOARD_KPIS_VISIBLE_KEY = "ui.dashboard_kpis_visible"
+
 
 class DashboardCenter:
     """Home dashboard: KPIs, quick actions, sales/purchases flow, smart
@@ -89,6 +93,22 @@ class DashboardCenter:
 
     def _notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
+
+    @staticmethod
+    def _flag_enabled(raw: str) -> bool:
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+    def _kpi_pref_key(self) -> str:
+        """Per-user KPI preference key, with a shared fallback when no
+        authenticated session exists (tests/preview)."""
+        try:
+            session = self.ctx.auth.current()
+            user_id = getattr(session, "id", None) if session is not None else None
+            if user_id is not None:
+                return f"{DASHBOARD_KPIS_VISIBLE_KEY}.{int(user_id)}"
+        except Exception:
+            pass
+        return DASHBOARD_KPIS_VISIBLE_KEY
 
     def money(self, value) -> str:
         return currency.format_amount(value, self.ctx.settings)
@@ -1075,6 +1095,8 @@ class DashboardCenter:
         # the page body opens straight into the content.
         greeting, date_line, _greeting_icon = self._greeting_and_date()
         self._set_header(greeting, f"نظرة عامة على أداء عملك · {date_line}")
+        kpi_pref_key = self._kpi_pref_key()
+        kpis_visible = {"v": self._flag_enabled(self.ctx.settings.get(kpi_pref_key, "true"))}
         summary = self.ctx.dashboard.summary()
         invoices = self.ctx.invoices.list_invoices(limit=100)
         recent = invoices[:5]
@@ -1379,15 +1401,59 @@ class DashboardCenter:
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
 
+        kpi_container = ft.Container(
+            metric_row([
+                self._metric("صافي الربح", self.money(summary["net_profit"]), icon=ft.Icons.QUERY_STATS, accent=Colors.SUCCESS, note="بعد تكلفة المبيعات والمصروفات"),
+                self._metric("رصيد الصندوق", self.money(summary["cash"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY, note="الرصيد النقدي الحالي"),
+                self._metric("ذمم العملاء", self.money(summary["receivables"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING, note="مبالغ مستحقة التحصيل"),
+                self._metric("ذمم الموردين", self.money(summary["payables"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER, note="مبالغ مستحقة الدفع"),
+            ], spacing=10),
+            visible=kpis_visible["v"],
+        )
+        kpi_toggle_icon = ft.Icon(
+            ft.Icons.VISIBILITY_OFF_OUTLINED if kpis_visible["v"] else ft.Icons.INSIGHTS_OUTLINED,
+            size=17,
+            color=Colors.TEXT_SECONDARY,
+        )
+        kpi_toggle_text = ft.Text(
+            "إخفاء الإحصائيات" if kpis_visible["v"] else "إظهار الإحصائيات",
+            size=11,
+            color=Colors.TEXT_SECONDARY,
+        )
+
+        def _toggle_kpis(_=None):
+            kpis_visible["v"] = not kpis_visible["v"]
+            kpi_container.visible = kpis_visible["v"]
+            try:
+                self.ctx.settings.set(kpi_pref_key, "1" if kpis_visible["v"] else "0")
+            except Exception:
+                pass
+            kpi_toggle_icon.name = (
+                ft.Icons.VISIBILITY_OFF_OUTLINED if kpis_visible["v"] else ft.Icons.INSIGHTS_OUTLINED
+            )
+            kpi_toggle_text.value = "إخفاء الإحصائيات" if kpis_visible["v"] else "إظهار الإحصائيات"
+            self.page.update()
+
+        kpi_header = ft.Row(
+            [
+                ft.Text("مؤشرات الأداء", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                ft.Container(expand=True),
+                ft.Container(
+                    ft.Row([kpi_toggle_icon, kpi_toggle_text], spacing=5),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=5),
+                    border_radius=10,
+                    ink=True,
+                    on_click=_toggle_kpis,
+                ),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
         scrollable_body = ft.Column(
             [
                 hero_row,
-                metric_row([
-                    self._metric("صافي الربح", self.money(summary["net_profit"]), icon=ft.Icons.QUERY_STATS, accent=Colors.SUCCESS, note="بعد تكلفة المبيعات والمصروفات"),
-                    self._metric("رصيد الصندوق", self.money(summary["cash"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY, note="الرصيد النقدي الحالي"),
-                    self._metric("ذمم العملاء", self.money(summary["receivables"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING, note="مبالغ مستحقة التحصيل"),
-                    self._metric("ذمم الموردين", self.money(summary["payables"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER, note="مبالغ مستحقة الدفع"),
-                ], spacing=10),
+                kpi_header,
+                kpi_container,
                 quick_actions,
                 grid,
             ],

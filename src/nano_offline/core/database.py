@@ -8,7 +8,7 @@ from typing import Iterator
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 15  # PHASE11: adds notification_delivery_log (external dispatch)
+SCHEMA_VERSION = 16  # adds per-invoice allow_negative_stock snapshot
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -122,6 +122,10 @@ CREATE TABLE IF NOT EXISTS invoices (
     total REAL NOT NULL DEFAULT 0 CHECK(total >= 0),
     initial_paid_amount REAL NOT NULL DEFAULT 0 CHECK(initial_paid_amount >= 0),
     paid_amount REAL NOT NULL DEFAULT 0 CHECK(paid_amount >= 0),
+    -- Snapshot of whether this sale was allowed to oversell stock. Kept on
+    -- the invoice so a later admin change cannot make an old oversold sale
+    -- fail the next inventory rebuild.
+    allow_negative_stock INTEGER NOT NULL DEFAULT 0 CHECK(allow_negative_stock IN (0,1)),
     status TEXT NOT NULL DEFAULT 'posted',
     -- Snapshot of the *display* currency in effect the moment the invoice was
     -- created (see core/currency.py). Printed documents must keep showing the
@@ -544,6 +548,12 @@ class Database:
         if self._table_exists(conn, "invoices") and not self._has_column(conn, "invoices", "initial_paid_amount"):
             conn.execute("ALTER TABLE invoices ADD COLUMN initial_paid_amount REAL NOT NULL DEFAULT 0")
             conn.execute("UPDATE invoices SET initial_paid_amount=paid_amount")
+
+        # Schema 16: remember the oversell permission that applied when each
+        # sale was saved. Existing invoices stay strict (0), which preserves
+        # their previous rebuild behavior exactly.
+        if self._table_exists(conn, "invoices") and not self._has_column(conn, "invoices", "allow_negative_stock"):
+            conn.execute("ALTER TABLE invoices ADD COLUMN allow_negative_stock INTEGER NOT NULL DEFAULT 0")
 
         # Schema 8: snapshot the display currency/rate onto each invoice so
         # printed documents reflect the rate that was actually in force when

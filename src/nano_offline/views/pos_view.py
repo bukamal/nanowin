@@ -52,7 +52,7 @@ WEIGHT_UNIT_HINTS = {
 
 # Comfortable receipt-rail width on desktop: narrow enough to leave the
 # catalog most of the screen, wide enough for name + qty stepper + line total.
-CART_RAIL_WIDTH = 380
+CART_RAIL_WIDTH = 420
 
 
 def _cart_key(item: dict, unit_id: int | None):
@@ -548,10 +548,6 @@ class POSCenter:
         CART_FULL_HEIGHT = 220
         cart_column = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=CART_FULL_HEIGHT)
         total_text = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK)
-        # A separate instance for the payment sheet -- total_text above is
-        # permanently mounted in the sticky bottom pay bar, and a Flet
-        # control can't be mounted in two places (bar + sheet) at once.
-        sheet_total_text = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK)
         count_text = ft.Text("0 بند", size=12, color=Colors.TEXT_SECONDARY)
         bottom_count_text = ft.Text("0 بند", size=11, color=Colors.TEXT_FAINT)
         held_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, wrap=False, visible=False)
@@ -670,6 +666,10 @@ class POSCenter:
             if cw is not None:
                 cw.visible = True
             total = total_amount()
+            # Read the cart-display policy once per refresh instead of
+            # opening a settings query for every cart line.
+            self._cart_show_stock = pos_settings.show_stock_in_cart(self.ctx.settings)
+            self._cart_allow_negative = pos_settings.allow_negative_stock(self.ctx.settings)
             rows = []
             for row_key in self.cart_order:
                 row = self.cart.get(row_key)
@@ -700,7 +700,6 @@ class POSCenter:
                 )
             cart_column.controls = rows if rows else [empty_state("السلة فارغة", icon=ft.Icons.SHOPPING_CART_OUTLINED, hint="امسح باركود أو اضغط على مادة للإضافة")]
             total_text.value = self.money(total)
-            sheet_total_text.value = self.money(total)
             count_text.value = f"{len(self.cart_order)} بند" if self.cart_order else "0 بند"
             bottom_count_text.value = count_text.value
             self.received_digits = ""
@@ -975,7 +974,9 @@ class POSCenter:
                     lines=lines,
                     customer_id=self.customer_id,
                     paid_amount=paid,
+                    allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
                 )
+                self._last_invoice_id = invoice_id
                 change_amt = max(0.0, received - total)
                 # The sale is committed from this point on. Clear the cart
                 # immediately so a second click (or a UI glitch while showing
@@ -1054,15 +1055,11 @@ class POSCenter:
             self.received_digits = ""
             _sync_received_display()
             render_quick_cash()
-            step = {"n": 1}
-
-            step_label = ft.Text("1 · المبلغ", size=13, weight=ft.FontWeight.W_600, color=Colors.PRIMARY)
             body = ft.Column(spacing=10, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
             def pick_recent_customer(cid: int):
                 customer_dd.value = str(cid)
                 customer_changed()
-                go_step(2)
 
             def recent_customers_row() -> ft.Control:
                 # Phase C: "last 3 customers" quick-pick under the customer
@@ -1098,17 +1095,6 @@ class POSCenter:
                     spacing=4,
                 )
 
-            def _step_chip(n: int, title: str) -> ft.Container:
-                active = step["n"] == n
-                return ft.Container(
-                    ft.Text(title, size=11, weight=ft.FontWeight.BOLD if active else ft.FontWeight.W_500,
-                            color=Colors.WHITE if active else Colors.TEXT_MUTED),
-                    padding=ft.padding.symmetric(horizontal=12, vertical=7),
-                    bgcolor=Colors.PRIMARY if active else Colors.BACKGROUND_ALT,
-                    border_radius=16,
-                )
-
-            steps_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
             currency_toggle_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
 
             def render_currency_toggle():
@@ -1150,127 +1136,91 @@ class POSCenter:
                 except Exception:
                     self.page.update()
 
-            def render_steps_row():
-                steps_row.controls = [
-                    _step_chip(1, "1 المبلغ"),
-                    _step_chip(2, "2 العميل"),
-                    _step_chip(3, "3 تأكيد"),
-                ]
+            customer_insight = ft.Container(visible=False)
 
-            def go_step(n: int):
-                step["n"] = n
-                render_steps_row()
-                body.controls.clear()
-                if n == 1:
-                    step_label.value = "المبلغ المستلم"
-                    body.controls.extend([
-                        ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                        ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
-                        ft.Container(height=4),
-                        currency_toggle_row,
-                        received_display,
-                        change_text,
-                        quick_cash_row,
-                        numpad,
-                        ft.Row(
-                            [
-                                ft.OutlinedButton("إلغاء", on_click=lambda _: self.page.close(payment_sheet), expand=True),
-                                ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK if self.page.rtl else ft.Icons.ARROW_FORWARD, on_click=lambda _: go_step(2), expand=True),
-                            ],
-                            spacing=10,
+            def render_customer_insight():
+                customer = customer_map.get(self.customer_id) if self.customer_id else None
+                balance = float((customer or {}).get("balance") or 0)
+                if customer is None or abs(balance) <= 0.005:
+                    customer_insight.visible = False
+                    return
+                owes = balance > 0
+                customer_insight.content = ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED,
+                            size=16,
+                            color=Colors.WARNING_DARK if owes else Colors.SUCCESS_DARK,
                         ),
-                    ])
-                elif n == 2:
-                    step_label.value = "العميل (اختياري)"
-                    insight = ft.Container(height=0)
-                    if self.customer_id:
-                        customer = customer_map.get(self.customer_id)
-                        balance = float((customer or {}).get("balance") or 0)
-                        if customer is not None and abs(balance) > 0.005:
-                            owes = balance > 0
-                            insight = ft.Container(
-                                ft.Row(
-                                    [
-                                        ft.Icon(
-                                            ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED,
-                                            size=16,
-                                            color=Colors.WARNING_DARK if owes else Colors.SUCCESS_DARK,
-                                        ),
-                                        ft.Text(
-                                            (
-                                                f"على العميل {self.money(balance)}"
-                                                if owes
-                                                else f"له رصيد دائن {self.money(-balance)}"
-                                            ),
-                                            size=11,
-                                            weight=ft.FontWeight.W_600,
-                                            color=Colors.WARNING_DARK if owes else Colors.SUCCESS_DARK,
-                                        ),
-                                    ],
-                                    spacing=6,
-                                ),
-                                padding=ft.padding.symmetric(horizontal=12, vertical=8),
-                                bgcolor=Colors.WARNING_BG if owes else Colors.SUCCESS_BG,
-                                border_radius=12,
-                            )
-                    body.controls.extend([
-                        ft.Text("اتركه فارغًا للبيع النقدي السريع", size=12, color=Colors.TEXT_SECONDARY),
-                        customer_dd,
-                        insight,
-                        recent_customers_row(),
-                        auto_print_switch,
-                        print_layout_block,
-                        ft.Row(
-                            [
-                                ft.OutlinedButton("رجوع", on_click=lambda _: go_step(1), expand=True),
-                                ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK if self.page.rtl else ft.Icons.ARROW_FORWARD, on_click=lambda _: go_step(3), expand=True),
-                            ],
-                            spacing=10,
-                        ),
-                    ])
-                else:
-                    step_label.value = "تأكيد البيع"
-                    body.controls.extend([
-                        ft.Container(
-                            ft.Column(
-                                [
-                                    ft.Text("الإجمالي", size=12, color=Colors.TEXT_SECONDARY),
-                                    sheet_total_text,
-                                    ft.Text("المستلم", size=12, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(self._money_receive(received_amount()), size=20, weight=ft.FontWeight.BOLD),
-                                    change_text,
-                                ],
-                                spacing=4,
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        ft.Text(
+                            (
+                                f"على العميل {self.money(balance)}"
+                                if owes
+                                else f"له رصيد دائن {self.money(-balance)}"
                             ),
-                            padding=16,
-                            bgcolor=Colors.PRIMARY_BG,
-                            border_radius=16,
+                            size=11,
+                            weight=ft.FontWeight.W_600,
+                            color=Colors.WARNING_DARK if owes else Colors.SUCCESS_DARK,
                         ),
-                        ft.Row(
-                            [
-                                ft.OutlinedButton("رجوع", on_click=lambda _: go_step(2), expand=True),
-                                hero_button("تأكيد البيع", icon=ft.Icons.POINT_OF_SALE_OUTLINED, on_click=confirm_payment),
-                            ],
-                            spacing=10,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                    ])
-                try:
-                    payment_sheet.content.update()
-                except Exception:
-                    self.page.update()
+                    ],
+                    spacing=6,
+                )
+                customer_insight.padding = ft.padding.symmetric(horizontal=12, vertical=8)
+                customer_insight.bgcolor = Colors.WARNING_BG if owes else Colors.SUCCESS_BG
+                customer_insight.border_radius = 12
+                customer_insight.visible = True
 
-            render_steps_row()
+            self._render_payment_customer_insight = render_customer_insight
+
+            confirm_btn = hero_button("إتمام وطباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=confirm_payment)
+            confirm_btn.expand = True
+
+            def sync_confirm_label(_=None):
+                printing = bool(auto_print_switch.value)
+                confirm_btn.text = "إتمام وطباعة" if printing else "إتمام"
+                confirm_btn.icon = ft.Icons.PRINT_OUTLINED if printing else ft.Icons.POINT_OF_SALE_OUTLINED
+                try:
+                    confirm_btn.update()
+                except Exception:
+                    pass
+
+            auto_print_switch.on_change = sync_confirm_label
+            sync_confirm_label()
+
+            body.controls = [
+                ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
+                ft.Container(height=4),
+                currency_toggle_row,
+                received_display,
+                change_text,
+                quick_cash_row,
+                numpad,
+                ft.Divider(height=1, color=Colors.BORDER),
+                ft.Text("العميل (اختياري)", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                ft.Text("اتركه فارغًا للبيع النقدي السريع", size=11, color=Colors.TEXT_FAINT),
+                customer_dd,
+                customer_insight,
+                recent_customers_row(),
+                ft.Divider(height=1, color=Colors.BORDER),
+                auto_print_switch,
+                print_layout_block,
+                ft.Row(
+                    [
+                        ft.OutlinedButton("إلغاء", on_click=lambda _: self.page.close(payment_sheet), expand=True),
+                        confirm_btn,
+                    ],
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ]
             render_currency_toggle()
-            go_step(1)
+            render_customer_insight()
             payment_sheet.content = ft.Container(
                 ft.Column(
                     [
                         ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
                         ft.Text("إتمام الدفع", size=18, weight=ft.FontWeight.BOLD),
-                        steps_row,
-                        step_label,
                         body,
                     ],
                     spacing=12,
@@ -1294,6 +1244,9 @@ class POSCenter:
             # depends on whether a customer is selected, so re-evaluate the
             # change/credit message the moment that changes.
             _apply_change_text()
+            render_insight = getattr(self, "_render_payment_customer_insight", None)
+            if callable(render_insight):
+                render_insight()
             self.page.update()
 
         customer_dd.on_change = customer_changed
@@ -1364,6 +1317,12 @@ class POSCenter:
             icon=ft.Icons.REPLAY,
             tooltip="إعادة آخر فاتورة إلى السلة",
             on_click=lambda _: recall_last_sale(),
+            icon_size=IconSize.HEADER,
+        )
+        print_last_btn = ft.IconButton(
+            icon=ft.Icons.PRINT_OUTLINED,
+            tooltip="طباعة آخر فاتورة (F12)",
+            on_click=lambda _: self._print_last_receipt(),
             icon_size=IconSize.HEADER,
         )
 
@@ -1454,7 +1413,7 @@ class POSCenter:
                         [
                             ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD, expand=True),
                             count_text,
-                            ft.Row([price_check_btn, recall_btn], spacing=0, tight=True),
+                            ft.Row([price_check_btn, recall_btn, print_last_btn], spacing=0, tight=True),
                             hold_btn,
                             undo_btn,
                         ],
@@ -1670,6 +1629,9 @@ class POSCenter:
                 if k == "f8":
                     if not self._restore_undo():
                         self.notify("لا يوجد إجراء للتراجع عنه")
+                    return
+                if k == "f12" and pos_settings.f12_print_enabled(self.ctx.settings):
+                    self._print_last_receipt()
                     return
                 if k == "enter" and (e.ctrl or e.meta):
                     checkout_btn.on_click(None)
@@ -1962,19 +1924,31 @@ class POSCenter:
                 mark_overlay_open()
             self.page.open(price_sheet)
 
-        # Informational only (see item tile note above) -- InvoiceService
-        # itself has no stock guard, so this never blocks checkout; it just
-        # lets the cashier catch it before printing the receipt. Compare in
-        # *base* units so a carton line is checked against piece stock.
+        # Advisory only: the strict guard lives in AccountingRebuilder, and
+        # the admin can allow overselling per surface. The on-hand figure is
+        # hidden by default so the cart never advertises stock levels.
         factor = float(row.get("factor") or 1)
         base_qty = float(row["qty"]) * factor
-        exceeds_stock = (not is_service) and base_qty > float(item.get("quantity") or 0)
+        stock_qty = float(item.get("quantity") or 0)
+        exceeds_stock = (not is_service) and base_qty > stock_qty
+        show_stock = getattr(self, "_cart_show_stock", None)
+        if show_stock is None:
+            show_stock = pos_settings.show_stock_in_cart(self.ctx.settings)
+        allow_negative = getattr(self, "_cart_allow_negative", None)
+        if allow_negative is None:
+            allow_negative = pos_settings.allow_negative_stock(self.ctx.settings)
         warning_line = None
-        if exceeds_stock:
-            warning_line = ft.Text(
-                f"⚠️ المتوفر فعليًا: {self._qty(item.get('quantity'))} فقط",
-                size=10, color=Colors.DANGER_DARK, weight=ft.FontWeight.W_600,
-            )
+        if exceeds_stock and show_stock:
+            if allow_negative:
+                warning_line = ft.Text(
+                    f"المتوفر: {self._qty(stock_qty)} — سيُسجَّل مخزون سالب",
+                    size=10, color=Colors.WARNING_DARK, weight=ft.FontWeight.W_600,
+                )
+            else:
+                warning_line = ft.Text(
+                    f"⚠️ المتوفر فعليًا: {self._qty(stock_qty)} فقط",
+                    size=10, color=Colors.DANGER_DARK, weight=ft.FontWeight.W_600,
+                )
 
         # Phase B: margin badge (below cost) + qty badge on cart lines.
         # Prices are stored per *selected unit*, so normalize to the base
@@ -2086,7 +2060,7 @@ class POSCenter:
             ),
             padding=ft.padding.symmetric(horizontal=8, vertical=4),
             bgcolor=Colors.DANGER_BG if below_cost else Colors.BACKGROUND_ALT,
-            border=ft.border.all(1, Colors.DANGER) if (exceeds_stock or below_cost) else None,
+            border=ft.border.all(1, Colors.DANGER) if ((exceeds_stock and show_stock and not allow_negative) or below_cost) else None,
             border_radius=10,
         )
 
@@ -2689,6 +2663,16 @@ class POSCenter:
                 resume_focus()
         if code:
             self._add_by_barcode(code)
+
+    def _print_last_receipt(self) -> None:
+        invoice_id = getattr(self, "_last_invoice_id", None)
+        if not invoice_id:
+            self.notify("لا توجد فاتورة مكتملة للطباعة — أكمل بيعًا أولًا", kind="warning")
+            return
+        if self.native_files is None:
+            self.notify("الطباعة غير متاحة في هذا البناء", kind="warning")
+            return
+        self.page.run_task(self._print_receipt, int(invoice_id), interactive=True)
 
     async def _print_receipt(self, invoice_id: int, *, interactive: bool = True) -> None:
         if self.native_files is None:

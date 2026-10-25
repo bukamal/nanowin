@@ -1684,6 +1684,7 @@ class InvoiceCenter:
                     reference=reference.value,
                     notes=notes.value,
                     paid_amount=currency.parse_display_input(paid.value, settings),
+                    allow_negative_stock=True if (is_sale and invoice_settings.allow_negative_stock(settings)) else None,
                 )
                 draft_saved["saved"] = True
                 clear_draft()
@@ -2466,6 +2467,7 @@ class InvoiceCenter:
                     reference=reference.value,
                     notes=notes.value,
                     paid_amount=currency.parse_display_input(paid.value, settings),
+                    allow_negative_stock=True if (is_sale and invoice_settings.allow_negative_stock(settings)) else None,
                 )
                 if invoice_id:
                     self.ctx.invoices.update_invoice(invoice_id, **common)
@@ -3373,6 +3375,9 @@ class InvoiceCenter:
             badge = state.get("stock_badge")
             if badge is None:
                 return
+            if not invoice_settings.show_stock_badge(self.ctx.settings):
+                badge.visible = False
+                return
             item_id_value = state["item"].value
             show = False
             if type_dd.value == "sale" and item_id_value:
@@ -3710,6 +3715,12 @@ class InvoiceCenter:
                     reference=reference.value,
                     notes=notes.value,
                     paid_amount=paid_value,
+                    allow_negative_stock=(
+                        True
+                        if (type_dd.value or "sale") == "sale"
+                        and invoice_settings.allow_negative_stock(self.ctx.settings)
+                        else None
+                    ),
                 )
                 if self.editing_id:
                     self.ctx.invoices.update_invoice(self.editing_id, **common)
