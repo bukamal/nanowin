@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 
 import flet as ft
@@ -10,6 +11,7 @@ from nano_offline.core import barcode_settings
 from nano_offline.core.theme import Colors
 
 PrintAction = Callable[[str, int], Awaitable[None]]
+PreviewHtml = Callable[[str, int], str | Awaitable[str]]
 
 #: Last confirmed profile, reused by prints that run without a dialog
 #: (e.g. POS "print automatically after payment") so they never interrupt
@@ -19,16 +21,144 @@ PRINT_ROLL_WIDTH_KEY = "print_roll_width"
 DEFAULT_PRINT_LAYOUT = "sheet"
 DEFAULT_PRINT_ROLL_WIDTH = "58"
 
+# Per-surface overrides. The original global keys stay as the fallback, so
+# existing installs keep their last confirmed choice until they print from a
+# specific surface again. Keeping each surface independent means a cashier can
+# keep POS on 80mm thermal while invoices stay on A4, without re-choosing on
+# every print.
+_SURFACE_KEYS: dict[str, tuple[str, str]] = {
+    "invoice": ("print_layout_invoice", "print_roll_width_invoice"),
+    "pos": ("print_layout_pos", "print_roll_width_pos"),
+    "statement": ("print_layout_statement", "print_roll_width_statement"),
+    "report": ("print_layout_report", "print_roll_width_report"),
+    "voucher": ("print_layout_voucher", "print_roll_width_voucher"),
+    "party": ("print_layout_party", "print_roll_width_party"),
+    "item": ("print_layout_item", "print_roll_width_item"),
+    "label": ("print_layout_label", "print_roll_width_label"),
+    "dashboard": ("print_layout_dashboard", "print_roll_width_dashboard"),
+}
 
-def saved_print_profile(settings) -> tuple[str, int]:
-    """Return ``(layout, roll_width_mm)`` from the last confirmed choice."""
-    layout = (settings.get(PRINT_LAYOUT_KEY, DEFAULT_PRINT_LAYOUT) or DEFAULT_PRINT_LAYOUT).strip()
-    if layout not in {"sheet", "roll"}:
+
+def _profile_keys(surface: str) -> tuple[str, str]:
+    return _SURFACE_KEYS.get(str(surface or "default"), (PRINT_LAYOUT_KEY, PRINT_ROLL_WIDTH_KEY))
+
+
+def _layout_value(raw) -> str | None:
+    value = str(raw or "").strip()
+    return value if value in {"sheet", "roll"} else None
+
+
+def _width_value(raw) -> str | None:
+    value = str(raw or "").strip()
+    return value if value in barcode_settings.LABEL_ROLL_WIDTH_MM else None
+
+
+def saved_print_profile(settings, surface: str = "default") -> tuple[str, int]:
+    """Return ``(layout, roll_width_mm)`` for ``surface``.
+
+    Surface-specific values win; the original global keys are used as a
+    fallback so upgrades never lose the user's previous choice.
+    """
+    layout_key, width_key = _profile_keys(surface)
+    layout = _layout_value(settings.get(layout_key))
+    if layout is None and layout_key != PRINT_LAYOUT_KEY:
+        layout = _layout_value(settings.get(PRINT_LAYOUT_KEY))
+    if layout is None:
         layout = DEFAULT_PRINT_LAYOUT
-    width_key = (settings.get(PRINT_ROLL_WIDTH_KEY, DEFAULT_PRINT_ROLL_WIDTH) or DEFAULT_PRINT_ROLL_WIDTH).strip()
-    if width_key not in barcode_settings.LABEL_ROLL_WIDTH_MM:
-        width_key = barcode_settings.DEFAULT_LABEL_ROLL_WIDTH
-    return layout, barcode_settings.LABEL_ROLL_WIDTH_MM[width_key]
+
+    width_value = _width_value(settings.get(width_key))
+    if width_value is None and width_key != PRINT_ROLL_WIDTH_KEY:
+        width_value = _width_value(settings.get(PRINT_ROLL_WIDTH_KEY))
+    if width_value is None:
+        width_value = DEFAULT_PRINT_ROLL_WIDTH
+    return layout, barcode_settings.LABEL_ROLL_WIDTH_MM[width_value]
+
+
+def save_print_layout(settings, surface: str, layout: str) -> None:
+    """Persist only the layout choice for one surface (e.g. POS quick toggle)."""
+    layout_key, _ = _profile_keys(surface)
+    settings.set(layout_key, _layout_value(layout) or DEFAULT_PRINT_LAYOUT)
+
+
+def _save_print_profile(settings, surface: str, layout: str, width_key: str) -> None:
+    layout_setting, width_setting = _profile_keys(surface)
+    settings.set(layout_setting, _layout_value(layout) or DEFAULT_PRINT_LAYOUT)
+    settings.set(width_setting, _width_value(width_key) or DEFAULT_PRINT_ROLL_WIDTH)
+
+
+def _test_page_html() -> str:
+    """A small alignment page used by the dialog's printer-test button."""
+    rows = "".join(
+        f"<tr><td>مادة تجريبية {i}</td><td>2</td><td>10.00</td><td>20.00</td></tr>"
+        for i in range(1, 4)
+    )
+    return f"""<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<style>
+body {{ font-family:'Segoe UI',Tahoma,Arial,sans-serif; color:#1E293B; margin:0; font-size:12px; }}
+.sheet {{ padding:8px; }}
+.header {{ border-bottom:2px solid #0F766E; padding-bottom:8px; margin-bottom:12px; }}
+h1 {{ margin:0; color:#0F766E; font-size:18px; }}
+p {{ margin:4px 0 0; color:#64748B; }}
+table {{ width:100%; border-collapse:collapse; margin-top:8px; }}
+th {{ background:#0F766E; color:#fff; padding:6px; font-size:11px; }}
+td {{ padding:6px; border-bottom:1px solid #E2E8F0; text-align:center; }}
+th:first-child, td:first-child {{ text-align:start; }}
+.totals-wrap {{ width:58%; margin-inline-start:auto; margin-top:0; }}
+.totals-table {{ width:100%; border:1px solid #E2E8F0; border-top:0; border-collapse:collapse; }}
+.totals-table td {{ text-align:start; }}
+.totals-table td:last-child {{ text-align:end; }}
+.totals-table .total-row td {{ background:#E4F5F1; color:#0F766E; font-weight:800; }}
+</style>
+</head>
+<body><div class="sheet">
+<div class="header">
+  <h1>صفحة اختبار الطباعة</h1>
+  <p>تحقق من المحاذاة، حجم الخط، واتجاه RTL على الورق المحدد.</p>
+</div>
+<table>
+<thead><tr><th>المادة</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
+<tbody>{rows}</tbody>
+</table>
+<div class="totals-wrap"><table class="totals-table"><tbody>
+<tr class="total-row"><td>الإجمالي</td><td>60.00</td></tr>
+<tr><td>المدفوع</td><td>60.00</td></tr>
+<tr><td>المتبقي</td><td>0.00</td></tr>
+</tbody></table></div>
+</div></body></html>"""
+
+
+async def preview_document(
+    native_files,
+    html: str,
+    *,
+    name: str,
+    layout: str,
+    roll_width_mm: int,
+) -> str:
+    """Open a real preview of ``html`` for the selected paper profile.
+
+    Returns ``"browser"`` when the desktop fallback opened it in the browser,
+    or ``"shared"`` when a native PDF was handed to the share/view sheet.
+    """
+    if native_files is None:
+        raise RuntimeError("المعاينة غير مهيأة في هذا البناء")
+    pdf = await native_files.create_pdf(
+        apply_print_profile(html, layout, roll_width_mm),
+        filename=f"{name}-preview.pdf",
+        paper_layout=layout,
+        roll_width_mm=roll_width_mm,
+    )
+    if str(pdf).strip() == "browser":
+        return "browser"
+    await native_files.share_file(
+        str(pdf),
+        mime_type="application/pdf",
+        subject="معاينة المستند",
+    )
+    return "shared"
 
 
 def open_print_profile_dialog(
@@ -39,9 +169,17 @@ def open_print_profile_dialog(
     title: str = "إعدادات الطباعة",
     initial_layout: str | None = None,
     initial_roll_width: str | None = None,
+    surface: str = "default",
+    native_files=None,
+    preview_builder: PreviewHtml | None = None,
 ) -> None:
-    """Ask for A4/thermal layout before handing a document to the OS printer."""
-    saved_layout, saved_width = saved_print_profile(settings)
+    """Ask for A4/thermal layout before handing a document to the OS printer.
+
+    When ``native_files`` is supplied, the dialog can print a built-in
+    alignment page. When ``preview_builder`` is also supplied, it can render a
+    real preview of the current document through the native PDF/browser path.
+    """
+    saved_layout, saved_width = saved_print_profile(settings, surface)
     layout = SegmentedToggle(
         options=[
             SegmentOption("sheet", "ورق A4", ft.Icons.DESCRIPTION_OUTLINED),
@@ -64,6 +202,7 @@ def open_print_profile_dialog(
         visible=layout.value == "roll",
     )
     hint = ft.Text(size=11, color=Colors.TEXT_SECONDARY)
+    status = ft.Text("", size=10.5, color=Colors.TEXT_SECONDARY)
 
     def refresh(*, update: bool = True) -> None:
         is_roll = layout.value == "roll"
@@ -72,6 +211,15 @@ def open_print_profile_dialog(
         if update:
             page.update()
 
+    def selection() -> tuple[str, str, int]:
+        selected_layout = layout.value or DEFAULT_PRINT_LAYOUT
+        width_key = width.value or barcode_settings.DEFAULT_LABEL_ROLL_WIDTH
+        roll_width_mm = barcode_settings.LABEL_ROLL_WIDTH_MM.get(
+            width_key,
+            barcode_settings.LABEL_ROLL_WIDTH_MM[barcode_settings.DEFAULT_LABEL_ROLL_WIDTH],
+        )
+        return selected_layout, width_key, roll_width_mm
+
     layout.on_change = lambda _: refresh()
     width.on_change = lambda _: refresh()
     refresh(update=False)
@@ -79,20 +227,64 @@ def open_print_profile_dialog(
     dialog = ft.AlertDialog(modal=True)
 
     async def confirm(_=None) -> None:
-        selected_layout = layout.value or "sheet"
-        width_key = width.value or barcode_settings.DEFAULT_LABEL_ROLL_WIDTH
-        roll_width_mm = barcode_settings.LABEL_ROLL_WIDTH_MM.get(
-            width_key,
-            barcode_settings.LABEL_ROLL_WIDTH_MM[barcode_settings.DEFAULT_LABEL_ROLL_WIDTH],
-        )
+        selected_layout, width_key, roll_width_mm = selection()
         try:
-            settings.set(PRINT_LAYOUT_KEY, selected_layout)
-            settings.set(PRINT_ROLL_WIDTH_KEY, width_key)
+            _save_print_profile(settings, surface, selected_layout, width_key)
         except Exception:
             pass
         page.close(dialog)
         await asyncio.sleep(0.1)
         await on_confirm(selected_layout, roll_width_mm)
+
+    async def preview(_=None) -> None:
+        if native_files is None or preview_builder is None:
+            return
+        selected_layout, _, roll_width_mm = selection()
+        status.value = "جارٍ تجهيز المعاينة..."
+        status.color = Colors.TEXT_SECONDARY
+        page.update()
+        try:
+            html = preview_builder(selected_layout, roll_width_mm)
+            if inspect.isawaitable(html):
+                html = await html
+            result = await preview_document(
+                native_files,
+                str(html),
+                name=f"nano-preview-{surface}",
+                layout=selected_layout,
+                roll_width_mm=roll_width_mm,
+            )
+            status.value = (
+                "تم فتح المعاينة في المتصفح."
+                if result == "browser"
+                else "تم تجهيز ملف المعاينة."
+            )
+            status.color = Colors.SUCCESS_DARK
+        except Exception as exc:
+            status.value = f"تعذرت المعاينة: {exc}"
+            status.color = Colors.DANGER
+        page.update()
+
+    async def test_print(_=None) -> None:
+        if native_files is None:
+            return
+        selected_layout, _, roll_width_mm = selection()
+        status.value = "جارٍ إرسال صفحة الاختبار..."
+        status.color = Colors.TEXT_SECONDARY
+        page.update()
+        try:
+            await native_files.print_html(
+                apply_print_profile(_test_page_html(), selected_layout, roll_width_mm),
+                name="nano-test-print",
+                paper_layout=selected_layout,
+                roll_width_mm=roll_width_mm,
+            )
+            status.value = "تم إرسال صفحة الاختبار إلى الطابعة."
+            status.color = Colors.SUCCESS_DARK
+        except Exception as exc:
+            status.value = f"تعذرت الطباعة التجريبية: {exc}"
+            status.color = Colors.DANGER
+        page.update()
 
     dialog.title = ft.Text(title)
     dialog.content = ft.Column(
@@ -101,14 +293,37 @@ def open_print_profile_dialog(
             layout,
             width_row,
             hint,
+            ft.Text(
+                "يُحفظ الاختيار لهذه الواجهة فقط، ويُستخدم تلقائيًا في المرة القادمة.",
+                size=10.5,
+                color=Colors.TEXT_FAINT,
+            ),
+            status,
         ],
         tight=True,
         spacing=12,
     )
-    dialog.actions = [
-        ft.TextButton("إلغاء", on_click=lambda _: page.close(dialog)),
-        ft.FilledButton("متابعة للطباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=confirm),
-    ]
+    actions = [ft.TextButton("إلغاء", on_click=lambda _: page.close(dialog))]
+    if native_files is not None and preview_builder is not None:
+        actions.append(
+            ft.TextButton(
+                "معاينة",
+                icon=ft.Icons.VISIBILITY_OUTLINED,
+                on_click=preview,
+            )
+        )
+    if native_files is not None:
+        actions.append(
+            ft.TextButton(
+                "اختبار الطابعة",
+                icon=ft.Icons.PRINT_OUTLINED,
+                on_click=test_print,
+            )
+        )
+    actions.append(
+        ft.FilledButton("متابعة للطباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=confirm)
+    )
+    dialog.actions = actions
     page.open(dialog)
 
 
@@ -124,11 +339,29 @@ body {{ font-size: 9px !important; line-height: 1.4 !important; }}
 .header {{ display: block !important; padding: 7px !important; margin-bottom: 8px !important; border-radius: 5px !important; }}
 .logo {{ max-width: 42px !important; height: 32px !important; }}
 .brand {{ font-size: 16px !important; }}
+.brand-meta {{ font-size: 8px !important; gap: 2px 6px !important; }}
 .doc-title {{ font-size: 13px !important; }}
+.doc-number {{ font-size: 8px !important; padding: 3px 6px !important; }}
+.meta-row {{ gap: 4px 8px !important; margin-bottom: 6px !important; font-size: 8px !important; }}
+.badge {{ padding: 2px 6px !important; font-size: 8px !important; }}
+.rate-note {{ margin-bottom: 6px !important; padding: 4px 6px !important; font-size: 8px !important; }}
 .grid, .metrics {{ display: block !important; }}
 .metric {{ margin: 4px 0 !important; padding: 6px !important; }}
 table {{ width: 100% !important; table-layout: fixed !important; font-size: 8px !important; }}
 th, td {{ padding: 3px 2px !important; overflow-wrap: anywhere !important; }}
+.inv-table .item-cell {{ font-size: 8px !important; }}
+.inv-table .unit, .inv-table .equiv {{ font-size: 7px !important; }}
+.totals-wrap {{ width: 100% !important; margin: 0 !important; }}
+.totals-table {{ border: 0 !important; border-radius: 0 !important; }}
+.totals-table td {{ padding: 3px 2px !important; font-size: 8px !important; }}
+.totals-table .total-row td, .totals-table .remaining-row td, .totals-table .settled-row td {{ font-size: 9px !important; }}
+.note {{ margin-top: 6px !important; padding: 5px !important; border-radius: 5px !important; font-size: 8px !important; }}
+.footer {{ margin-top: 8px !important; padding-top: 4px !important; font-size: 7px !important; }}
+.sign-row {{ margin-top: 8px !important; }}
+.verify-box svg {{ width: 42px !important; height: 42px !important; }}
+.verify-token b {{ font-size: 9px !important; }}
+.progress-wrap {{ margin-bottom: 6px !important; }}
+.watermark {{ font-size: 32px !important; }}
 </style>
 """
     else:

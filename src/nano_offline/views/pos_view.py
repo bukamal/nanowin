@@ -12,9 +12,9 @@ from nano_offline.core.toast import toast
 from nano_offline.components import SearchSelect, SelectAllTextField, SegmentedToggle, SegmentOption, empty_state
 from nano_offline.components.form_sheet import render_form_sheet
 from nano_offline.components.print_profile import (
-    PRINT_LAYOUT_KEY,
     apply_print_profile,
     open_print_profile_dialog,
+    save_print_layout,
     saved_print_profile,
 )
 from nano_offline.components.buttons import hero_button, stepper_icon_button
@@ -561,7 +561,7 @@ class POSCenter:
         received_display = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD)
         change_text = ft.Text("الباقي: 0.00", size=13, color=Colors.SUCCESS_DARK)
         auto_print_switch = ft.Switch(label="طباعة تلقائية بعد الدفع", value=pos_settings.auto_print_default(self.ctx.settings), scale=0.85)
-        saved_layout, _saved_roll_width = saved_print_profile(self.ctx.settings)
+        saved_layout, _saved_roll_width = saved_print_profile(self.ctx.settings, surface="pos")
         print_layout_toggle = SegmentedToggle(
             options=[
                 SegmentOption("sheet", "ورق A4", ft.Icons.DESCRIPTION_OUTLINED),
@@ -570,17 +570,18 @@ class POSCenter:
             value=saved_layout,
         )
 
-        def save_print_layout(_=None):
+        def persist_print_layout(_=None):
             try:
-                self.ctx.settings.set(PRINT_LAYOUT_KEY, print_layout_toggle.value or "sheet")
+                save_print_layout(self.ctx.settings, "pos", print_layout_toggle.value or "sheet")
             except Exception:
                 pass
 
-        print_layout_toggle.on_change = save_print_layout
+        print_layout_toggle.on_change = persist_print_layout
         print_layout_block = ft.Column(
             [
                 ft.Text("نوع الطباعة", size=12, weight=ft.FontWeight.W_600),
                 print_layout_toggle,
+                ft.Text("يُحفظ لنقطة البيع فقط.", size=10, color=Colors.TEXT_FAINT),
             ],
             spacing=6,
             tight=True,
@@ -2679,11 +2680,12 @@ class POSCenter:
             self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
             return
 
+        def receipt_html() -> str:
+            return self.ctx.documents.invoice_html(invoice_id)
+
         async def print_selected(layout: str, width: int) -> None:
             try:
-                html = apply_print_profile(
-                    self.ctx.documents.invoice_html(invoice_id), layout, width
-                )
+                html = apply_print_profile(receipt_html(), layout, width)
                 await self.native_files.print_html(
                     html,
                     name=f"nano-invoice-{invoice_id}",
@@ -2715,14 +2717,21 @@ class POSCenter:
 
         if not interactive:
             try:
-                layout, width = saved_print_profile(self.ctx.settings)
+                layout, width = saved_print_profile(self.ctx.settings, surface="pos")
             except Exception as exc:
                 print(f"nano auto-print profile failed: {exc!r}")
                 return
             await print_selected(layout, width)
             return
 
-        open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
+        open_print_profile_dialog(
+            self.page,
+            self.ctx.settings,
+            print_selected,
+            surface="pos",
+            native_files=self.native_files,
+            preview_builder=lambda _layout, _width: receipt_html(),
+        )
 
 
 __all__ = ["POSCenter"]

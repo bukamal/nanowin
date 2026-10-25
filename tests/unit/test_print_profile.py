@@ -1,4 +1,11 @@
-from nano_offline.components.print_profile import apply_print_profile, saved_print_profile
+import asyncio
+
+from nano_offline.components.print_profile import (
+    apply_print_profile,
+    preview_document,
+    save_print_layout,
+    saved_print_profile,
+)
 
 
 class _Settings(dict):
@@ -17,6 +24,7 @@ def test_thermal_profile_overrides_document_page_size_and_width():
     assert "@page { size: 58mm auto; margin: 0; }" in result
     assert "width: 58mm !important" in result
     assert result.index('id="nano-print-profile"') < result.lower().index("</head>")
+    assert ".totals-wrap { width: 100% !important" in result
     # The injected style block must be closed: an unclosed <style> makes the
     # browser treat the rest of the document as CSS and print a blank page
     # (barcode labels worked only because they skip this wrapper).
@@ -54,3 +62,95 @@ def test_saved_print_profile_ignores_invalid_values():
     settings = _Settings(print_layout="fax", print_roll_width="120")
 
     assert saved_print_profile(settings) == ("sheet", 58)
+
+
+def test_saved_print_profile_prefers_surface_override():
+    settings = _Settings(
+        print_layout="sheet",
+        print_roll_width="58",
+        print_layout_pos="roll",
+        print_roll_width_pos="80",
+    )
+
+    assert saved_print_profile(settings, "pos") == ("roll", 80)
+
+
+def test_saved_print_profile_falls_back_to_global_for_new_surface():
+    settings = _Settings(print_layout="roll", print_roll_width="80")
+
+    assert saved_print_profile(settings, "invoice") == ("roll", 80)
+
+
+def test_saved_print_profile_ignores_invalid_surface_override():
+    settings = _Settings(
+        print_layout="roll",
+        print_roll_width="80",
+        print_layout_pos="fax",
+        print_roll_width_pos="120",
+    )
+
+    assert saved_print_profile(settings, "pos") == ("roll", 80)
+
+
+def test_save_print_layout_is_scoped_to_surface():
+    settings = _Settings()
+
+    save_print_layout(settings, "pos", "roll")
+
+    assert settings["print_layout_pos"] == "roll"
+    assert "print_layout" not in settings
+
+
+class _FakeNativeFiles:
+    def __init__(self, pdf_result: str):
+        self.pdf_result = pdf_result
+        self.pdf_calls = []
+        self.share_calls = []
+
+    async def create_pdf(self, html, *, filename, paper_layout, roll_width_mm):
+        self.pdf_calls.append((html, filename, paper_layout, roll_width_mm))
+        return self.pdf_result
+
+    async def share_file(self, path, *, mime_type, subject):
+        self.share_calls.append((path, mime_type, subject))
+        return True
+
+
+def test_preview_document_uses_browser_fallback_without_sharing():
+    native = _FakeNativeFiles("browser")
+
+    result = asyncio.run(
+        preview_document(
+            native,
+            "<html><head></head><body>doc</body></html>",
+            name="nano-preview-invoice",
+            layout="roll",
+            roll_width_mm=80,
+        )
+    )
+
+    assert result == "browser"
+    assert native.share_calls == []
+    assert native.pdf_calls[0][1] == "nano-preview-invoice-preview.pdf"
+    assert native.pdf_calls[0][2:] == ("roll", 80)
+    assert "80mm auto" in native.pdf_calls[0][0]
+
+
+def test_preview_document_shares_pdf_on_native_platforms():
+    native = _FakeNativeFiles("/tmp/preview.pdf")
+
+    result = asyncio.run(
+        preview_document(
+            native,
+            "<html><head></head><body>doc</body></html>",
+            name="nano-preview-statement",
+            layout="sheet",
+            roll_width_mm=58,
+        )
+    )
+
+    assert result == "shared"
+    assert native.share_calls == [
+        ("/tmp/preview.pdf", "application/pdf", "معاينة المستند")
+    ]
+    assert "@page { size: A4; margin: 12mm; }" in native.pdf_calls[0][0]

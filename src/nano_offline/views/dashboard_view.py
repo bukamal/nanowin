@@ -986,7 +986,14 @@ class DashboardCenter:
                     except Exception as exc:
                         self._notify(f"تعذر طباعة التقرير: {exc}", kind="warning")
 
-                open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
+                open_print_profile_dialog(
+                    self.page,
+                    self.ctx.settings,
+                    print_selected,
+                    surface="dashboard",
+                    native_files=self.native_files,
+                    preview_builder=lambda _layout, _width: html,
+                )
             except Exception as exc:
                 self._notify(f"تعذر طباعة التقرير: {exc}", kind="warning")
 

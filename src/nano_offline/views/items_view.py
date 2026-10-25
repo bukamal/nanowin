@@ -1532,6 +1532,8 @@ class ItemsCenter:
                 title="نوع ورق ملصقات الباركود",
                 initial_layout=barcode_settings.label_layout(ctx.settings),
                 initial_roll_width=barcode_settings.label_roll_width(ctx.settings),
+                surface="label",
+                native_files=self.native_files,
             )
 
         def open_item_card_sheet(item: dict) -> None:
@@ -1571,6 +1573,15 @@ class ItemsCenter:
             for cb in (include_selling, include_purchase, include_category, include_unit):
                 cb.on_change = on_option_change
 
+            def item_card_document_html() -> str:
+                return ctx.documents.item_card_html(
+                    payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
+                    purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
+                    selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
+                    unit=base_unit_name if include_unit.value else None,
+                    category=item.get("category_name") if include_category.value else None,
+                )
+
             async def do_print(_=None):
                 if self.native_files is None:
                     notify("الطباعة الأصلية غير مهيأة في هذا البناء")
@@ -1578,15 +1589,9 @@ class ItemsCenter:
 
                 async def print_selected(layout: str, width: int) -> None:
                     try:
-                        html = ctx.documents.item_card_html(
-                            payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
-                            purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
-                            selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
-                            unit=base_unit_name if include_unit.value else None,
-                            category=item.get("category_name") if include_category.value else None,
-                        )
+                        html = apply_print_profile(item_card_document_html(), layout, width)
                         await self.native_files.print_html(
-                            apply_print_profile(html, layout, width),
+                            html,
                             name="nano-item-card",
                             paper_layout=layout,
                             roll_width_mm=width,
@@ -1594,7 +1599,14 @@ class ItemsCenter:
                     except Exception as exc:
                         notify(str(exc), kind="error")
 
-                open_print_profile_dialog(page, ctx.settings, print_selected)
+                open_print_profile_dialog(
+                    page,
+                    ctx.settings,
+                    print_selected,
+                    surface="item",
+                    native_files=self.native_files,
+                    preview_builder=lambda _layout, _width: item_card_document_html(),
+                )
 
             async def do_pdf(_=None):
                 if self.native_files is None:
@@ -1603,15 +1615,9 @@ class ItemsCenter:
 
                 async def share_selected(layout: str, width: int) -> None:
                     try:
-                        html = ctx.documents.item_card_html(
-                            payload=build_payload(), name=item.get("name") or "", barcode=item.get("barcode"),
-                            purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
-                            selling_price=float(item.get("selling_price") or 0) if include_selling.value else None,
-                            unit=base_unit_name if include_unit.value else None,
-                            category=item.get("category_name") if include_category.value else None,
-                        )
+                        html = apply_print_profile(item_card_document_html(), layout, width)
                         await self.native_files.share_pdf(
-                            apply_print_profile(html, layout, width),
+                            html,
                             filename=f"nano_item_card_{item.get('id')}.pdf",
                             paper_layout=layout,
                             roll_width_mm=width,
@@ -1619,7 +1625,15 @@ class ItemsCenter:
                     except Exception as exc:
                         notify(str(exc), kind="error")
 
-                open_print_profile_dialog(page, ctx.settings, share_selected, title="تنسيق ملف PDF")
+                open_print_profile_dialog(
+                    page,
+                    ctx.settings,
+                    share_selected,
+                    title="تنسيق ملف PDF",
+                    surface="item",
+                    native_files=self.native_files,
+                    preview_builder=lambda _layout, _width: item_card_document_html(),
+                )
 
             def render_page(idx: int, nav):
                 if idx == 0:

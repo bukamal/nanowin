@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from nano_offline.core.database import Database
 from nano_offline.core import currency
+from nano_offline.core import invoice_settings
 from nano_offline.core import money
 from nano_offline.core.expiring import invalidate_insights
 from nano_offline.services.accounting_rebuilder import AccountingRebuilder
@@ -124,11 +125,15 @@ class InvoiceService:
                 str(r["key"]): str(r["value"])
                 for r in conn.execute("SELECT key,value FROM settings").fetchall()
             }
+            print_snapshot = invoice_settings.encode_print_snapshot(
+                invoice_settings.print_snapshot_from_settings(settings)
+            )
             cur = conn.execute(
                 """INSERT INTO invoices(type,customer_id,supplier_id,invoice_date,reference,notes,total,
                                          initial_paid_amount,paid_amount,allow_negative_stock,
-                                         invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol)
-                   VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?)""",
+                                         invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol,
+                                         print_options)
+                   VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?)""",
                 (
                     invoice_type,
                     customer_id,
@@ -142,6 +147,7 @@ class InvoiceService:
                     currency.get_effective_rate(settings),
                     currency.get_display_currency(settings),
                     currency.get_display_symbol(settings),
+                    print_snapshot,
                 ),
             )
             invoice_id = int(cur.lastrowid)

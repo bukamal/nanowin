@@ -560,7 +560,14 @@ class ReportsCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
 
-        open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
+        open_print_profile_dialog(
+            self.page,
+            self.ctx.settings,
+            print_selected,
+            surface="report",
+            native_files=self.native_files,
+            preview_builder=lambda _layout, _width: self._report_html(),
+        )
 
     async def _share_report_pdf(self, _=None) -> None:
         if self.native_files is None:
@@ -580,7 +587,15 @@ class ReportsCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
 
-        open_print_profile_dialog(self.page, self.ctx.settings, share_selected, title="تنسيق ملف PDF")
+        open_print_profile_dialog(
+            self.page,
+            self.ctx.settings,
+            share_selected,
+            title="تنسيق ملف PDF",
+            surface="report",
+            native_files=self.native_files,
+            preview_builder=lambda _layout, _width: self._report_html(),
+        )
 
     def _render_pnl(self, report: dict) -> list[ft.Control]:
         metrics = metric_row([

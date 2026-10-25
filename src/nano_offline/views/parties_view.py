@@ -346,6 +346,9 @@ class PartyCenter:
 
             party_type = "customer" if is_customer else "supplier"
 
+            def party_card_document_html() -> str:
+                return self.ctx.documents.party_card_html(party_type, data)
+
             async def print_party_card(_=None):
                 if self.native_files is None:
                     notify("الطباعة الأصلية غير مهيأة في هذا البناء")
@@ -353,9 +356,7 @@ class PartyCenter:
 
                 async def print_selected(layout: str, width: int) -> None:
                     try:
-                        html = apply_print_profile(
-                            self.ctx.documents.party_card_html(party_type, data), layout, width
-                        )
+                        html = apply_print_profile(party_card_document_html(), layout, width)
                         await self.native_files.print_html(
                             html,
                             name=f"nano-party-{data['id']}",
@@ -365,7 +366,14 @@ class PartyCenter:
                     except Exception as exc:
                         notify(str(exc), kind="error")
 
-                open_print_profile_dialog(page, self.ctx.settings, print_selected)
+                open_print_profile_dialog(
+                    page,
+                    self.ctx.settings,
+                    print_selected,
+                    surface="party",
+                    native_files=self.native_files,
+                    preview_builder=lambda _layout, _width: party_card_document_html(),
+                )
 
             async def share_party_card_pdf(_=None):
                 if self.native_files is None:
@@ -374,9 +382,7 @@ class PartyCenter:
 
                 async def share_selected(layout: str, width: int) -> None:
                     try:
-                        html = apply_print_profile(
-                            self.ctx.documents.party_card_html(party_type, data), layout, width
-                        )
+                        html = apply_print_profile(party_card_document_html(), layout, width)
                         await self.native_files.share_pdf(
                             html,
                             filename=f"nano_party_{data['id']}.pdf",
@@ -386,7 +392,15 @@ class PartyCenter:
                     except Exception as exc:
                         notify(str(exc), kind="error")
 
-                open_print_profile_dialog(page, self.ctx.settings, share_selected, title="تنسيق ملف PDF")
+                open_print_profile_dialog(
+                    page,
+                    self.ctx.settings,
+                    share_selected,
+                    title="تنسيق ملف PDF",
+                    surface="party",
+                    native_files=self.native_files,
+                    preview_builder=lambda _layout, _width: party_card_document_html(),
+                )
 
             # Same explicit-height approach as the item detail sheet: an
             # outer Container height computed from the real screen height,

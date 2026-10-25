@@ -147,12 +147,13 @@ class InvoiceCenter:
                 self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
                 return
 
+            def invoice_document_html() -> str:
+                return self.ctx.documents.invoice_html(invoice_id)
+
             async def print_selected(layout: str, width: int) -> None:
                 self.notify("جارٍ تحضير الطباعة...")
                 try:
-                    html = apply_print_profile(
-                        self.ctx.documents.invoice_html(invoice_id), layout, width
-                    )
+                    html = apply_print_profile(invoice_document_html(), layout, width)
                     await self.native_files.print_html(
                         html,
                         name=f"nano-invoice-{invoice_id}",
@@ -165,7 +166,14 @@ class InvoiceCenter:
                 except Exception as exc:
                     self.notify(str(exc), kind="error")
 
-            open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
+            open_print_profile_dialog(
+                self.page,
+                self.ctx.settings,
+                print_selected,
+                surface="invoice",
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width: invoice_document_html(),
+            )
         return handler
 
     def _pdf_handler(self, invoice_id: int):
@@ -174,12 +182,13 @@ class InvoiceCenter:
                 self.notify("تصدير PDF غير مهيأ في هذا البناء")
                 return
 
+            def invoice_document_html() -> str:
+                return self.ctx.documents.invoice_html(invoice_id)
+
             async def share_selected(layout: str, width: int) -> None:
                 self.notify("جارٍ تجهيز ملف PDF...")
                 try:
-                    html = apply_print_profile(
-                        self.ctx.documents.invoice_html(invoice_id), layout, width
-                    )
+                    html = apply_print_profile(invoice_document_html(), layout, width)
                     shared = await self.native_files.share_pdf(
                         html,
                         filename=f"nano_invoice_{invoice_id}.pdf",
@@ -193,7 +202,15 @@ class InvoiceCenter:
                 except Exception as exc:
                     self.notify(str(exc), kind="error")
 
-            open_print_profile_dialog(self.page, self.ctx.settings, share_selected, title="تنسيق ملف PDF")
+            open_print_profile_dialog(
+                self.page,
+                self.ctx.settings,
+                share_selected,
+                title="تنسيق ملف PDF",
+                surface="invoice",
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width: invoice_document_html(),
+            )
         return handler
 
     def _party_insight_text(self, is_sale: bool, party_id: int) -> str | None:

@@ -19,6 +19,7 @@ from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import barcode_settings
+from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import backup_settings
@@ -754,6 +755,42 @@ class AdminCenter:
             hint_text="مثال: 13500",
             visible=display_currency_value == currency.DISPLAY_CURRENCY_SYP,
         )
+        business_type_field = ft.Dropdown(
+            label="نوع النشاط",
+            value=business_profile.business_type(brand_settings),
+            options=[
+                ft.dropdown.Option(key, data["label"])
+                for key, data in business_profile.BUSINESS_TYPES.items()
+            ],
+            filled=True,
+            bgcolor=Colors.BACKGROUND_ALT,
+        )
+        business_phone_field = SelectAllTextField(
+            label="هاتف المتجر (اختياري)",
+            value=brand_settings.get(business_profile.BUSINESS_PHONE_KEY) or "",
+        )
+        business_address_field = SelectAllTextField(
+            label="عنوان المتجر (اختياري)",
+            value=brand_settings.get(business_profile.BUSINESS_ADDRESS_KEY) or "",
+        )
+        business_tax_number_field = SelectAllTextField(
+            label="الرقم الضريبي / السجل التجاري (اختياري)",
+            value=brand_settings.get(business_profile.BUSINESS_TAX_NUMBER_KEY) or "",
+        )
+        business_profile_preview = ft.Text("", size=11, color=Colors.TEXT_FAINT)
+
+        def refresh_business_profile_preview(_=None):
+            labels = business_profile.labels_for_type(business_type_field.value)
+            business_profile_preview.value = (
+                f"سيظهر: {labels['sale_title']} · عمود البنود: {labels['item_label']} · "
+                f"الكمية: {labels['quantity_label']} · {labels['customer_label']} · "
+                f"{labels['reference_label']}"
+            )
+            if _ is not None:
+                self.page.update()
+
+        business_type_field.on_change = refresh_business_profile_preview
+        refresh_business_profile_preview()
 
         def display_currency_changed(_):
             is_syp = display_currency_field.value == currency.DISPLAY_CURRENCY_SYP
@@ -836,6 +873,12 @@ class AdminCenter:
                     currency.USD_DISPLAY_SYMBOL_KEY: currency.DEFAULT_USD_DISPLAY_SYMBOL,
                     "invoice_color": brand_state["color"],
                     "company_logo": brand_state["logo"] or None,
+                    business_profile.BUSINESS_TYPE_KEY: (
+                        business_type_field.value or business_profile.DEFAULT_BUSINESS_TYPE
+                    ),
+                    business_profile.BUSINESS_PHONE_KEY: (business_phone_field.value or "").strip(),
+                    business_profile.BUSINESS_ADDRESS_KEY: (business_address_field.value or "").strip(),
+                    business_profile.BUSINESS_TAX_NUMBER_KEY: (business_tax_number_field.value or "").strip(),
                 })
                 exchange_rate_field.value = str(rate_value)
                 self._notify("تم حفظ هوية الشركة وإعدادات العملة — ستظهر في كل الشاشات والمستندات فورًا")
@@ -1042,6 +1085,22 @@ class AdminCenter:
             min_lines=2,
             max_lines=4,
         )
+        invoice_show_number_switch = ft.Switch(
+            label="إظهار رقم الفاتورة في الطباعة",
+            value=invoice_settings.show_invoice_number(iset),
+        )
+        invoice_show_barcode_switch = ft.Switch(
+            label="إظهار باركود رقم الفاتورة",
+            value=invoice_settings.show_invoice_barcode(iset),
+        )
+        invoice_show_exchange_rate_switch = ft.Switch(
+            label="إظهار سعر الصرف ومعادل الدولار",
+            value=invoice_settings.show_exchange_rate(iset),
+        )
+        invoice_show_progress_switch = ft.Switch(
+            label="إظهار شريط نسبة السداد",
+            value=invoice_settings.show_payment_progress(iset),
+        )
         invoice_verify_qr_switch = ft.Switch(
             label="إظهار رمز التحقق (QR) من صحة الفاتورة عند الطباعة",
             value=invoice_settings.show_verify_qr(iset),
@@ -1073,6 +1132,10 @@ class AdminCenter:
                     invoice_settings.DEFAULT_DUE_DAYS_KEY: str(due_days),
                     invoice_settings.OVERDUE_DAYS_KEY: str(overdue_after),
                     invoice_settings.FOOTER_TEXT_KEY: (invoice_footer_field.value or "").strip(),
+                    invoice_settings.SHOW_NUMBER_KEY: "1" if invoice_show_number_switch.value else "0",
+                    invoice_settings.SHOW_BARCODE_KEY: "1" if invoice_show_barcode_switch.value else "0",
+                    invoice_settings.SHOW_EXCHANGE_RATE_KEY: "1" if invoice_show_exchange_rate_switch.value else "0",
+                    invoice_settings.SHOW_PROGRESS_KEY: "1" if invoice_show_progress_switch.value else "0",
                     invoice_settings.SHOW_VERIFY_QR_KEY: "1" if invoice_verify_qr_switch.value else "0",
                     invoice_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if invoice_negative_stock_switch.value else "0",
                     invoice_settings.SHOW_STOCK_BADGE_KEY: "1" if invoice_show_stock_badge_switch.value else "0",
@@ -2045,6 +2108,21 @@ class AdminCenter:
                         "كل الأسعار محفوظة داخليًا بالدولار دائمًا؛ اختيار \"الليرة السورية\" يعرض المبالغ مضروبة بسعر الصرف، واختيار \"الدولار الأمريكي\" يعرضها كما هي مخزَّنة دون تحويل. تغيير أي من هذين الخيارين لا يُعيد حساب أي بيانات قديمة — إنه تغيير في العرض فقط.",
                         size=11, color=Colors.TEXT_FAINT,
                     ),
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("الملف التجاري", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "يغيّر عناوين الفاتورة وعمود البنود والمرجع حسب نشاطك. تُحفظ هذه الاختيارات مع كل فاتورة جديدة، فلا تتغيّر إعادة طباعة الفواتير القديمة.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(business_type_field, col={"xs": 12, "md": 6}),
+                            ft.Container(business_phone_field, col={"xs": 12, "md": 6}),
+                            ft.Container(business_address_field, col={"xs": 12, "md": 6}),
+                            ft.Container(business_tax_number_field, col={"xs": 12, "md": 6}),
+                        ]
+                    ),
+                    business_profile_preview,
                     ft.Text("شعار الشركة", size=12, weight=ft.FontWeight.W_600),
                     ft.Row(
                         [
@@ -2121,6 +2199,9 @@ class AdminCenter:
                     invoice_prefix_field,
                     ft.Text("عدد الأرقام", size=11, color=Colors.TEXT_SECONDARY),
                     invoice_padding_field,
+                    invoice_show_number_switch,
+                    invoice_show_barcode_switch,
+                    ft.Text("رقم الفاتورة والباركود مخفيان افتراضيًا في الطباعة، ويظهران فقط عند تفعيلهما.", size=11, color=Colors.TEXT_SECONDARY),
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("الاستحقاق والتأخر", size=12, weight=ft.FontWeight.W_600),
                     ft.ResponsiveRow(
@@ -2131,8 +2212,11 @@ class AdminCenter:
                     ),
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("محتوى الطباعة", size=12, weight=ft.FontWeight.W_600),
-                    invoice_footer_field,
+                    invoice_show_exchange_rate_switch,
+                    invoice_show_progress_switch,
                     invoice_verify_qr_switch,
+                    ft.Text("سعر الصرف ومعادل الدولار وشريط السداد وQR مخفية افتراضيًا.", size=11, color=Colors.TEXT_SECONDARY),
+                    invoice_footer_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("سياسة المخزون", size=12, weight=ft.FontWeight.W_600),
                     invoice_negative_stock_switch,

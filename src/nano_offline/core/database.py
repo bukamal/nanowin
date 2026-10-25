@@ -8,7 +8,7 @@ from typing import Iterator
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 16  # adds per-invoice allow_negative_stock snapshot
+SCHEMA_VERSION = 17  # adds per-invoice print-options snapshot
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -135,6 +135,11 @@ CREATE TABLE IF NOT EXISTS invoices (
     invoice_exchange_rate REAL,
     invoice_currency_code TEXT,
     invoice_currency_symbol TEXT,
+    -- JSON snapshot of the print choices in force when the invoice was
+    -- created (show flags, footer, due-days policy, business type). Reprints
+    -- keep the original look even after the admin changes those settings.
+    -- NULL means a legacy row and falls back to the live settings.
+    print_options TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK((type='sale' AND supplier_id IS NULL) OR (type='purchase' AND customer_id IS NULL))
 );
@@ -582,6 +587,29 @@ class Database:
                 "UPDATE invoices SET invoice_exchange_rate=?, invoice_currency_code=?, invoice_currency_symbol=? "
                 "WHERE invoice_exchange_rate IS NULL",
                 (rate, code, symbol),
+            )
+
+        # Schema 17: freeze the invoice's print choices. Existing rows are
+        # backfilled with today's settings, which is exactly what they were
+        # already showing before this migration; new invoices snapshot at
+        # creation and keep that snapshot on later edits.
+        if self._table_exists(conn, "invoices") and not self._has_column(conn, "invoices", "print_options"):
+            conn.execute("ALTER TABLE invoices ADD COLUMN print_options TEXT")
+            from nano_offline.core import invoice_settings as _invoice_settings
+
+            if self._table_exists(conn, "settings"):
+                settings = {
+                    str(r["key"]): str(r["value"])
+                    for r in conn.execute("SELECT key,value FROM settings").fetchall()
+                }
+            else:
+                settings = {}
+            snapshot = _invoice_settings.encode_print_snapshot(
+                _invoice_settings.print_snapshot_from_settings(settings)
+            )
+            conn.execute(
+                "UPDATE invoices SET print_options=? WHERE print_options IS NULL",
+                (snapshot,),
             )
 
         # Schema 9: same snapshot on `payments`, so a customer/supplier

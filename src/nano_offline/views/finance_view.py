@@ -604,9 +604,12 @@ class FinanceCenter:
             if self.native_files is None:
                 self.notify("الطباعة الأصلية غير مهيأة في هذا البناء"); return
 
+            def voucher_document_html() -> str:
+                return self._voucher_html(voucher)
+
             async def print_selected(layout: str, width: int) -> None:
                 try:
-                    html = apply_print_profile(self._voucher_html(voucher), layout, width)
+                    html = apply_print_profile(voucher_document_html(), layout, width)
                     await self.native_files.print_html(
                         html,
                         name=f"nano-voucher-{voucher_id}",
@@ -616,7 +619,14 @@ class FinanceCenter:
                 except Exception as exc:
                     self.notify(str(exc), kind="error")
 
-            open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
+            open_print_profile_dialog(
+                self.page,
+                self.ctx.settings,
+                print_selected,
+                surface="voucher",
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width: voucher_document_html(),
+            )
 
         # Same explicit-height approach as the other converted detail
         # sheets: outer Container height computed from the real screen
@@ -1367,6 +1377,14 @@ class FinanceCenter:
         # `data["rows"]` regardless of what's currently rendered on screen.
         render_limit = {"n": 60}
 
+        def statement_document_html() -> str:
+            return self.ctx.documents.statement_html(
+                party_type,
+                int(party_dd.value),
+                date_from=(date_from.value or "").strip() or None,
+                date_to=(date_to.value or "").strip() or None,
+            )
+
         async def print_statement(_):
             if not party_dd.value:
                 self.notify("اختر الحساب أولًا")
@@ -1376,13 +1394,7 @@ class FinanceCenter:
                 return
             async def print_selected(layout: str, width: int) -> None:
                 try:
-                    html = self.ctx.documents.statement_html(
-                        party_type,
-                        int(party_dd.value),
-                        date_from=(date_from.value or "").strip() or None,
-                        date_to=(date_to.value or "").strip() or None,
-                    )
-                    html = apply_print_profile(html, layout, width)
+                    html = apply_print_profile(statement_document_html(), layout, width)
                     await self.native_files.print_html(
                         html,
                         name=f"nano-statement-{party_type}-{party_dd.value}",
@@ -1392,7 +1404,14 @@ class FinanceCenter:
                 except Exception as exc:
                     self.notify(str(exc), kind="error")
 
-            open_print_profile_dialog(self.page, self.ctx.settings, print_selected)
+            open_print_profile_dialog(
+                self.page,
+                self.ctx.settings,
+                print_selected,
+                surface="statement",
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width: statement_document_html(),
+            )
 
         async def share_statement_pdf(_):
             if not party_dd.value:
@@ -1403,13 +1422,7 @@ class FinanceCenter:
                 return
             async def share_selected(layout: str, width: int) -> None:
                 try:
-                    html = self.ctx.documents.statement_html(
-                        party_type,
-                        int(party_dd.value),
-                        date_from=(date_from.value or "").strip() or None,
-                        date_to=(date_to.value or "").strip() or None,
-                    )
-                    html = apply_print_profile(html, layout, width)
+                    html = apply_print_profile(statement_document_html(), layout, width)
                     await self.native_files.share_pdf(
                         html,
                         filename=f"nano_statement_{party_type}_{party_dd.value}.pdf",
@@ -1420,7 +1433,13 @@ class FinanceCenter:
                     self.notify(str(exc), kind="error")
 
             open_print_profile_dialog(
-                self.page, self.ctx.settings, share_selected, title="تنسيق كشف PDF"
+                self.page,
+                self.ctx.settings,
+                share_selected,
+                title="تنسيق كشف PDF",
+                surface="statement",
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width: statement_document_html(),
             )
 
         export_actions.controls = [

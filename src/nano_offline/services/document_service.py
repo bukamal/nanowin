@@ -7,6 +7,7 @@ from nano_offline.core.qr_gen import qr_svg
 from nano_offline.core.invoice_signing import sign_invoice
 from nano_offline.core import public_verify
 from nano_offline.core.database import Database
+from nano_offline.core import business_profile
 from nano_offline.core import currency
 from nano_offline.core import invoice_settings
 from nano_offline.services.invoice_service import InvoiceService
@@ -129,7 +130,14 @@ class DocumentService:
         except Exception:
             return hex_color
 
-    def _shell(self, title: str, subtitle: str, body: str) -> str:
+    def _shell(
+        self,
+        title: str,
+        subtitle: str,
+        body: str,
+        *,
+        doc_number: str | None = None,
+    ) -> str:
         settings = self._settings()
         company = self._e(settings.get("company_name") or "نانو")
         display_symbol = self._e(currency.get_display_symbol(settings))
@@ -138,6 +146,19 @@ class DocumentService:
         tint = self._accent_tint(accent)
         logo = settings.get("company_logo") or ""
         logo_html = f'<img src="{self._e(logo)}" alt="" class="logo"/>' if logo else '<div class="logo logo-fallback"></div>'
+        profile = business_profile.profile(settings)
+        contact_bits = []
+        if profile["phone"]:
+            contact_bits.append(f"<span>هاتف: <b>{self._e(profile['phone'])}</b></span>")
+        if profile["address"]:
+            contact_bits.append(f"<span>{self._e(profile['address'])}</span>")
+        if profile["tax_number"]:
+            contact_bits.append(f"<span>الرقم الضريبي: <b>{self._e(profile['tax_number'])}</b></span>")
+        contact_html = f'<div class="brand-meta">{"".join(contact_bits)}</div>' if contact_bits else ""
+        header_number = title if doc_number is None else doc_number
+        header_number_html = (
+            f'<div class="doc-number">{self._e(header_number)}</div>' if header_number else ""
+        )
         return f"""<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -170,6 +191,8 @@ body {{
 .logo-fallback {{ height:44px; width:44px; border-radius:10px; background:{accent}; }}
 .header-text {{ flex:1; min-width:0; }}
 .brand {{ color:{accent_deep}; font-size:21px; font-weight:800; letter-spacing:.2px; }}
+.brand-meta {{ display:flex; flex-wrap:wrap; gap:2px 12px; margin-top:3px; color:#64748B; font-size:10.5px; }}
+.brand-meta b {{ color:#475569; font-weight:600; }}
 .doc-title-row {{ display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }}
 .doc-title {{ font-size:16px; font-weight:700; color:#0F172A; }}
 .doc-subtitle {{ font-size:11px; color:#64748B; }}
@@ -214,17 +237,39 @@ td {{ padding:7px 6px; border-bottom:1px solid #E9EEF3; vertical-align:top; font
 tbody tr:nth-child(even) td {{ background:#F8FAFC; }}
 tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
 .money {{ white-space:nowrap; text-align:end; }}
+.inv-table thead {{ display:table-header-group; }}
 .inv-table thead th {{ text-align:center; }}
-.inv-table td {{ text-align:center; }}
+.inv-table thead th:first-child {{ text-align:start; }}
+.inv-table td {{ text-align:start; }}
+.inv-table td.qty-cell {{ text-align:center; }}
+.inv-table td.money {{ text-align:end; }}
+.inv-table tbody tr {{ break-inside:avoid; }}
+.inv-table .item-cell {{ font-weight:600; color:#0F172A; }}
+.inv-table .unit, .inv-table .equiv {{ display:block; margin-top:2px; font-size:10px; color:#64748B; font-weight:400; }}
+.totals-wrap {{ width:58%; margin-inline-start:auto; margin-top:0; break-inside:avoid; }}
+.totals-table {{
+  width:100%; margin:0; border:1px solid #E2E8F0; border-top:0;
+  border-radius:0 0 10px 10px; overflow:hidden;
+}}
+.totals-table tbody tr td {{ background:#FFFFFF; }}
+.totals-table td {{ padding:8px 11px; text-align:start; font-size:11.5px; border-bottom:1px solid #E9EEF3; }}
+.totals-table td:first-child {{ color:#64748B; font-weight:600; }}
+.totals-table td.money {{ text-align:end; }}
+.totals-table tr:last-child td {{ border-bottom:0; }}
+.totals-table .total-row td {{ background:{tint}; color:{accent_deep}; font-size:13px; font-weight:800; }}
+.totals-table .remaining-row td {{ background:#FFF7ED; color:#B45309; font-weight:800; }}
+.totals-table .settled-row td {{ background:#ECFDF5; color:#0F766E; font-weight:800; }}
+.totals-table .fx {{ display:block; margin-top:1px; font-size:9.5px; font-weight:600; color:#94A3B8; }}
 .money-wrap {{
   display:inline-flex; align-items:baseline; gap:3px;
   direction:rtl; unicode-bidi:isolate; white-space:nowrap; font-variant-numeric:tabular-nums;
 }}
-.note {{ border:1px solid #BFD5E8; background:#EEF6FC; border-radius:10px; padding:10px 12px; margin-top:14px; font-size:11.5px; }}
+.note {{ border:1px solid #BFD5E8; background:#EEF6FC; border-radius:10px; padding:10px 12px; margin-top:14px; font-size:11.5px; break-inside:avoid; }}
 .note b {{ color:{accent_deep}; }}
 .footer {{
   margin-top:20px; border-top:1px solid #E2E8F0; padding-top:10px;
   display:flex; justify-content:space-between; color:#94A3B8; font-size:9.5px;
+  break-inside:avoid;
 }}
 .currency::after {{ content:' {display_symbol}'; }}
 .sheet {{ position:relative; }}
@@ -244,7 +289,7 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
 .progress-fill {{ height:100%; border-radius:999px; background:{accent}; }}
 .metric .fx {{ display:block; margin-top:2px; font-size:10px; font-weight:600; color:#94A3B8; }}
 .equiv {{ display:block; margin-top:1px; font-size:10px; color:#64748B; }}
-.sign-row {{ display:flex; gap:16px; margin-top:26px; align-items:flex-end; }}
+.sign-row {{ display:flex; gap:16px; margin-top:26px; align-items:flex-end; break-inside:avoid; }}
 .verify-box {{
   flex:0 0 auto; text-align:center; font-size:9px; color:#64748B; line-height:1.4;
 }}
@@ -258,9 +303,10 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
   {logo_html}
   <div class="header-text">
     <div class="brand">{company}</div>
+    {contact_html}
     <div class="doc-title-row"><span class="doc-title">{self._e(subtitle)}</span></div>
   </div>
-  <div class="doc-number">{self._e(title)}</div>
+  {header_number_html}
 </div>
 {body}
 <div class="footer"><span>تم إنشاء المستند محليًا بواسطة نانو</span><span>Nano Offline</span></div>
@@ -271,8 +317,16 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
         if not inv:
             raise ValueError("الفاتورة غير موجودة")
         settings = self._settings()
-        kind = "فاتورة بيع" if inv["type"] == "sale" else "فاتورة شراء"
-        party_label = "العميل" if inv["type"] == "sale" else "المورد"
+        print_options = invoice_settings.print_snapshot(inv, settings)
+        labels = business_profile.labels_for_type(print_options["business_type"])
+        show_number = bool(print_options["show_number"])
+        show_barcode = bool(print_options["show_barcode"])
+        show_progress = bool(print_options["show_progress"])
+        kind = labels["sale_title"] if inv["type"] == "sale" else labels["purchase_title"]
+        party_label = labels["customer_label"] if inv["type"] == "sale" else "المورد"
+        item_label = labels["item_label"]
+        quantity_label = labels["quantity_label"]
+        reference_label = labels["reference_label"]
         status_key = str(inv.get("payment_status") or "unpaid")
         status_text, status_fg, status_bg = _STATUS_STYLE.get(status_key, ("—", "#475569", "#F1F5F9"))
 
@@ -314,20 +368,20 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
             except Exception:
                 unit_map = {}
 
-        def _equiv_cell(line: dict) -> str:
+        def _equiv_text(line: dict) -> str:
             try:
                 _iid = int(line.get("item_id")) if line.get("item_id") is not None else None
             except (TypeError, ValueError):
-                return self._qty(line.get("quantity"))
+                return ""
             _siblings = unit_map.get(_iid) if _iid is not None else None
             if not _siblings or len(_siblings) < 2:
-                return self._qty(line.get("quantity"))
+                return ""
             try:
                 _base_qty = float(line.get("quantity_in_base") or 0)
             except (TypeError, ValueError):
-                return self._qty(line.get("quantity"))
+                return ""
             if _base_qty <= 0:
-                return self._qty(line.get("quantity"))
+                return ""
             try:
                 _line_uid = int(line.get("unit_id")) if line.get("unit_id") is not None else None
             except (TypeError, ValueError):
@@ -338,24 +392,25 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
                     continue
                 _mark = "=" if _u["is_base"] else "≈"
                 _parts.append(f"{_mark} {self._qty(_base_qty / _u['factor'])} {self._e(_u['name'] or '')}".strip())
-            if not _parts:
-                return self._qty(line.get("quantity"))
-            return f"{self._qty(line.get('quantity'))}<span class=\"equiv\">{'، '.join(_parts)}</span>"
+            return "، ".join(_parts)
 
         line_rows = []
-        for idx, line in enumerate(inv["lines"], start=1):
+        for line in inv["lines"]:
             description = line.get("description") or line.get("item_name") or "—"
-            unit = line.get("unit_abbreviation") or line.get("unit_name") or "—"
+            unit = line.get("unit_abbreviation") or line.get("unit_name") or ""
+            unit_html = f'<span class="unit">{self._e(unit)}</span>' if unit else ""
+            equiv_text = _equiv_text(line)
+            equiv_html = f'<span class="equiv">{equiv_text}</span>' if equiv_text else ""
             line_rows.append(
-                f"<tr><td>{idx}</td><td>{self._e(description)}</td>"
-                f"<td>{self._e(unit)}</td><td class='money'>{_equiv_cell(line)}</td>"
+                f"<tr><td class='item-cell'>{self._e(description)}</td>"
+                f"<td class='qty-cell'>{self._qty(line.get('quantity'))}{unit_html}{equiv_html}</td>"
                 f"<td class='money'>{self._money(line['unit_price'], inv)}</td>"
                 f"<td class='money'>{self._money(line['total'], inv)}</td></tr>"
             )
 
         remaining = max(0.0, float(inv.get("remaining_amount") or 0))
         reference_html = (
-            f'<span class="sep">|</span> المرجع: <b>{self._e(inv.get("reference"))}</b>'
+            f'<span>{self._e(reference_label)}: <b>{self._e(inv.get("reference"))}</b></span>'
             if inv.get("reference")
             else ""
         )
@@ -363,7 +418,11 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
         rate_html = ""
         rate = inv.get("invoice_exchange_rate")
         code = inv.get("invoice_currency_code")
-        has_fx = rate is not None and code == currency.DISPLAY_CURRENCY_SYP
+        has_fx = (
+            bool(print_options["show_exchange_rate"])
+            and rate is not None
+            and code == currency.DISPLAY_CURRENCY_SYP
+        )
         if has_fx:
             rate_html = (
                 '<div class="rate-note">سعر صرف الدولار وقت إصدار الفاتورة: '
@@ -378,7 +437,11 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
             # reader back up to the rate-note to do the conversion themselves.
             return f'<span class="fx">${float(value or 0):,.2f}</span>' if has_fx else ""
 
-        num_barcode = code128b_svg(str(int(inv["id"])), width=100, height=26, show_text=False, bar_color="#0F172A")
+        num_barcode = (
+            code128b_svg(str(int(inv["id"])), width=100, height=26, show_text=False, bar_color="#0F172A")
+            if show_barcode
+            else ""
+        )
         total = float(inv.get("total") or 0)
         party_key = str(inv.get("customer_id") or inv.get("supplier_id") or inv.get("party_name") or "-")
         verify_token = sign_invoice(
@@ -397,61 +460,107 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
         paid_ratio = max(0.0, min(1.0, (paid / total))) if total > 1e-9 else 1.0
         watermark_html = '<div class="watermark">غير مدفوعة</div>' if status_key == "unpaid" else ""
 
-        # Admin-configurable display number, due date, footer terms, and
-        # optional sign/verify boxes -- see core.invoice_settings. All read
-        # fresh on every print, so an admin change applies retroactively to
-        # every invoice's next print/PDF without touching any stored data.
+        # Display numbering stays live (prefix/padding are presentation-only
+        # and intentionally retroactive), while the remaining print choices
+        # come from the invoice's frozen snapshot so a later admin change
+        # cannot alter a historical reprint.
         display_number = invoice_settings.format_invoice_number(int(inv["id"]), settings)
-        due_date = invoice_settings.due_date_for(inv.get("invoice_date"), settings)
+        due_date = invoice_settings.due_date_from_days(
+            inv.get("invoice_date"), print_options.get("due_days")
+        )
         due_html = (
-            f'<span class="sep">|</span> الاستحقاق: <b>{self._e(due_date.isoformat())}</b>'
+            f'<span>الاستحقاق: <b>{self._e(due_date.isoformat())}</b></span>'
             if due_date and status_key != "paid"
             else ""
         )
-        footer_note = invoice_settings.footer_text(settings)
+        footer_note = str(print_options.get("footer_text") or "").strip()
         footer_html = f'<div class="note">{self._e(footer_note)}</div>' if footer_note else ""
         verify_box_html = (
             f'<div class="verify-box">{verify_qr}'
-            f'<span>تحقق من الفاتورة</span>'
+            f'<span>امسح للتحقق من الفاتورة</span>'
             f'<div class="verify-token">رمز التحقق: <b>{public_token}</b></div></div>'
-            if invoice_settings.show_verify_qr(settings)
+            if print_options.get("show_verify_qr")
             else ""
         )
         sign_row_html = f'<div class="sign-row">{verify_box_html}</div>' if verify_box_html else ""
 
+        meta_bits: list[str] = []
+        if show_number:
+            meta_bits.append(f'<span>رقم الفاتورة: <b>#{self._e(display_number)}</b></span>')
+        if show_barcode:
+            meta_bits.append(f'<span class="num-barcode">{num_barcode}</span>')
+        meta_bits.append(f"<span>التاريخ: <b>{self._e(inv['invoice_date'])}</b></span>")
+        if due_html:
+            meta_bits.append(due_html)
+        meta_bits.append(
+            f"<span>{party_label}: <b>{self._e(inv.get('party_name') or 'نقدي')}</b></span>"
+        )
+        if reference_html:
+            meta_bits.append(reference_html)
+        meta_bits.append(
+            f'<span class="badge" style="color:{status_fg};background:{status_bg}">'
+            f"{self._e(status_text)}</span>"
+        )
+        meta_row_html = '<span class="sep">|</span>'.join(meta_bits)
+
+        totals_rows = [
+            f'<tr class="total-row"><td>الإجمالي</td>'
+            f'<td class="money">{self._money(total, inv)}{_fx_line(total)}</td></tr>',
+        ]
+        if paid > 0:
+            totals_rows.append(
+                f'<tr><td>المدفوع</td>'
+                f'<td class="money">{self._money(paid, inv)}{_fx_line(paid)}</td></tr>'
+            )
+        remaining_class = "remaining-row" if remaining > 1e-9 else "settled-row"
+        totals_rows.append(
+            f'<tr class="{remaining_class}"><td>المتبقي</td>'
+            f'<td class="money">{self._money(remaining, inv)}{_fx_line(remaining)}</td></tr>'
+        )
+        totals_html = (
+            '<div class="totals-wrap"><table class="totals-table"><tbody>'
+            + "".join(totals_rows)
+            + "</tbody></table></div>"
+        )
+
+        progress_html = ""
+        if show_progress:
+            progress_html = (
+                '<div class="progress-wrap">'
+                f'<div class="progress-label"><span>نسبة السداد</span>'
+                f"<span>{round(paid_ratio * 100)}٪</span></div>"
+                f'<div class="progress-track"><div class="progress-fill" '
+                f'style="width:{paid_ratio * 100:.1f}%"></div></div>'
+                "</div>"
+            )
+
+        notes_html = (
+            f'<div class="note"><b>ملاحظات:</b> {self._e(inv.get("notes"))}</div>'
+            if inv.get("notes")
+            else ""
+        )
         body = f"""
 {watermark_html}
 <div class="meta-row">
-  <span>رقم الفاتورة: <b>#{self._e(display_number)}</b></span>
-  <span class="num-barcode">{num_barcode}</span>
-  <span class="sep">|</span>
-  <span>التاريخ: <b>{self._e(inv['invoice_date'])}</b></span>
-  {due_html}
-  <span class="sep">|</span>
-  <span>{party_label}: <b>{self._e(inv.get('party_name') or 'نقدي')}</b></span>
-  {reference_html}
-  <span class="sep">|</span>
-  <span class="badge" style="color:{status_fg};background:{status_bg}">{self._e(status_text)}</span>
+  {meta_row_html}
 </div>
 {rate_html}
-<div class="grid">
-  <div class="metric"><small>الإجمالي</small><strong class="money">{self._money(inv['total'], inv)}</strong>{_fx_line(total)}</div>
-  <div class="metric"><small>المدفوع</small><strong class="money">{self._money(inv['paid_amount'], inv)}</strong>{_fx_line(paid)}</div>
-  <div class="metric"><small>المتبقي</small><strong class="money">{self._money(remaining, inv)}</strong>{_fx_line(remaining)}</div>
-</div>
-<div class="progress-wrap">
-  <div class="progress-label"><span>نسبة السداد</span><span>{round(paid_ratio * 100)}٪</span></div>
-  <div class="progress-track"><div class="progress-fill" style="width:{paid_ratio * 100:.1f}%"></div></div>
-</div>
 <table class="inv-table">
-<thead><tr><th>#</th><th>البيان</th><th>الوحدة</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
+<thead><tr><th>{self._e(item_label)}</th><th>{self._e(quantity_label)}</th><th>السعر</th><th>الإجمالي</th></tr></thead>
 <tbody>{''.join(line_rows)}</tbody>
 </table>
-{f'<div class="note"><b>ملاحظات:</b> {self._e(inv.get("notes"))}</div>' if inv.get('notes') else ''}
+{totals_html}
+{progress_html}
+{notes_html}
 {footer_html}
 {sign_row_html}
 """
-        return self._shell(f"#{self._e(display_number)}", kind, body)
+        return self._shell(
+            kind,
+            kind,
+            body,
+            doc_number=f"#{display_number}" if show_number else "",
+        )
 
     def statement_html(
         self,
@@ -537,7 +646,6 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
         closed_at = self._e(close_result.get("closed_at") or close_result.get("date") or "")
         user = self._e(close_result.get("username") or "—")
         adj = "نعم" if close_result.get("adjustment_posted") else "لا"
-        sales = float(summary.get("sales") or 0)
         # Prefer today's sales if provided as today_sales
         today_sales = float(summary.get("today_sales") or summary.get("sales_today") or 0)
         body = f"""
