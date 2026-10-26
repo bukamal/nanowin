@@ -340,10 +340,14 @@ def apply_print_profile(html: str, layout: str, roll_width_mm: int) -> str:
         # printable band. ``size: 80mm auto`` is invalid CSS (Chromium drops
         # it) so we seed a safe height and let ``fit()`` replace it with the
         # real content height before printing. Text is forced to solid black at
-        # a slightly larger size: the base slate (#1E293B) plus 9px anti-
-        # aliased glyphs rasterise through pdfium and print faint on a thermal
-        # head, while the browser path (invoice screen) renders darker.
-        side_mm = 4
+        # a slightly larger size, and coloured fills (blue table header, tinted
+        # totals, badges) are neutralised to black-on-white: the base slate
+        # (#1E293B) plus 9px anti-aliased glyphs rasterise through pdfium and
+        # print faint on a thermal head, and a large coloured fill prints as an
+        # uneven grey wash that swallows white header text. 6mm side margins
+        # (68mm column) absorb the wider, often-asymmetric non-printable band
+        # of 80mm drivers that clipped the RTL start at 4mm.
+        side_mm = 6
         printable_mm = max(20, width_mm - 2 * side_mm)
         style = f"""
 <style id="nano-print-profile">
@@ -390,6 +394,23 @@ th, td {{ padding: 5px 4px !important; overflow-wrap: anywhere !important; }}
 .progress-wrap {{ margin-bottom: 6px !important; }}
 .progress-label {{ color: #111 !important; }}
 .watermark {{ font-size: 34px !important; }}
+.header {{ background: #fff !important; border: 1px solid #000 !important; border-top: 4px solid #000 !important; }}
+thead th {{ background: #fff !important; color: #000 !important; border-bottom: 2px solid #000 !important; border-inline-end: 1px solid #999 !important; font-weight: 700 !important; }}
+thead th:first-child, thead th:last-child {{ border-radius: 0 !important; }}
+thead th:last-child {{ border-inline-end: 0 !important; }}
+tbody tr:nth-child(even) td {{ background: #fff !important; }}
+td, .totals-table td {{ border-bottom: 1px solid #999 !important; }}
+tbody tr:last-child td {{ border-bottom: 1px solid #999 !important; }}
+.doc-number {{ background: #fff !important; color: #000 !important; border: 1px solid #000 !important; }}
+.badge {{ background: #fff !important; color: #000 !important; border: 1px solid #000 !important; }}
+.totals-table .total-row td {{ background: #fff !important; color: #000 !important; border-top: 2px solid #000 !important; }}
+.totals-table .remaining-row td, .totals-table .settled-row td {{ background: #fff !important; color: #000 !important; }}
+.note {{ background: #fff !important; border: 1px solid #000 !important; }}
+.rate-note {{ background: #fff !important; border: 1px dashed #666 !important; }}
+.metric {{ background: #fff !important; border: 1px solid #999 !important; }}
+.metric::before {{ background: #000 !important; }}
+.progress-track {{ background: #fff !important; border: 1px solid #999 !important; }}
+.progress-fill {{ background: #000 !important; }}
 </style>
 <script id="nano-print-size">
 (function () {{
