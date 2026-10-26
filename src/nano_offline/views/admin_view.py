@@ -2022,6 +2022,22 @@ class AdminCenter:
             width=160,
             keyboard_type=ft.KeyboardType.NUMBER,
         )
+        lan_title_field = SelectAllTextField(
+            label="عنوان الشاشة (اختياري)",
+            value=str(lan_settings.title(lan_iset)),
+            width=280,
+        )
+        lan_idle_field = SelectAllTextField(
+            label="مهلة العودة للخمول (ثانية)",
+            value=str(lan_settings.idle_seconds(lan_iset)),
+            width=220,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        lan_subnets_field = SelectAllTextField(
+            label="قائمة السماح — CIDR مفصولة بمسافة (فارغة = الكل)",
+            value=str(self.ctx.settings.get(lan_settings.ALLOWED_SUBNETS_KEY, "") or ""),
+            width=380,
+        )
         lan_status_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
         lan_url_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY, selectable=True)
 
@@ -2044,11 +2060,21 @@ class AdminCenter:
                     port = lan_settings.DEFAULT_PORT
                 if not (lan_settings.MIN_PORT <= port <= lan_settings.MAX_PORT):
                     port = lan_settings.DEFAULT_PORT
+                try:
+                    idle = int((lan_idle_field.value or "").strip())
+                except ValueError:
+                    idle = lan_settings.DEFAULT_IDLE_SECONDS
+                if not (lan_settings.MIN_IDLE_SECONDS <= idle <= lan_settings.MAX_IDLE_SECONDS):
+                    idle = lan_settings.DEFAULT_IDLE_SECONDS
                 self.ctx.settings.set_many({
                     lan_settings.ENABLED_KEY: "1" if lan_enabled_switch.value else "0",
                     lan_settings.PORT_KEY: str(port),
+                    lan_settings.TITLE_KEY: (lan_title_field.value or "").strip(),
+                    lan_settings.IDLE_SECONDS_KEY: str(idle),
+                    lan_settings.ALLOWED_SUBNETS_KEY: (lan_subnets_field.value or "").strip(),
                 })
                 lan_port_field.value = str(port)
+                lan_idle_field.value = str(idle)
                 try:
                     lan_price_server.restart(self.ctx)
                 except Exception:
@@ -2439,13 +2465,18 @@ class AdminCenter:
                         size=12, color=Colors.TEXT_SECONDARY,
                     ),
                     lan_enabled_switch,
+                    lan_title_field,
+                    ft.Row(
+                        [lan_port_field, lan_idle_field],
+                        spacing=12,
+                        wrap=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    lan_subnets_field,
                     ft.Row(
                         [
-                            lan_port_field,
                             ft.FilledButton("حفظ وتشغيل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_lan_settings),
                         ],
-                        spacing=12,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     lan_status_text,
                     lan_url_text,

@@ -60,6 +60,7 @@ with tempdir(prefix="qeid-lan-price-") as td:
         assert status == 200 and found["found"] is True, found
         assert found["name"] == "ماء صغير 330مل", found
         assert found["price_text"], found
+        assert "category" in found, found
 
         status, body = _get(f"{base}/api/price?barcode=0000000000000")
         assert json.loads(body)["found"] is False, body
@@ -68,6 +69,15 @@ with tempdir(prefix="qeid-lan-price-") as td:
         page = body.decode("utf-8")
         assert status == 200, status
         assert 'dir="rtl"' in page and "/api/price" in page, page[:200]
+
+        # Allow-list: a network that excludes the loopback client blocks it.
+        ctx.settings.set_many({lan_settings.ALLOWED_SUBNETS_KEY: "10.0.0.0/8"})
+        status, _ = _get(f"{base}/api/health")
+        assert status == 403, status
+        ctx.settings.set_many({lan_settings.ALLOWED_SUBNETS_KEY: "127.0.0.0/8"})
+        status, _ = _get(f"{base}/api/health")
+        assert status == 200, status
+        ctx.settings.set_many({lan_settings.ALLOWED_SUBNETS_KEY: ""})
 
         status, _ = _get(f"{base}/api/secret-admin")
         assert status == 404, status
@@ -82,5 +92,14 @@ with tempdir(prefix="qeid-lan-price-") as td:
     assert lan_settings.port({lan_settings.PORT_KEY: "9123"}) == 9123
     assert lan_settings.port({lan_settings.PORT_KEY: "7"}) == lan_settings.DEFAULT_PORT
     assert lan_settings.port({lan_settings.PORT_KEY: "abc"}) == lan_settings.DEFAULT_PORT
+
+    assert lan_settings.idle_seconds({}) == lan_settings.DEFAULT_IDLE_SECONDS
+    assert lan_settings.idle_seconds({lan_settings.IDLE_SECONDS_KEY: "20"}) == 20
+    assert lan_settings.idle_seconds({lan_settings.IDLE_SECONDS_KEY: "1"}) == lan_settings.DEFAULT_IDLE_SECONDS
+
+    assert lan_settings.client_allowed({}, "192.168.1.5") is True
+    assert lan_settings.client_allowed({lan_settings.ALLOWED_SUBNETS_KEY: "192.168.0.0/16"}, "192.168.1.5") is True
+    assert lan_settings.client_allowed({lan_settings.ALLOWED_SUBNETS_KEY: "192.168.0.0/16"}, "10.0.0.1") is False
+    assert lan_settings.client_allowed({lan_settings.ALLOWED_SUBNETS_KEY: "10.0.0.0/8"}, "not-an-ip") is False
 
 print("lan_price_server_smoke_test passed")

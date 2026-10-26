@@ -57,6 +57,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
 .card.show { display: block; animation: pop .18s ease; }
 @keyframes pop { from { transform: scale(.96); opacity: .3; } to { transform: scale(1); opacity: 1; } }
 .name { font-size: 34px; font-weight: 800; }
+.cat { font-size: 20px; color: #64748b; margin-top: 4px; }
 .price { font-size: 62px; font-weight: 900; color: var(--accent); margin: 12px 0; direction: ltr; }
 .unit { font-size: 22px; color: #475569; }
 .miss { font-size: 30px; font-weight: 800; color: #b42318; }
@@ -69,6 +70,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
   <div class="hint" id="hint">امسح باركود المنتج لمعرفة السعر</div>
   <div class="card" id="card">
     <div class="name" id="name"></div>
+    <div class="cat" id="cat"></div>
     <div class="price" id="price"></div>
     <div class="unit" id="unit"></div>
   </div>
@@ -81,6 +83,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
   var card = document.getElementById('card');
   var miss = document.getElementById('misscard');
   var nameEl = document.getElementById('name');
+  var catEl = document.getElementById('cat');
   var priceEl = document.getElementById('price');
   var unitEl = document.getElementById('unit');
   var idleTimer = null;
@@ -106,6 +109,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
     card.classList.remove('show');
     miss.classList.remove('show');
     nameEl.textContent = '';
+    catEl.textContent = '';
     priceEl.textContent = '';
     unitEl.textContent = '';
     input.value = '';
@@ -120,6 +124,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
   function show(data) {
     if (data && data.found) {
       nameEl.textContent = data.name || '';
+      catEl.textContent = data.category || '';
       priceEl.textContent = data.price_text || '';
       unitEl.textContent = data.unit ? ('سعر ' + data.unit) : '';
       miss.classList.remove('show');
@@ -192,6 +197,10 @@ class _Handler(BaseHTTPRequestHandler):
         if app is None:
             self._json({"ok": False, "error": "unavailable"}, 503)
             return
+        client = self.client_address[0] if self.client_address else ""
+        if not app.client_allowed(client):
+            self._json({"ok": False, "error": "forbidden"}, 403)
+            return
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ("/", "/index.html"):
@@ -250,6 +259,12 @@ class LanPriceServer:
     def url(self) -> str:
         return f"http://{self._lan_ip()}:{self.port}/"
 
+    def client_allowed(self, host: str) -> bool:
+        try:
+            return lan_settings.client_allowed(self._settings, host)
+        except Exception:
+            return True
+
     def kiosk_html(self) -> str:
         return _KIOSK_TEMPLATE.substitute(
             company=self._company,
@@ -280,6 +295,7 @@ class LanPriceServer:
             "found": True,
             "barcode": code,
             "name": str(item.get("name") or ""),
+            "category": str(item.get("category_name") or ""),
             "price_text": price_text,
             "unit": unit,
         }
@@ -349,6 +365,7 @@ def _build(ctx) -> LanPriceServer:
         company=company,
         title=lan_settings.title(settings, company),
         accent=accent,
+        idle_ms=lan_settings.idle_seconds(settings) * 1000,
     )
 
 

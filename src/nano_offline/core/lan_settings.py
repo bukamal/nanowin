@@ -12,18 +12,26 @@ The admin "شاشة الأسعار" tab (views/admin_view.py) writes these keys;
 server reads them on start/restart.
 """
 
+import ipaddress
+
 ENABLED_KEY = "lan_price_server_enabled"
 PORT_KEY = "lan_price_server_port"
 HOST_KEY = "lan_price_server_host"
 TITLE_KEY = "lan_kiosk_title"
+ALLOWED_SUBNETS_KEY = "lan_allowed_subnets"
+IDLE_SECONDS_KEY = "lan_kiosk_idle_seconds"
 
 DEFAULT_ENABLED = False
 DEFAULT_PORT = 8770
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_TITLE = ""
+DEFAULT_ALLOWED_SUBNETS = ""
+DEFAULT_IDLE_SECONDS = 12
 
 MIN_PORT = 1024
 MAX_PORT = 65535
+MIN_IDLE_SECONDS = 3
+MAX_IDLE_SECONDS = 120
 
 
 def _flag(settings, key: str, default: bool) -> bool:
@@ -54,9 +62,48 @@ def title(settings, fallback: str = "") -> str:
     return value or (fallback or "")
 
 
+def idle_seconds(settings) -> int:
+    try:
+        value = int(str(settings.get(IDLE_SECONDS_KEY, str(DEFAULT_IDLE_SECONDS))).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_IDLE_SECONDS
+    return value if MIN_IDLE_SECONDS <= value <= MAX_IDLE_SECONDS else DEFAULT_IDLE_SECONDS
+
+
+def allowed_networks(settings) -> tuple:
+    """Parse the allow-list of client networks (comma/space separated CIDR/IP).
+
+    Empty -> no restriction (any LAN host may connect). Invalid entries are
+    ignored rather than failing the whole list.
+    """
+    raw = str(settings.get(ALLOWED_SUBNETS_KEY, DEFAULT_ALLOWED_SUBNETS) or "")
+    nets = []
+    for token in raw.replace(",", " ").split():
+        try:
+            nets.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            continue
+    return tuple(nets)
+
+
+def client_allowed(settings, host: str) -> bool:
+    """Whether a client IP may use the server (empty allow-list == allow all)."""
+    nets = allowed_networks(settings)
+    if not nets:
+        return True
+    try:
+        ip = ipaddress.ip_address(str(host or "").strip())
+    except ValueError:
+        return False
+    return any(ip in net for net in nets)
+
+
 __all__ = [
-    "ENABLED_KEY", "PORT_KEY", "HOST_KEY", "TITLE_KEY",
+    "ENABLED_KEY", "PORT_KEY", "HOST_KEY", "TITLE_KEY", "ALLOWED_SUBNETS_KEY",
+    "IDLE_SECONDS_KEY",
     "DEFAULT_ENABLED", "DEFAULT_PORT", "DEFAULT_HOST", "DEFAULT_TITLE",
-    "MIN_PORT", "MAX_PORT",
-    "enabled", "port", "host", "title",
+    "DEFAULT_ALLOWED_SUBNETS", "DEFAULT_IDLE_SECONDS",
+    "MIN_PORT", "MAX_PORT", "MIN_IDLE_SECONDS", "MAX_IDLE_SECONDS",
+    "enabled", "port", "host", "title", "idle_seconds",
+    "allowed_networks", "client_allowed",
 ]
