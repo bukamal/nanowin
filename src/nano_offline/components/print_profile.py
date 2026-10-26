@@ -333,21 +333,21 @@ def apply_print_profile(html: str, layout: str, roll_width_mm: int) -> str:
         width_mm = int(roll_width_mm)
         # Thermal roll: the page width must equal the paper width (a full-bleed
         # Letter page only printed a blank sliver), AND the content must stay
-        # inside the *printable* area -- an 80mm roll has ~2-4mm non-printable
-        # on each side, so a body forced to the full 80mm had its RTL start
-        # (the right edge) clipped by the head. We keep the page 80mm but give
-        # it symmetric 4mm page margins so the content column lands inside the
-        # printable band. ``size: 80mm auto`` is invalid CSS (Chromium drops
-        # it) so we seed a safe height and let ``fit()`` replace it with the
-        # real content height before printing. Text is forced to solid black at
-        # a slightly larger size, and coloured fills (blue table header, tinted
-        # totals, badges) are neutralised to black-on-white: the base slate
-        # (#1E293B) plus 9px anti-aliased glyphs rasterise through pdfium and
-        # print faint on a thermal head, and a large coloured fill prints as an
-        # uneven grey wash that swallows white header text. 6mm side margins
-        # (68mm column) absorb the wider, often-asymmetric non-printable band
-        # of 80mm drivers that clipped the RTL start at 4mm.
-        side_mm = 6
+        # inside the *printable* area -- an 80mm roll has a wider (often
+        # asymmetric) non-printable band, so a body forced to the full 80mm had
+        # its RTL start (the right edge) clipped by the head. We keep the page
+        # 80mm but give it symmetric page margins so the content column lands
+        # inside the printable band. ``size: 80mm auto`` is invalid CSS
+        # (Chromium drops it) so we seed a safe height and let ``fit()`` replace
+        # it with the real content height before printing. Text is forced to
+        # solid black at a slightly larger size, and coloured fills (blue table
+        # header, tinted totals, badges) are neutralised to black-on-white: the
+        # base slate (#1E293B) plus 9px anti-aliased glyphs rasterise through
+        # pdfium and print faint on a thermal head, and a large coloured fill
+        # prints as an uneven grey wash that swallows white header text.
+        # 6mm still lost ~2 characters on this 80mm printer, so 12mm now leaves
+        # roughly five more characters of clearance (56mm content column).
+        side_mm = 12
         printable_mm = max(20, width_mm - 2 * side_mm)
         style = f"""
 <style id="nano-print-profile">

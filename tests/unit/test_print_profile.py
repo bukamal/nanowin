@@ -21,8 +21,8 @@ def test_thermal_profile_overrides_document_page_size_and_width():
 
     result = apply_print_profile(html, "roll", 80)
 
-    assert "@page { size: 80mm 297mm; margin: 0 6mm; }" in result
-    assert "width: 68mm !important" in result
+    assert "@page { size: 80mm 297mm; margin: 0 12mm; }" in result
+    assert "width: 56mm !important" in result
     assert result.index('id="nano-print-profile"') < result.lower().index("</head>")
     assert ".totals-wrap { width: 100% !important" in result
     # The injected style block must be closed: an unclosed <style> makes the
