@@ -14,6 +14,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField
 from nano_offline.services.auth_service import ROLE_LABELS
+from nano_offline.services import lan_price_server
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import theme_settings
@@ -22,6 +23,7 @@ from nano_offline.core import barcode_settings
 from nano_offline.core import branding
 from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
+from nano_offline.core import lan_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import backup_settings
 from nano_offline.core import reporting_settings
@@ -2008,6 +2010,57 @@ class AdminCenter:
 
         refresh_voice_memory()
 
+        # --- LAN price-check server (customer price screens) -----------
+        lan_iset = self.ctx.settings.get_all()
+        lan_enabled_switch = ft.Switch(
+            label="تشغيل خادم الاستعلام عن الأسعار على الشبكة المحلية",
+            value=lan_settings.enabled(lan_iset),
+        )
+        lan_port_field = SelectAllTextField(
+            label="المنفذ",
+            value=str(lan_settings.port(lan_iset)),
+            width=160,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        lan_status_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
+        lan_url_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY, selectable=True)
+
+        def _render_lan_status():
+            server = lan_price_server.current()
+            if server is not None and server.running:
+                lan_status_text.value = "الخادم يعمل الآن — اقرأ فقط."
+                lan_status_text.color = Colors.SUCCESS_DARK
+                lan_url_text.value = f"رابط شاشات الزبائن: {server.url}"
+            else:
+                lan_status_text.value = "الخادم متوقف."
+                lan_status_text.color = Colors.TEXT_SECONDARY
+                lan_url_text.value = ""
+
+        def save_lan_settings(_):
+            try:
+                try:
+                    port = int((lan_port_field.value or "").strip())
+                except ValueError:
+                    port = lan_settings.DEFAULT_PORT
+                if not (lan_settings.MIN_PORT <= port <= lan_settings.MAX_PORT):
+                    port = lan_settings.DEFAULT_PORT
+                self.ctx.settings.set_many({
+                    lan_settings.ENABLED_KEY: "1" if lan_enabled_switch.value else "0",
+                    lan_settings.PORT_KEY: str(port),
+                })
+                lan_port_field.value = str(port)
+                try:
+                    lan_price_server.restart(self.ctx)
+                except Exception:
+                    pass
+                _render_lan_status()
+                self._notify("تم حفظ إعدادات شاشة الأسعار")
+                self.page.update()
+            except Exception as exc:
+                self._notify(str(exc), kind="error")
+
+        _render_lan_status()
+
         section_panels: dict[str, ft.Container] = {
             "appearance": self._section(
                 "المظهر والوضع الليلي",
@@ -2377,6 +2430,31 @@ class AdminCenter:
                     voice_unknowns_list,
                 ],
             ),
+            "lan": self._section(
+                "شاشة الأسعار على الشبكة المحلية",
+                [
+                    ft.Text(
+                        "يُشغّل هذا خادمًا محليًا للقراءة فقط، فتعرض شاشات الزبائن (متصفح + قارئ باركود) "
+                        "سعر أي منتج بمسح باركوده عبر الشبكة المحلية.",
+                        size=12, color=Colors.TEXT_SECONDARY,
+                    ),
+                    lan_enabled_switch,
+                    ft.Row(
+                        [
+                            lan_port_field,
+                            ft.FilledButton("حفظ وتشغيل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_lan_settings),
+                        ],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    lan_status_text,
+                    lan_url_text,
+                    ft.Text(
+                        "قراءة فقط — لا تُعرض أي بيانات بيع أو إدارة على شاشة الزبائن.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                ],
+            ),
 
         }
 
@@ -2390,6 +2468,7 @@ class AdminCenter:
             ("barcode", "الباركود", ft.Icons.QR_CODE_2_OUTLINED),
             ("invoice", "الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED),
             ("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE_OUTLINED),
+            ("lan", "شاشة الأسعار", ft.Icons.STOREFRONT_OUTLINED),
             ("stocktake", "الجرد", ft.Icons.FACT_CHECK_OUTLINED),
             ("sound", "الصوت", ft.Icons.VOLUME_UP_OUTLINED),
             ("voice", "الذاكرة الصوتية", ft.Icons.RECORD_VOICE_OVER_OUTLINED),
@@ -2398,7 +2477,7 @@ class AdminCenter:
         ]
         ADMIN_GROUPS = [
             ("setup", "الإعداد والتخصيص", ft.Icons.TUNE_ROUNDED, ("appearance", "branding", "users", "license")),
-            ("operations", "العمليات والمخزون", ft.Icons.STORE_OUTLINED, ("barcode", "invoice", "pos", "stocktake", "crisis")),
+            ("operations", "العمليات والمخزون", ft.Icons.STORE_OUTLINED, ("barcode", "invoice", "pos", "lan", "stocktake", "crisis")),
             ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED, ("backup", "reports", "audit")),
             ("assistant", "الصوت والمساعد", ft.Icons.RECORD_VOICE_OVER_OUTLINED, ("sound", "voice")),
         ]

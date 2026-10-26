@@ -846,6 +846,16 @@ def main(page: ft.Page):
     native_files = PlatformNativeFiles()
     page.overlay.append(native_files)
 
+    # Built-in LAN price-check server for customer screens: started here so
+    # it shares the app's data/settings. Best-effort and a no-op unless the
+    # admin enabled it in the "شاشة الأسعار" tab; never blocks app startup.
+    try:
+        from nano_offline.services import lan_price_server
+
+        lan_price_server.start_if_enabled(ctx)
+    except Exception:
+        _log.warning("LAN price server startup failed", exc_info=True)
+
     # Voice: prefer Android on-device SpeechRecognizer when available.
     try:
         from nano_offline.core import voice_command as _voice
