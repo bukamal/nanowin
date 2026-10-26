@@ -331,48 +331,70 @@ def apply_print_profile(html: str, layout: str, roll_width_mm: int) -> str:
     """Override document page geometry for the selected paper profile."""
     if layout == "roll":
         width_mm = int(roll_width_mm)
-        # Thermal roll: the page width must equal the paper width, or the
-        # printer only prints a blank sliver of the (default Letter-width)
-        # page. Two explicit lengths are valid CSS -- ``size: 80mm auto`` is
-        # not and Chromium silently drops it -- so we seed a safe fallback
-        # height and let ``fit()`` (run before print) replace it with the
-        # real content height, avoiding both a cut-off and a blank tail.
+        # Thermal roll: the page width must equal the paper width (a full-bleed
+        # Letter page only printed a blank sliver), AND the content must stay
+        # inside the *printable* area -- an 80mm roll has ~2-4mm non-printable
+        # on each side, so a body forced to the full 80mm had its RTL start
+        # (the right edge) clipped by the head. We keep the page 80mm but give
+        # it symmetric 4mm page margins so the content column lands inside the
+        # printable band. ``size: 80mm auto`` is invalid CSS (Chromium drops
+        # it) so we seed a safe height and let ``fit()`` replace it with the
+        # real content height before printing. Text is forced to solid black at
+        # a slightly larger size: the base slate (#1E293B) plus 9px anti-
+        # aliased glyphs rasterise through pdfium and print faint on a thermal
+        # head, while the browser path (invoice screen) renders darker.
+        side_mm = 4
+        printable_mm = max(20, width_mm - 2 * side_mm)
         style = f"""
 <style id="nano-print-profile">
-@page {{ size: {width_mm}mm 297mm; margin: 0; }}
-html, body {{ width: {width_mm}mm !important; min-width: 0 !important; max-width: {width_mm}mm !important; margin: 0 !important; padding: 0 !important; }}
-body {{ font-size: 10px !important; line-height: 1.45 !important; -webkit-print-color-adjust: exact !important; }}
-.sheet {{ width: 100% !important; max-width: 100% !important; padding: 4px !important; }}
+@page {{ size: {width_mm}mm 297mm; margin: 0 {side_mm}mm; }}
+html {{ width: {printable_mm}mm !important; min-width: 0 !important; max-width: {printable_mm}mm !important; margin: 0 auto !important; padding: 0 !important; }}
+body {{ width: 100% !important; max-width: 100% !important; margin: 0 auto !important; padding: 0 !important; }}
+body {{ color: #000 !important; font-size: 11px !important; line-height: 1.5 !important; font-weight: 500 !important; -webkit-print-color-adjust: exact !important; }}
+.sheet {{ width: 100% !important; max-width: 100% !important; padding: 0 !important; }}
 .header {{ display: block !important; padding: 8px !important; margin-bottom: 8px !important; border-radius: 5px !important; }}
 .logo {{ max-width: 44px !important; height: 34px !important; }}
-.brand {{ font-size: 17px !important; }}
-.brand-meta {{ font-size: 9px !important; gap: 2px 6px !important; }}
-.doc-title {{ font-size: 14px !important; }}
-.doc-number {{ font-size: 9px !important; padding: 3px 6px !important; }}
-.meta-row {{ gap: 4px 8px !important; margin-bottom: 6px !important; font-size: 9px !important; }}
-.badge {{ padding: 2px 6px !important; font-size: 9px !important; }}
-.rate-note {{ margin-bottom: 6px !important; padding: 4px 7px !important; font-size: 9px !important; }}
+.brand {{ font-size: 18px !important; color: #000 !important; }}
+.brand-meta {{ font-size: 10px !important; gap: 2px 6px !important; color: #111 !important; }}
+.brand-meta b {{ color: #000 !important; }}
+.doc-title {{ font-size: 15px !important; color: #000 !important; }}
+.doc-subtitle {{ color: #111 !important; }}
+.doc-number {{ font-size: 10px !important; padding: 3px 6px !important; }}
+.meta-row {{ gap: 4px 8px !important; margin-bottom: 6px !important; font-size: 10px !important; color: #111 !important; }}
+.meta-row b {{ color: #000 !important; }}
+.meta-row .sep {{ color: #999 !important; }}
+.badge {{ padding: 2px 6px !important; font-size: 10px !important; }}
+.rate-note {{ margin-bottom: 6px !important; padding: 4px 7px !important; font-size: 10px !important; color: #111 !important; }}
+.rate-note b {{ color: #000 !important; }}
 .grid, .metrics {{ display: block !important; }}
 .metric {{ margin: 4px 0 !important; padding: 6px !important; }}
-table {{ width: 100% !important; table-layout: fixed !important; font-size: 9px !important; }}
-th, td {{ padding: 4px 3px !important; overflow-wrap: anywhere !important; }}
-.inv-table .item-cell {{ font-size: 9px !important; }}
-.inv-table .unit, .inv-table .equiv {{ font-size: 8px !important; }}
+.metric small {{ color: #111 !important; }}
+.metric strong {{ color: #000 !important; }}
+table {{ width: 100% !important; table-layout: fixed !important; font-size: 10px !important; }}
+th, td {{ padding: 5px 4px !important; overflow-wrap: anywhere !important; }}
+.inv-table .item-cell {{ font-size: 10px !important; color: #000 !important; }}
+.inv-table .unit, .inv-table .equiv {{ font-size: 9px !important; color: #111 !important; }}
 .totals-wrap {{ width: 100% !important; margin: 0 !important; }}
 .totals-table {{ border: 0 !important; border-radius: 0 !important; }}
-.totals-table td {{ padding: 4px 3px !important; font-size: 9px !important; }}
-.totals-table .total-row td, .totals-table .remaining-row td, .totals-table .settled-row td {{ font-size: 10px !important; }}
-.note {{ margin-top: 6px !important; padding: 5px 6px !important; border-radius: 5px !important; font-size: 9px !important; }}
-.footer {{ margin-top: 8px !important; padding-top: 5px !important; font-size: 8px !important; }}
+.totals-table td {{ padding: 4px 3px !important; font-size: 10px !important; color: #000 !important; }}
+.totals-table td:first-child {{ color: #000 !important; }}
+.totals-table .total-row td, .totals-table .remaining-row td, .totals-table .settled-row td {{ font-size: 11px !important; }}
+.totals-table .fx {{ color: #111 !important; }}
+.note {{ margin-top: 6px !important; padding: 5px 6px !important; border-radius: 5px !important; font-size: 10px !important; color: #000 !important; }}
+.note b {{ color: #000 !important; }}
+.footer {{ margin-top: 8px !important; padding-top: 5px !important; font-size: 9px !important; color: #111 !important; }}
 .sign-row {{ margin-top: 8px !important; }}
 .verify-box svg {{ width: 46px !important; height: 46px !important; }}
-.verify-token b {{ font-size: 10px !important; }}
+.verify-box {{ color: #111 !important; }}
+.verify-token b {{ font-size: 10px !important; color: #000 !important; }}
 .progress-wrap {{ margin-bottom: 6px !important; }}
+.progress-label {{ color: #111 !important; }}
 .watermark {{ font-size: 34px !important; }}
 </style>
 <script id="nano-print-size">
 (function () {{
   var MM = {width_mm};
+  var SIDE = {side_mm};
   function fit() {{
     try {{
       var sheet = document.querySelector('.sheet') || document.body;
@@ -390,7 +412,7 @@ th, td {{ padding: 4px 3px !important; overflow-wrap: anywhere !important; }}
         node.id = 'nano-page-size';
         document.head.appendChild(node);
       }}
-      node.textContent = '@page {{ size: ' + MM + 'mm ' + mm + 'mm; margin: 0; }}';
+      node.textContent = '@page {{ size: ' + MM + 'mm ' + mm + 'mm; margin: 0 ' + SIDE + 'mm; }}';
     }} catch (e) {{}}
   }}
   if (document.readyState === 'complete') {{ fit(); }}
