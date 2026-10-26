@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.5"
-BUILD_NUMBER = 50  # FEAT_0.17.5: column visibility across tables + equal-width dashboard hero
+APP_VERSION = "0.17.6"
+BUILD_NUMBER = 51  # FIX_0.17.6: filesystem-safe Windows shortcut names (0x8007007B)
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

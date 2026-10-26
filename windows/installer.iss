@@ -9,6 +9,9 @@
 ; install in place instead of registering a second "Cashir" entry.
 
 #define AppName "Cashir | كاشير"
+; The pipe above is display-only: Windows filenames cannot contain "|", so
+; shortcut filenames use this safe variant instead (error 0x8007007B).
+#define AppShortName "Cashir - كاشير"
 ; The three values below are injected per build via ISCC /D defines (see
 ; .github/workflows/build-windows.yml). The #ifndef guards keep a manual
 ; ISCC run without /D working, while a command-line /D must win: a plain
@@ -48,8 +51,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#ExeName}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppShortName}"; Filename: "{app}\{#ExeName}"
+Name: "{autodesktop}\{#AppShortName}"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop icon"; Flags: unchecked

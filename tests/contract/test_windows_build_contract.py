@@ -12,3 +12,12 @@ def test_windows_build_fails_if_required_app_bundle_is_missing():
     assert 'throw "bundled app.zip has no nano_offline package at its root"' in workflow
     assert 'flet build windows --product "Nano"' in workflow
     assert "skipping entry-point guard" not in workflow
+
+
+def test_windows_installer_shortcut_names_are_filesystem_safe():
+    installer = (ROOT / "windows" / "installer.iss").read_text(encoding="utf-8")
+
+    assert '#define AppShortName "Cashir - كاشير"' in installer
+    icons = installer.split("[Icons]", 1)[1].split("[", 1)[0]
+    assert "{#AppShortName}" in icons
+    assert "|" not in icons
