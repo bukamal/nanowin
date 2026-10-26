@@ -1,4 +1,4 @@
-"""Money-consistency audit over a Nano database (read-only).
+"""Money-consistency audit over a Cashir database (read-only).
 
 Stage-1 money discipline (see ``core/money.py``): every money value written by
 the accounting services is quantized to cents (2dp, round-half-up) *before* it

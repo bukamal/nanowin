@@ -6,7 +6,8 @@ import time
 import flet as ft
 
 from nano_offline.version import APP_VERSION
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core import branding
+from nano_offline.core.theme import Colors
 
 
 class SplashGate:
@@ -53,7 +54,7 @@ class SplashGate:
             alignment=ft.alignment.center,
             border_radius=34,
             gradient=ft.LinearGradient(
-                colors=[Colors.PRIMARY, Colors.PURPLE_LIGHT],
+                colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
                 begin=ft.alignment.top_left,
                 end=ft.alignment.bottom_right,
             ),
@@ -65,7 +66,7 @@ class SplashGate:
         )
 
         self._title = ft.Text(
-            "Nano | نانو",
+            branding.APP_BRAND,
             size=26,
             weight=ft.FontWeight.BOLD,
             color=Colors.PRIMARY_DARK,
@@ -73,7 +74,7 @@ class SplashGate:
             animate_opacity=ft.Animation(420, ft.AnimationCurve.EASE_OUT),
         )
         self._subtitle = ft.Text(
-            "نظام المحاسبة الذكي دون اتصال",
+            f"{branding.APP_TAGLINE} دون اتصال",
             size=12,
             color=Colors.TEXT_SECONDARY,
             opacity=0,

@@ -11,7 +11,7 @@ for token in [
     "RibbonTab",
     "_section_actions",
     "command_bar",
-    'ft.Text("نظام المحاسبة الذكي"',
+    "branding.APP_TAGLINE",
 ]:
     assert token in main, token
 

@@ -3237,7 +3237,7 @@ class InvoiceCenter:
                 total += line_total
 
             # Anonymous invoices are cash by definition: if no customer/supplier
-            # is selected, Nano settles the invoice in full automatically.
+            # is selected, Cashir settles the invoice in full automatically.
             cash_without_party = not bool(party_dd.value)
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", self.ctx.settings)

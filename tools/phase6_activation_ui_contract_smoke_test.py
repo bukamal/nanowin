@@ -8,7 +8,7 @@ license_code = (root / "src/nano_offline/services/license_service.py").read_text
 
 for needle in ["ActivationGate", "ctx.license.status().valid", "show_activation", "show_auth"]:
     assert needle in main, needle
-for needle in ["تفعيل Nano | نانو", "licenseCode", "fingerprint"]:
+for needle in ["تفعيل {branding.APP_BRAND}", "licenseCode", "fingerprint"]:
     assert (needle in view) or (needle in license_code), needle
 # The Hawaa server reference is phrased in the actual UI/admin code as
 # "نفس سيرفر هوى الشام" / "سيرفر تفعيل هوى الشام" — accept either wording

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import flet as ft
 
+from nano_offline.core import branding
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row
@@ -1801,7 +1802,7 @@ class ItemsCenter:
                 if idx == 0:
                     body = ft.Column(
                         [
-                            ft.Text("وجّه الكاميرا نحو بطاقة QR لمادة صادرة من نانو (من هذا الجهاز أو من جهاز آخر).", size=12, color=Colors.TEXT_SECONDARY),
+                            ft.Text(f"وجّه الكاميرا نحو بطاقة QR لمادة صادرة من {branding.APP_NAME_AR} (من هذا الجهاز أو من جهاز آخر).", size=12, color=Colors.TEXT_SECONDARY),
                             ft.FilledButton("فتح الكاميرا ومسح البطاقة", icon=ft.Icons.QR_CODE_SCANNER, on_click=do_scan, visible=supports("barcode_camera_scan")),
                             scan_status,
                         ],

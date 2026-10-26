@@ -5,7 +5,7 @@ name = "nano-offline"
 # the Android build scripts and CI derive BUILD_NUMBER/BUILD_VERSION from the
 # same file, so the app, the wheel and the APK can never drift apart again.
 dynamic = ["version"]
-description = "Nano offline accounting and inventory suite built with Flet"
+description = "Cashir offline point-of-sale and sales-management suite built with Flet"
 requires-python = ">=3.10"
 dependencies = [
   "flet==0.28.3",
@@ -145,14 +145,14 @@ module = "main"
 no_pub_get = true
 
 [tool.flet.splash]
-color = "#0F766E"
-dark_color = "#115E59"
+color = "#0C264A"
+dark_color = "#081A33"
 android = true
 ios = true
 web = true
 
 [tool.flet.android]
-adaptive_icon_background = "#0F766E"
+adaptive_icon_background = "#0C264A"
 
 [tool.flet.android.manifest_application]
 allowBackup = "false"

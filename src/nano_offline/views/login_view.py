@@ -3,6 +3,7 @@ from __future__ import annotations
 import flet as ft
 
 from nano_offline.core.toast import toast
+from nano_offline.core import branding
 from nano_offline.core import sound as sound_engine
 
 from nano_offline.components import PatternPad, SelectAllTextField, auth_scaffold
@@ -101,7 +102,7 @@ class LoginGate:
             expand=True,
             height=50,
             border_radius=Radius.MD,
-            gradient=ft.LinearGradient(colors=[Colors.PRIMARY, Colors.PURPLE_LIGHT], begin=ft.alignment.center_left, end=ft.alignment.center_right),
+            gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_CYAN], begin=ft.alignment.center_left, end=ft.alignment.center_right),
             shadow=ft.BoxShadow(blur_radius=18, spread_radius=0, color=Colors.PRIMARY_BORDER, offset=ft.Offset(0, 6)),
             alignment=ft.alignment.center,
             ink=True,
@@ -462,7 +463,7 @@ class LoginGate:
             height=112,
             alignment=ft.alignment.center,
             border_radius=32,
-            gradient=ft.LinearGradient(colors=[Colors.PRIMARY, Colors.PURPLE_LIGHT], begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
+            gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_CYAN], begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
             shadow=ft.BoxShadow(blur_radius=28, spread_radius=2, color=Colors.PRIMARY_BORDER, offset=ft.Offset(0, 10)),
         )
         subtitle = "إنشاء المدير الأول" if self.first_run else "تسجيل الدخول المحلي"
@@ -487,7 +488,7 @@ class LoginGate:
             ft.Column(
                 [
                     icon_badge,
-                    ft.Text("Nano | نانو", size=24, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                    ft.Text(branding.APP_BRAND, size=24, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                     ft.Text(subtitle, size=12, color=Colors.TEXT_MUTED),
                     self.step_dots,
                     self._body,

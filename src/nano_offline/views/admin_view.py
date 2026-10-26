@@ -19,6 +19,7 @@ from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import barcode_settings
+from nano_offline.core import branding
 from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
 from nano_offline.core import pos_settings
@@ -235,7 +236,7 @@ class AdminCenter:
                 try:
                     self.ctx.backup.validate_backup(path)
                     await self.native_files.share_file(
-                        str(path), mime_type="application/zip", text="نسخة احتياطية من Nano | نانو", subject=path.name
+                        str(path), mime_type="application/zip", text=f"نسخة احتياطية من {branding.APP_BRAND}", subject=path.name
                     )
                 except Exception as exc:
                     self._notify(str(exc), kind="error")
@@ -431,7 +432,7 @@ class AdminCenter:
                 shared = await self.native_files.share_file(
                     str(result),
                     mime_type="application/zip",
-                    text="نسخة احتياطية من Nano | نانو",
+                    text=f"نسخة احتياطية من {branding.APP_BRAND}",
                     subject=result.name,
                 )
                 if not shared:
@@ -602,11 +603,11 @@ class AdminCenter:
                 return
             try:
                 # Android document providers are inconsistent with custom file
-                # extensions, so open all files and validate Nano's container
+                # extensions, so open all files and validate Cashir's container
                 # ourselves before copying it into persistent local storage.
                 picked = await self.native_files.pick_file(
                     extensions=None,
-                    dialog_title="اختر النسخة الاحتياطية لـ Nano",
+                    dialog_title=f"اختر النسخة الاحتياطية لـ {branding.APP_NAME_AR}",
                 )
                 if not picked:
                     return
@@ -712,13 +713,13 @@ class AdminCenter:
         # -- no restart needed.
         brand_settings = self.ctx.settings.get_all()
         ACCENT_PALETTE = [
-            ("#0F766E", "أخضر مزرق"), ("#2563EB", "أزرق"), ("#4F46E5", "نيلي"),
+            ("#0B5FCC", "أزرق كاشير"), ("#0EA5E9", "سماوي"), ("#4F46E5", "نيلي"),
             ("#7C3AED", "بنفسجي"), ("#DB2777", "وردي"), ("#DC2626", "أحمر"),
             ("#D97706", "كهرماني"), ("#334155", "رمادي داكن"),
         ]
         brand_state = {"color": brand_settings.get("invoice_color") or ACCENT_PALETTE[0][0], "logo": brand_settings.get("company_logo") or ""}
 
-        company_name_field = SelectAllTextField(label="اسم الشركة/المتجر", value=brand_settings.get("company_name") or "نانو")
+        company_name_field = SelectAllTextField(label="اسم الشركة/المتجر", value=brand_settings.get("company_name") or branding.DEFAULT_COMPANY_NAME)
         currency_field = SelectAllTextField(label="العملة المخزَّنة (الأساس)", value=brand_settings.get("currency") or "USD", read_only=True, tooltip="كل الأسعار تُخزَّن داخليًا بهذه العملة، ولا يمكن تغييرها من هنا")
         display_currency_value = currency.get_display_currency(self.ctx.settings)
         SYMBOL_BY_DISPLAY_CURRENCY = {
@@ -865,7 +866,7 @@ class AdminCenter:
                     self._notify("سعر الصرف يجب أن يكون رقمًا أكبر من صفر")
                     return
                 self.ctx.settings.set_many({
-                    "company_name": (company_name_field.value or "نانو").strip(),
+                    "company_name": (company_name_field.value or branding.DEFAULT_COMPANY_NAME).strip(),
                     "currency": (currency_field.value or "USD").strip(),
                     currency.DISPLAY_CURRENCY_KEY: display_currency_field.value or currency.DEFAULT_DISPLAY_CURRENCY,
                     currency.EXCHANGE_RATE_KEY: str(rate_value),
@@ -1673,7 +1674,7 @@ class AdminCenter:
                     Colors.SUCCESS_DARK if license_status_now.valid else Colors.DANGER_DARKER,
                 ),
                 _stat_chip(ft.Icons.BACKUP_OUTLINED, "آخر نسخة احتياطية", last_backup_label),
-                _stat_chip(ft.Icons.STOREFRONT_OUTLINED, "الشركة", company_name_field.value or "نانو"),
+                _stat_chip(ft.Icons.STOREFRONT_OUTLINED, "الشركة", company_name_field.value or branding.DEFAULT_COMPANY_NAME),
                 # Trailing spacer: without it the last chip sits flush
                 # against the scroll viewport's edge with zero breathing
                 # room, which -- combined with no fade/shadow cue -- reads
@@ -2071,7 +2072,7 @@ class AdminCenter:
             "license": self._section(
                 "التفعيل — نفس سيرفر هوى الشام",
                 [
-                    ft.Text("تطبيق Nano يرسل مفتاح الترخيص ومعرّف الجهاز فقط إلى سيرفر تفعيل هوى الشام. لا تُرسل الفواتير أو العملاء أو الموردون أو المخزون. بعد نجاح التفعيل يعمل التطبيق أوفلاين.", size=12, color=Colors.TEXT_MUTED),
+                    ft.Text(f"تطبيق {branding.APP_NAME_AR} يرسل مفتاح الترخيص ومعرّف الجهاز فقط إلى سيرفر تفعيل هوى الشام. لا تُرسل الفواتير أو العملاء أو الموردون أو المخزون. بعد نجاح التفعيل يعمل التطبيق أوفلاين.", size=12, color=Colors.TEXT_MUTED),
                     ft.Row(
                         [
                             ft.Text("سيرفر التفعيل ومعرّف الجهاز (بيانات خاصة)", size=11, color=Colors.TEXT_SECONDARY),

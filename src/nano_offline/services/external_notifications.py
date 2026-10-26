@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.message import EmailMessage
 
+from nano_offline.core import branding
 from nano_offline.core.database import Database
 from nano_offline.repositories.settings_repository import SettingsRepository
 from nano_offline.services.notification_service import Alert, NotificationService
@@ -106,7 +107,7 @@ class TelegramProvider(ChannelProvider):
         chat_id = str(channel_cfg.get("chat_id") or "").strip()
         if not token or not chat_id:
             raise ChannelError("Telegram: bot_token و chat_id غير مضبوطين")
-        text = f"🔔 {alert.title}\n{alert.body}\n\n— نانو ({alert.rule_key} / {alert.severity})"
+        text = f"🔔 {alert.title}\n{alert.body}\n\n— {branding.APP_NAME_AR} ({alert.rule_key} / {alert.severity})"
         payload = json.dumps({"chat_id": chat_id, "text": text}, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             f"https://api.telegram.org/bot{token}/sendMessage",
@@ -143,10 +144,10 @@ class SmtpEmailProvider(ChannelProvider):
             port = 587
         use_tls = bool(channel_cfg.get("use_tls", True))
         msg = EmailMessage()
-        msg["Subject"] = f"[نانو] {alert.title}"
+        msg["Subject"] = f"[{branding.APP_NAME_AR}] {alert.title}"
         msg["From"] = username
         msg["To"] = to_address
-        msg.set_content(f"{alert.body}\n\n(تنبيه ذكي من نانو — {alert.rule_key} / {alert.severity})")
+        msg.set_content(f"{alert.body}\n\n(تنبيه ذكي من {branding.APP_NAME_AR} — {alert.rule_key} / {alert.severity})")
         try:
             with smtplib.SMTP(host, port, timeout=15) as smtp:
                 smtp.ehlo()
@@ -396,7 +397,7 @@ class ExternalNotificationService:
             rule_key="test_probe",
             dedupe_key=f"test_probe:{datetime.now().strftime('%Y%m%d%H%M%S')}",
             severity="info",
-            title="إشعار اختبار من نانو",
+            title=f"إشعار اختبار من {branding.APP_NAME_AR}",
             body="وصل هذا الإشعار عبر قناة خارجية — نظام التوصيل يعمل.",
         )
         cfg_ext = self.get_config()

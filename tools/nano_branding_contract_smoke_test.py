@@ -2,6 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 main = (ROOT / "src/main.py").read_text(encoding="utf-8")
+branding = (ROOT / "src/nano_offline/core/branding.py").read_text(encoding="utf-8")
 pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 activation = (ROOT / "src/nano_offline/views/activation_view.py").read_text(encoding="utf-8")
 license_service = (ROOT / "src/nano_offline/services/license_service.py").read_text(encoding="utf-8")
@@ -9,7 +10,9 @@ license_service = (ROOT / "src/nano_offline/services/license_service.py").read_t
 assert 'name = "nano-offline"' in pyproject
 assert 'product = "Nano"' in pyproject
 assert 'org = "com.nano"' in pyproject
-assert 'page.title = "Nano | نانو"' in main
+assert 'APP_BRAND = "Cashir | كاشير"' in branding
+assert 'APP_NAME_AR = "كاشير"' in branding
+assert 'page.title = branding.APP_BRAND' in main
 assert 'src="icon.png"' in main
 assert 'src="icon.png"' in activation
 assert 'f"Nano-Offline/{version_token}"' in license_service
@@ -27,4 +30,4 @@ assert 'CommandBar' in main
 assert 'RibbonTab' in main
 assert 'command_bar' in main
 
-print("nano_branding_contract_smoke_test passed")
+print("nano_branding_contract_smoke_test passed (Cashir branding)")

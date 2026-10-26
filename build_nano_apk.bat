@@ -7,13 +7,13 @@ for /f "tokens=1,2" %%a in ('python tools\app_version.py') do (
 )
 if not defined BUILD_VERSION set "BUILD_VERSION=0.0.0"
 if not defined BUILD_NUMBER set "BUILD_NUMBER=1"
-uv run flet build apk --product "Nano | نانو" --org com.nano --build-number %BUILD_NUMBER% --build-version %BUILD_VERSION%
+uv run flet build apk --product "Cashir | كاشير" --org com.nano --build-number %BUILD_NUMBER% --build-version %BUILD_VERSION%
 if errorlevel 1 exit /b %errorlevel%
 if not exist dist mkdir dist
 for /r build %%F in (*.apk) do (
   copy /Y "%%F" "dist\nano-release.apk" >nul
-  echo Nano installer: %CD%\dist\nano-release.apk
+  echo Cashir installer: %CD%\dist\nano-release.apk
   exit /b 0
 )
-echo Nano APK was not produced.
+echo Cashir APK was not produced.
 exit /b 1

@@ -5,6 +5,8 @@ import sqlite3
 from pathlib import Path
 from typing import Iterator
 
+from nano_offline.core import branding
+from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
@@ -532,7 +534,14 @@ class Database:
             conn.execute(
                 "INSERT OR IGNORE INTO settings(key,value) VALUES('display_currency_code','SYP')"
             )
-            conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('company_name','نانو')")
+            conn.execute(
+                "INSERT OR IGNORE INTO settings(key,value) VALUES('company_name',?)",
+                (branding.DEFAULT_COMPANY_NAME,),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO settings(key,value) VALUES('company_logo',?)",
+                (default_brand.DEFAULT_COMPANY_LOGO,),
+            )
             conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('payment_allocation_mode','oldest')")
             conn.commit()
 

@@ -10,7 +10,7 @@
     overdue_count, overdue_total, low_stock_count, updated_at, store_name
 
   Structure:
-    header  : brand title (store name or "Nano | نانو") + live pulse dot
+    header  : brand title (store name or "Cashir | كاشير") + live pulse dot
     hairline: 1dp translucent divider
     KPIs    : مبيعات اليوم (+ عدد الفواتير) | رصيد الصندوق (+ حالة)
     status  : smart pill — "كل شيء على ما يرام" when nothing to flag,
@@ -174,7 +174,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:letterSpacing="0.04"
-        android:textColor="#99F6E4"
+        android:textColor="#BBD4F9"
         android:textSize="10sp"
         android:visibility="gone" />
 

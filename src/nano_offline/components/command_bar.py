@@ -14,6 +14,7 @@ from typing import Callable
 
 import flet as ft
 
+from nano_offline.core import branding
 from nano_offline.core.theme import Colors, Radius, Shadow
 
 
@@ -44,8 +45,8 @@ class CommandBar(ft.Container):
         page: ft.Page | None = None,
         tabs: list[RibbonTab] | None = None,
         on_tab: Callable | None = None,
-        brand_title: str = "Nano | نانو",
-        brand_subtitle: str = "نظام المحاسبة الذكي",
+        brand_title: str = branding.APP_BRAND,
+        brand_subtitle: str = branding.APP_TAGLINE,
         user_name: str = "",
         user_sub: str = "",
         on_logout: Callable | None = None,

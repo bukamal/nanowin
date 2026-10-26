@@ -16,6 +16,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core import branding
 from nano_offline.core import currency
 from nano_offline.core.platform_capabilities import feature_status
 from nano_offline.core.expiring import invalidate_insights
@@ -538,21 +539,22 @@ class FinanceCenter:
         receipt = voucher.get("voucher_type") == "receipt"
         title = "سند قبض" if receipt else "سند دفع"
         accent = Colors.SUCCESS_ALT if receipt else Colors.DANGER_DARK
+        brand_color = self.ctx.settings.get("invoice_color") or "#0B5FCC"
         party_label = "العميل" if receipt else "المورد"
         return f"""<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><style>
         @page {{ size:80mm auto; margin:0; }} * {{ box-sizing:border-box; }} body {{ width:80mm; margin:0; padding:5mm; font-family:Arial,sans-serif; color:#111; }}
-        .brand {{ text-align:center; color:#0F766E; font-size:20px; font-weight:800; }} .sub {{ text-align:center; font-size:10px; color:#64748B; }}
+        .brand {{ text-align:center; color:{brand_color}; font-size:20px; font-weight:800; }} .sub {{ text-align:center; font-size:10px; color:#64748B; }}
         .type {{ text-align:center; font-size:15px; font-weight:700; margin:8px 0; }} .amount {{ text-align:center; color:{accent}; font-size:24px; font-weight:900; margin:10px 0; }}
         .line {{ border-top:1px dashed #777; margin:8px 0; }} .row {{ display:flex; justify-content:space-between; gap:8px; margin:5px 0; font-size:11px; }}
         .label {{ color:#64748B; }} .footer {{ text-align:center; color:#94A3B8; font-size:9px; margin-top:12px; }}
-        </style></head><body><div class='brand'>Nano | نانو</div><div class='sub'>نظام المحاسبة الذكي</div><div class='type'>{title} #{voucher.get('id')}</div>
+        </style></head><body><div class='brand'>{branding.APP_BRAND}</div><div class='sub'>{branding.APP_TAGLINE}</div><div class='type'>{title} #{voucher.get('id')}</div>
         <div class='amount'>{self.money(voucher.get('amount'))}</div><div class='line'></div>
         <div class='row'><span class='label'>التاريخ</span><strong>{voucher.get('voucher_date') or '—'}</strong></div>
         <div class='row'><span class='label'>{party_label}</span><strong>{voucher.get('party_name') or '—'}</strong></div>
         <div class='row'><span class='label'>المرجع</span><strong>{voucher.get('reference') or '—'}</strong></div>
         <div class='row'><span class='label'>موزع</span><strong>{self.money(voucher.get('allocated_amount'))}</strong></div>
         <div class='row'><span class='label'>على الحساب</span><strong>{self.money(voucher.get('unallocated_amount'))}</strong></div>
-        <div class='line'></div><div style='font-size:10px'>{voucher.get('notes') or ''}</div><div class='footer'>تم إنشاء السند بواسطة Nano</div></body></html>"""
+        <div class='line'></div><div style='font-size:10px'>{voucher.get('notes') or ''}</div><div class='footer'>تم إنشاء السند بواسطة {branding.APP_NAME_AR}</div></body></html>"""
 
     def _open_payment_source(self, payment_id: int) -> None:
         """Drill-down for a ledger 'payment' movement: a real voucher opens

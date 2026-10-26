@@ -7,6 +7,7 @@ from nano_offline.core.qr_gen import qr_svg
 from nano_offline.core.invoice_signing import sign_invoice
 from nano_offline.core import public_verify
 from nano_offline.core.database import Database
+from nano_offline.core import branding
 from nano_offline.core import business_profile
 from nano_offline.core import currency
 from nano_offline.core import invoice_settings
@@ -17,10 +18,10 @@ from nano_offline.services.statement_service import StatementService
 # setting (see AdminCenter's branding section). Kept as a module constant
 # so both the invoice shell and the barcode-label sheet fall back to the
 # same color when the user hasn't customized it yet.
-_DEFAULT_ACCENT = "#0F766E"
+_DEFAULT_ACCENT = "#0B5FCC"
 
 _STATUS_STYLE = {
-    "paid": ("مدفوعة", "#0F766E", "#E4F5F1"),
+    "paid": ("مدفوعة", "#0B5FCC", "#EAF3FF"),
     "partial": ("مدفوعة جزئيًا", "#B45309", "#FCF1DC"),
     "unpaid": ("غير مدفوعة", "#B42318", "#FBE9E7"),
 }
@@ -139,7 +140,7 @@ class DocumentService:
         doc_number: str | None = None,
     ) -> str:
         settings = self._settings()
-        company = self._e(settings.get("company_name") or "نانو")
+        company = self._e(settings.get("company_name") or branding.DEFAULT_COMPANY_NAME)
         display_symbol = self._e(currency.get_display_symbol(settings))
         accent = settings.get("invoice_color") or _DEFAULT_ACCENT
         accent_deep = self._accent_shade(accent)
@@ -258,7 +259,7 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
 .totals-table tr:last-child td {{ border-bottom:0; }}
 .totals-table .total-row td {{ background:{tint}; color:{accent_deep}; font-size:13px; font-weight:800; }}
 .totals-table .remaining-row td {{ background:#FFF7ED; color:#B45309; font-weight:800; }}
-.totals-table .settled-row td {{ background:#ECFDF5; color:#0F766E; font-weight:800; }}
+.totals-table .settled-row td {{ background:#EAF3FF; color:#0B5FCC; font-weight:800; }}
 .totals-table .fx {{ display:block; margin-top:1px; font-size:9.5px; font-weight:600; color:#94A3B8; }}
 .money-wrap {{
   display:inline-flex; align-items:baseline; gap:3px;
@@ -309,7 +310,7 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
   {header_number_html}
 </div>
 {body}
-<div class="footer"><span>تم إنشاء المستند محليًا بواسطة نانو</span><span>Nano Offline</span></div>
+<div class="footer"><span>تم إنشاء المستند محليًا بواسطة {branding.APP_NAME_AR}</span><span>{branding.APP_NAME_EN} Offline</span></div>
 </div></body></html>"""
 
     def invoice_html(self, invoice_id: int) -> str:
@@ -669,7 +670,7 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
     <tr><td>ملاحظة</td><td>{note}</td></tr>
     <tr><td>مبيعات اليوم (إن توفرت)</td><td class="money">{self._money(today_sales)}</td></tr>
   </table>
-  <p class="muted">تقرير داخلي من نانو — للأرشفة والمراجعة.</p>
+  <p class="muted">تقرير داخلي من {branding.APP_NAME_AR} — للأرشفة والمراجعة.</p>
 """
         return self._shell("إغلاق يوم الصندوق", closed_at, body)
 
@@ -874,7 +875,7 @@ body {{
     {fact_rows}
   </div>
 </div>
-<div class="note"><b>كيف تُستخدم:</b> امسح هذا الرمز بتطبيق نانو على أي جهاز آخر لإضافة هذه المادة بكل بياناتها مباشرة، بدل إعادة كتابتها يدويًا. {caption}</div>
+<div class="note"><b>كيف تُستخدم:</b> امسح هذا الرمز بتطبيق {branding.APP_NAME_AR} على أي جهاز آخر لإضافة هذه المادة بكل بياناتها مباشرة، بدل إعادة كتابتها يدويًا. {caption}</div>
 """
         style_extra = """
 <style>

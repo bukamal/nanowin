@@ -52,7 +52,7 @@ _FEATURES: dict[str, dict[str, str]] = {
     # through local_notifier (see native_files.dart's desktop helpers).
     "notifications": {"android": "native", "windows": "native"},
     # Alerts while the app is closed. Android has WorkManager + a background
-    # SQLite check; desktop processes only exist while Nano runs, so Windows
+    # SQLite check; desktop processes only exist while Cashir runs, so Windows
     # is explicitly open-app-only (the UI hides the delayed test there).
     "background_notifications": {"android": "native", "windows": "off:app-open-only"},
     "sound_pool": {"android": "native", "windows": "native"},

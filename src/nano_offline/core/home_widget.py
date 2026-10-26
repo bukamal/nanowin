@@ -8,7 +8,7 @@ Root cause of "الودجت لا يأخذ بياناته جيدًا من الم�
   - amounts were pushed as raw stored USD, without converting through the
     user's display-currency settings and without a currency symbol, while the
     app displays SYP (or USD) with a symbol;
-  - the header was hard-coded to "Nano | نانو" instead of the store name;
+  - the header was hard-coded to "Cashir | كاشير" instead of the store name;
   - today's invoice count and overdue totals were never pushed.
 
 home_widget_snapshot() now converts with currency.get_effective_rate() /

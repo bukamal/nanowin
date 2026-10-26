@@ -5,6 +5,7 @@ import asyncio
 import flet as ft
 
 from nano_offline.core.toast import toast
+from nano_offline.core import branding
 
 from nano_offline.components import SelectAllTextField, auth_scaffold
 from nano_offline.version import APP_VERSION
@@ -81,7 +82,7 @@ class ActivationGate:
             height=50,
             border_radius=Radius.MD,
             gradient=ft.LinearGradient(
-                colors=[Colors.PRIMARY, Colors.PURPLE_LIGHT],
+                colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
                 begin=ft.alignment.center_left,
                 end=ft.alignment.center_right,
             ),
@@ -161,7 +162,7 @@ class ActivationGate:
             alignment=ft.alignment.center,
             border_radius=32,
             gradient=ft.LinearGradient(
-                colors=[Colors.PRIMARY, Colors.PURPLE_LIGHT],
+                colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
                 begin=ft.alignment.top_left,
                 end=ft.alignment.bottom_right,
             ),
@@ -192,7 +193,7 @@ class ActivationGate:
             ft.Column(
                 [
                     icon_badge,
-                    ft.Text("تفعيل Nano | نانو", size=24, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                    ft.Text(f"تفعيل {branding.APP_BRAND}", size=24, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                     device_row,
                     ft.Container(height=2),
                     self.key,

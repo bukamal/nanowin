@@ -1,5 +1,5 @@
 from __future__ import annotations
-import sys, tempfile
+import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
@@ -44,7 +44,7 @@ with tempdir(prefix='qeid-barcode-labels-') as td:
     book_id = items.create(name='دفتر', purchase_price=1, selling_price=1.75, barcode='AAA-000-1')
     no_barcode_id = items.create(name='بدون باركود', purchase_price=1, selling_price=1)
 
-    assert settings.get('company_name', 'نانو') == 'نانو'  # seeded default
+    assert settings.get('company_name', 'كاشير') == 'كاشير'  # seeded default
     settings.set_many({
         'company_name': 'متجر النجمة',
         'invoice_color': '#7C3AED',

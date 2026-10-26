@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import flet as ft
 
+from nano_offline.core import branding
 from nano_offline.core.toast import toast
 
 from nano_offline.components import PatternPad, SelectAllTextField, kpi_card, metric_controls
@@ -165,7 +166,7 @@ class SecurityCenter:
                 icon_color=Colors.PRIMARY,
                 icon_bg=Colors.PRIMARY_BG,
                 title="إعداد الدخول بـ PIN",
-                subtitle="رقم سرّي قصير لفتح Nano بسرعة على هذا الجهاز",
+                subtitle=f"رقم سرّي قصير لفتح {branding.APP_NAME_AR} بسرعة على هذا الجهاز",
                 body=ft.Column([current_password, pin, confirm], spacing=10, tight=True),
                 actions=[
                     ft.TextButton("إلغاء", on_click=close),
@@ -234,7 +235,7 @@ class SecurityCenter:
                 icon_color=Colors.PURPLE,
                 icon_bg=Colors.PURPLE_BG,
                 title="إعداد نمط الدخول",
-                subtitle="ارسم نمطًا يربط 4 نقاط على الأقل لفتح Nano بسرعة",
+                subtitle=f"ارسم نمطًا يربط 4 نقاط على الأقل لفتح {branding.APP_NAME_AR} بسرعة",
                 body=body,
                 actions=[ft.TextButton("إلغاء", on_click=close)],
             )
@@ -377,7 +378,7 @@ class SecurityCenter:
                     color=Colors.PRIMARY,
                     bg=Colors.PRIMARY_BG,
                     title="إعداد الدخول بـ PIN",
-                    subtitle="رقم سري قصير (4–8 أرقام) لفتح Nano بسرعة على هذا الجهاز",
+                    subtitle=f"رقم سري قصير (4–8 أرقام) لفتح {branding.APP_NAME_AR} بسرعة على هذا الجهاز",
                     on_click=pin_dialog,
                 ),
                 action_tile(

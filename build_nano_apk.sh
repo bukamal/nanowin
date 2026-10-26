@@ -10,7 +10,7 @@ eval "$(python3 tools/app_version.py --shell)"
 BUILD_VERSION="${BUILD_VERSION:-0.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
-# Build Nano Android APK and copy the installer into dist/.
+# Build Cashir Android APK and copy the installer into dist/.
 #
 # NOTE on the pub.dev "authorization failed" flake:
 # Dart's pub resolver occasionally reports a transient pub.dev connectivity
@@ -116,7 +116,7 @@ MAX_ATTEMPTS=3
 attempt=1
 while true; do
   set +e
-  uv run flet build apk --product "Nano | نانو" --org com.nano --build-number "$BUILD_NUMBER" --build-version "$BUILD_VERSION"
+  uv run flet build apk --product "Cashir | كاشير" --org com.nano --build-number "$BUILD_NUMBER" --build-version "$BUILD_VERSION"
   status=$?
   set -e
 
@@ -168,9 +168,9 @@ while true; do
 done
 APK_PATH="$(find build -name '*.apk' -type f | head -n 1)"
 if [ -z "$APK_PATH" ]; then
-  echo "Nano APK was not produced." >&2
+  echo "Cashir APK was not produced." >&2
   exit 1
 fi
 mkdir -p dist
 cp "$APK_PATH" dist/nano-release.apk
-printf 'Nano installer: %s\n' "$(pwd)/dist/nano-release.apk"
+printf 'Cashir installer: %s\n' "$(pwd)/dist/nano-release.apk"

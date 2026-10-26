@@ -1,4 +1,4 @@
-"""Centralized design tokens for the Nano UI — light *and* dark aware.
+"""Centralized design tokens for the Cashir UI — light *and* dark aware.
 
 Every color used across the app's views should come from here instead of
 being repeated as a raw hex literal. This keeps the visual language
@@ -26,7 +26,7 @@ dark mode is active instead of always getting the light one.
 The one thing this trick does *not* do for free is repaint controls that
 were already built and added to the page before the mode changed — a
 ``ft.Text(color=Colors.TEXT_PRIMARY)`` bakes in a concrete color string the
-moment it's constructed, same as any other Python attribute access. Nano's
+moment it's constructed, same as any other Python attribute access. Cashir's
 views are cheap to rebuild from scratch (every ``*_view.py`` builds fresh
 controls on every ``show_center()`` call, nothing is cached/reused), so a
 mode switch is applied by re-running whichever full-screen rebuild the app
@@ -76,14 +76,16 @@ class _LightTokens:
     ``_LIGHT`` can be built from it instead of duplicated by hand.
     """
 
-    # Brand / primary — deep teal instead of the generic Material blue that
-    # nearly every SaaS/accounting app defaults to. Reads as "financial" and
-    # trustworthy without colliding with the success-green or purple accents
-    # already used elsewhere in the palette.
-    PRIMARY = "#0F766E"
-    PRIMARY_DARK = "#115E59"
-    PRIMARY_BG = "#F0FDFA"
-    PRIMARY_BORDER = "#99F6E4"
+    # Brand / primary — Cashir blue, taken from the app mark. The cyan
+    # accent mirrors the highlight ribbon in the logo and is used as the
+    # second stop of brand gradients (splash, auth panel, badges).
+    PRIMARY = "#0B5FCC"
+    PRIMARY_DARK = "#0A4CAB"
+    PRIMARY_BG = "#EAF3FF"
+    PRIMARY_BORDER = "#BBD4F9"
+    BRAND_START = "#0B5FCC"
+    BRAND_DEEP = "#0A4CAB"
+    BRAND_CYAN = "#0EA5E9"
 
     # Neutral surfaces
     WHITE = "#FFFFFF"
@@ -142,10 +144,13 @@ _LIGHT: dict[str, str] = {k: v for k, v in vars(_LightTokens).items() if k.isupp
 # semantic colors (success/danger/warning) keep their identity while
 # backing off enough to stay legible on a dark surface.
 _DARK: dict[str, str] = {
-    "PRIMARY": "#2DD4BF",
-    "PRIMARY_DARK": "#5EEAD4",
-    "PRIMARY_BG": "#0F2E2B",
-    "PRIMARY_BORDER": "#134E4A",
+    "PRIMARY": "#60A5FA",
+    "PRIMARY_DARK": "#93C5FD",
+    "PRIMARY_BG": "#0E2A4E",
+    "PRIMARY_BORDER": "#1E4B8F",
+    "BRAND_START": "#0B5FCC",
+    "BRAND_DEEP": "#0A4CAB",
+    "BRAND_CYAN": "#0EA5E9",
     "WHITE": "#1E293B",  # "card surface" — kept token role, not literal color
     "BACKGROUND": "#0F172A",
     "BACKGROUND_ALT": "#1E293B",

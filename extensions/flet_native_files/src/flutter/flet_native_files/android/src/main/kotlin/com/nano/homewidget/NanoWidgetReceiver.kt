@@ -187,7 +187,7 @@ class NanoWidgetReceiver : AppWidgetProvider() {
                     lowStock > 0 ->
                         context.getString(R.string.nano_widget_status_lowstock, lowStock) to "#FCD34D"
                     else ->
-                        context.getString(R.string.nano_widget_status_ok) to "#5EEAD4"
+                        context.getString(R.string.nano_widget_status_ok) to "#93C5FD"
                 }
                 views.setTextViewText(R.id.nano_widget_status, text)
                 views.setTextColor(R.id.nano_widget_status, Color.parseColor(tint))

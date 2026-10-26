@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import flet as ft
 
+from nano_offline.core import branding
 from nano_offline.core.theme import Colors
 from nano_offline.version import APP_VERSION
 
@@ -36,8 +37,8 @@ def _brand_panel() -> ft.Container:
                     ),
                     padding=7, border_radius=28, bgcolor=_white(0.16),
                 ),
-                ft.Text("Nano | نانو", size=34, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                ft.Text("منظومة محاسبة ومخزون عربية تعمل محليًا", size=13, color=_white(0.9)),
+                ft.Text(branding.APP_BRAND, size=34, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                ft.Text(f"{branding.APP_TAGLINE} — يعمل محليًا", size=13, color=_white(0.9)),
                 ft.Container(height=18),
                 ft.Column([_feature_row(*f) for f in _FEATURES], spacing=14),
                 ft.Container(expand=True),
@@ -51,7 +52,7 @@ def _brand_panel() -> ft.Container:
         padding=48,
         alignment=ft.alignment.center,
         gradient=ft.LinearGradient(
-            colors=[Colors.PRIMARY, Colors.PRIMARY_DARK, Colors.PURPLE],
+            colors=[Colors.BRAND_START, Colors.BRAND_DEEP, Colors.BRAND_CYAN],
             begin=ft.alignment.top_left,
             end=ft.alignment.bottom_right,
         ),

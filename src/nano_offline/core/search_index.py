@@ -1,6 +1,6 @@
 """Optional FTS5 (trigram) search indexes with a transparent LIKE fallback.
 
-Nano's list screens filter with ``name LIKE '%q%'`` / ``barcode LIKE '%q%'``:
+Cashir's list screens filter with ``name LIKE '%q%'`` / ``barcode LIKE '%q%'``:
 an unindexable full scan that is fine for hundreds of rows and slow once there
 are tens of thousands. This module maintains FTS5 *trigram* indexes over those
 same columns so the **same substring semantics** can be answered by an index.

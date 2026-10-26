@@ -26,7 +26,7 @@ def _flag(settings, key: str, default: bool) -> bool:
 
 
 def auto_backup_enabled(settings) -> bool:
-    """Whether Nano should quietly create a backup right after login when
+    """Whether Cashir should quietly create a backup right after login when
     the existing \"موعد نسخة احتياطية\" reminder rule (see
     ``NotificationService``'s ``backup`` rule) says the last one is overdue.
     Off by default -- a shop that prefers to control exactly when a backup

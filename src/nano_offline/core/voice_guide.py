@@ -1,4 +1,4 @@
-"""Offline voice guide — detailed Arabic help for every Nano area.
+"""Offline voice guide — detailed Arabic help for every Cashir area.
 
 Not a free-form LLM: matches user questions to a curated knowledge base
 and returns long, step-by-step spoken guidance. Screen-aware when possible.
@@ -7,7 +7,8 @@ and returns long, step-by-step spoken guidance. Screen-aware when possible.
 from __future__ import annotations
 
 import re
-from typing import Callable
+
+from nano_offline.core import branding
 
 
 def _norm(text: str) -> str:
@@ -226,7 +227,7 @@ def guide_for_section(section: str) -> str:
     key = (section or "dashboard").lower().strip()
     if key in SECTION_GUIDE:
         return SECTION_GUIDE[key]
-    return SECTION_GUIDE.get("dashboard", "أنت في نانو. قل مساعدة أو اشرح الشاشة للتوجيه.")
+    return SECTION_GUIDE.get("dashboard", f"أنت في {branding.APP_NAME_AR}. قل مساعدة أو اشرح الشاشة للتوجيه.")
 
 
 def match_guide(text: str, *, section: str = "") -> tuple[str, str | None] | None:
@@ -261,7 +262,7 @@ def match_guide(text: str, *, section: str = "") -> tuple[str, str | None] | Non
                 if any(tok in t for tok in kn.split() if len(tok) > 2):
                     return answer, target
         return (
-            "يمكنني توجيهك داخل نانو: قل كيف أبيع، كيف أضيف مادة، كيف أجرد، كيف نسخة احتياطية، "
+            f"يمكنني توجيهك داخل {branding.APP_NAME_AR}: قل كيف أبيع، كيف أضيف مادة، كيف أجرد، كيف نسخة احتياطية، "
             "أو اشرح الشاشة لشرح مكانك الحالي. وللتنفيذ المباشر: بيع سريع، مواد، مالية، تقارير.",
             None,
         )

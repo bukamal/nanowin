@@ -1,4 +1,4 @@
-"""Central logging + uncaught-exception capture for Nano.
+"""Central logging + uncaught-exception capture for Cashir.
 
 Why this exists
 ---------------
@@ -35,6 +35,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+from nano_offline.core import branding
 from nano_offline.core.paths import app_data_dir
 from nano_offline.version import APP_VERSION, BUILD_NUMBER
 
@@ -88,7 +89,7 @@ def _append_crash_report(kind: str, exc_type, exc, tb) -> None:
     try:
         header = (
             f"\n===== {datetime.now(timezone.utc).isoformat(timespec='seconds')} "
-            f"[{kind}] Nano {APP_VERSION} (build {BUILD_NUMBER}) =====\n"
+            f"[{kind}] {branding.APP_NAME_EN} {APP_VERSION} (build {BUILD_NUMBER}) =====\n"
         )
         body = "".join(traceback.format_exception(exc_type, exc, tb))
         with path.open("a", encoding="utf-8") as fh:
@@ -161,7 +162,8 @@ def setup_logging(*, level: int | None = None, console: bool = True) -> None:
 
     _install_excepthooks()
     logging.getLogger("nano.startup").info(
-        "logging ready (Nano %s build %s) -> %s",
+        "logging ready (%s %s build %s) -> %s",
+        branding.APP_NAME_EN,
         APP_VERSION,
         BUILD_NUMBER,
         file_path or "console-only",

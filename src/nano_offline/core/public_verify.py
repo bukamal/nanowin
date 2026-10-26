@@ -6,7 +6,7 @@ database (the signing secret lives in ``settings``), so it answers the
 question "was this slip tampered with since it left *this* device?".
 
 The public path answers a related question for *anyone* -- including a
-merchant or customer checking an invoice printed by a different Nano
+merchant or customer checking an invoice printed by a different Cashir
 install: "do the numbers printed on this paper match the invoice's own
 recorded data?" Every printed slip shows its core facts as plain Arabic
 text (number, date, total, party). We derive a short non-secret checksum

@@ -2,13 +2,13 @@
 <resources>
     <!--
       FIX_0.9.3: widget picker metadata + all strings used by the redesigned
-      layout. Descriptions and labels are Arabic-first like the rest of Nano.
+      layout. Descriptions and labels are Arabic-first like the rest of Cashir.
     -->
-    <string name="nano_widget_description">نبض متجرك في شاشة رئيسية واحدة: مبيعات اليوم، رصيد الصندوق، الذمم المتأخرة وتنبيهات المخزون من نانو</string>
+    <string name="nano_widget_description">نبض متجرك في شاشة رئيسية واحدة: مبيعات اليوم، رصيد الصندوق، الذمم المتأخرة وتنبيهات المخزون من كاشير</string>
     <string name="nano_widget_hint">افتح التطبيق لتحديث البيانات</string>
 
     <!-- Header / fallbacks -->
-    <string name="nano_widget_default_title">Nano | نانو</string>
+    <string name="nano_widget_default_title">Cashir | كاشير</string>
     <string name="nano_widget_sales_label">مبيعات اليوم</string>
     <string name="nano_widget_cash_label">رصيد الصندوق</string>
 

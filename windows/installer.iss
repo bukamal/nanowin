@@ -1,4 +1,4 @@
-﻿; Nano for Windows — Inno Setup installer script (nanowin flavor).
+﻿; Cashir for Windows — Inno Setup installer script (nanowin flavor).
 ;
 ; Built by .github/workflows/build-windows.yml AFTER `flet build windows`.
 ; Version, exe name and source dir are injected per build via /D defines so
@@ -6,9 +6,9 @@
 ;   ISCC.exe /DAppVersion="0.17.3" /DExeName="nano.exe" /DSourceDir="C:\...\Release" windows\installer.iss
 ;
 ; AppId is stable across releases (generated once): upgrades replace the
-; install in place instead of registering a second "Nano" entry.
+; install in place instead of registering a second "Cashir" entry.
 
-#define AppName "Nano نانو"
+#define AppName "Cashir | كاشير"
 ; The three values below are injected per build via ISCC /D defines (see
 ; .github/workflows/build-windows.yml). The #ifndef guards keep a manual
 ; ISCC run without /D working, while a command-line /D must win: a plain
@@ -28,6 +28,7 @@ AppId={{149FA2FB-D177-479B-B010-FD608A765378}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
+; Keep the Nano folder/AppId for in-place upgrades of existing installs.
 DefaultDirName={autopf}\Nano
 OutputDir=build\windows\installer
 OutputBaseFilename=Nano-Setup-{#AppVersion}

@@ -130,7 +130,7 @@ class NanoGlanceWidget : GlanceAppWidget() {
                 }
 
                 Column(modifier = modifier) {
-                    Text("Nano | نانو", style = TextStyle(fontWeight = FontWeight.Medium))
+                    Text("Cashir | كاشير", style = TextStyle(fontWeight = FontWeight.Medium))
                     Spacer(modifier = GlanceModifier.height(8.dp))
                     Row(modifier = GlanceModifier.fillMaxWidth()) {
                         Column(modifier = GlanceModifier.defaultWeight()) {
@@ -157,7 +157,7 @@ class NanoGlanceWidget : GlanceAppWidget() {
                 // the system's opaque error is neither.
                 NanoWidgetDiagnostics.lastRenderError = error.toString()
                 Column(modifier = GlanceModifier.fillMaxSize().padding(12.dp)) {
-                    Text("Nano | نانو", style = TextStyle(fontWeight = FontWeight.Medium))
+                    Text("Cashir | كاشير", style = TextStyle(fontWeight = FontWeight.Medium))
                     Spacer(modifier = GlanceModifier.height(8.dp))
                     Text("تعذّر تحميل الأرقام، افتح التطبيق للتحديث", style = TextStyle(color = MutedColor))
                 }

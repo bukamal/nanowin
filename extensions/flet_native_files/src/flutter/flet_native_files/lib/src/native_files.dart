@@ -160,7 +160,7 @@ Future<void> _showLocalTestNotification({required String title, required String 
 //
 // Android's closed-app path above cannot cover the Windows build: there is
 // no WorkManager, and the app only exists while its Python process runs.
-// What *is* possible on desktop is a real OS notification while Nano is
+// What *is* possible on desktop is a real OS notification while Cashir is
 // open (the in-app rules engine already runs on navigation / the settings
 // test), so that is what local_notifier provides here. Windows only shows
 // toasts for apps that have a Start Menu shortcut, which is why setup()
@@ -174,7 +174,7 @@ Future<bool> _ensureDesktopNotifierInitialized() async {
   if (Platform.isAndroid || Platform.isIOS) return false;
   try {
     await localNotifier.setup(
-      appName: 'Nano',
+      appName: 'Cashir',
       shortcutPolicy: ShortcutPolicy.requireCreate,
     );
     _desktopNotifierReady = true;
@@ -321,7 +321,7 @@ List<_NativeAlert> _checkBackup(Database db, Map<String, dynamic> config) {
   final rows = db.select("SELECT value FROM settings WHERE key = 'last_backup_at'");
   // No recorded backup yet (brand-new install) -- the in-app dashboard
   // already nudges a first-time user toward backing up; no need to also
-  // wake their phone about it before they've even opened Nano once.
+  // wake their phone about it before they've even opened Cashir once.
   if (rows.isEmpty) return const [];
   final lastBackup = DateTime.tryParse(rows.first['value'] as String? ?? '');
   if (lastBackup == null) return const [];
@@ -1259,7 +1259,7 @@ class _BarcodeScanPageState extends State<_BarcodeScanPage>
   bool _showZoomIndicator = false;
   Timer? _zoomIndicatorTimer;
 
-  static const Color _accent = Color(0xFF0F766E); // matches Colors.PRIMARY in theme.py
+  static const Color _accent = Color(0xFF0B5FCC); // matches Colors.PRIMARY in theme.py
   static const double _frameWidth = 270;
   static const double _frameHeight = 200;
 
@@ -1295,7 +1295,7 @@ class _BarcodeScanPageState extends State<_BarcodeScanPage>
         _starting = false;
         _startError =
             'تعذر تشغيل الكاميرا. قد يكون إذن الكاميرا مرفوضًا لهذا التطبيق.\n'
-            'افتح إعدادات النظام > التطبيقات > Nano > الأذونات، فعّل إذن '
+            'افتح إعدادات النظام > التطبيقات > Cashir > الأذونات، فعّل إذن '
             'الكاميرا، ثم عد وأعد المحاولة.\n\n'
             'تفاصيل: $error';
       });

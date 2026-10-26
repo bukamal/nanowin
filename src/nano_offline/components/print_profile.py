@@ -99,18 +99,18 @@ def _test_page_html() -> str:
 <style>
 body {{ font-family:'Segoe UI',Tahoma,Arial,sans-serif; color:#1E293B; margin:0; font-size:12px; }}
 .sheet {{ padding:8px; }}
-.header {{ border-bottom:2px solid #0F766E; padding-bottom:8px; margin-bottom:12px; }}
-h1 {{ margin:0; color:#0F766E; font-size:18px; }}
+.header {{ border-bottom:2px solid #0B5FCC; padding-bottom:8px; margin-bottom:12px; }}
+h1 {{ margin:0; color:#0B5FCC; font-size:18px; }}
 p {{ margin:4px 0 0; color:#64748B; }}
 table {{ width:100%; border-collapse:collapse; margin-top:8px; }}
-th {{ background:#0F766E; color:#fff; padding:6px; font-size:11px; }}
+th {{ background:#0B5FCC; color:#fff; padding:6px; font-size:11px; }}
 td {{ padding:6px; border-bottom:1px solid #E2E8F0; text-align:center; }}
 th:first-child, td:first-child {{ text-align:start; }}
 .totals-wrap {{ width:58%; margin-inline-start:auto; margin-top:0; }}
 .totals-table {{ width:100%; border:1px solid #E2E8F0; border-top:0; border-collapse:collapse; }}
 .totals-table td {{ text-align:start; }}
 .totals-table td:last-child {{ text-align:end; }}
-.totals-table .total-row td {{ background:#E4F5F1; color:#0F766E; font-weight:800; }}
+.totals-table .total-row td {{ background:#EAF3FF; color:#0B5FCC; font-weight:800; }}
 </style>
 </head>
 <body><div class="sheet">

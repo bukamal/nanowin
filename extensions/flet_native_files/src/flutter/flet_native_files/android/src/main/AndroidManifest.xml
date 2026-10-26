@@ -33,7 +33,7 @@
         <receiver
             android:name="com.nano.homewidget.NanoWidgetReceiver"
             android:exported="true"
-            android:label="Nano | نانو">
+            android:label="Cashir | كاشير">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

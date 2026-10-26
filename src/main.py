@@ -10,6 +10,7 @@ from nano_offline.app_context import AppContext
 from nano_offline.core.invoice_signing import verify_payload
 from nano_offline.core import public_verify
 from nano_offline.core import backup_settings
+from nano_offline.core import branding
 from nano_offline.core import sound
 from nano_offline.core.paths import database_path, migrate_legacy_database
 from nano_offline.core.toast import toast
@@ -102,7 +103,7 @@ def _apply_rtl_to_sheets(page: ft.Page) -> None:
 
 
 def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: PlatformNativeFiles, on_theme_changed):
-    page.title = "Nano | نانو"
+    page.title = branding.APP_BRAND
     page.rtl = True
     _apply_theme(page)
     page.padding = 0
@@ -556,7 +557,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     ft.Row(
                         [
                             ft.Image(src="icon.png", width=48, height=48, fit=ft.ImageFit.CONTAIN),
-                            ft.Column([ft.Text("Nano | نانو", size=19, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY), ft.Text("نظام المحاسبة الذكي", size=10, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
+                            ft.Column([ft.Text(branding.APP_BRAND, size=19, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY), ft.Text(branding.APP_TAGLINE, size=10, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -969,7 +970,7 @@ def main(page: ft.Page):
                 except Exception:
                     pass
 
-    page.title = "Nano | نانو"
+    page.title = branding.APP_BRAND
     page.rtl = True
     _apply_rtl_to_sheets(page)
     _resolve_and_set_theme(page, ctx)

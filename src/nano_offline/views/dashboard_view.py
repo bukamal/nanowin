@@ -5,6 +5,7 @@ from typing import Callable
 
 import flet as ft
 
+from nano_offline.core import branding
 from nano_offline.core.theme import Colors, Radius, SEVERITY_STYLE, Shadow
 from nano_offline.core import currency
 from nano_offline.core.expiring import cached_insight
@@ -134,7 +135,7 @@ class DashboardCenter:
         else:
             greeting, icon = "مساء النور", ft.Icons.NIGHTLIGHT_ROUND
         company = (self.ctx.settings.get("company_name") or "").strip()
-        if company and company != "نانو":
+        if company and company != branding.DEFAULT_COMPANY_NAME:
             greeting = f"{greeting}، {company} 👋"
         today = now.date()
         weekday = _AR_WEEKDAYS[today.weekday()]

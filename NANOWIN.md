@@ -1,6 +1,6 @@
-# nanowin — Nano for Windows
+# nanowin — Cashir for Windows
 
-Windows flavor of Nano (bilingual offline accounting). Same language
+Windows flavor of Cashir (bilingual offline POS/accounting). Same language
 (Python + Flet 0.28.3), same code, same database schema as the
 [`nano`](https://github.com/bukamal/nano) Android tree — only the build
 target and a thin platform layer differ.

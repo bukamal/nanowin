@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from nano_offline.core import branding
 
 
 # Arabic display labels for every shell section key — the TTS must never
@@ -99,7 +101,7 @@ def reply_for(
     pool: list[str]
     if intent == "greet":
         pool = [
-            f"{hour_greeting()}. أنا مساعدك في نانو، معك الآن في مكالمة مستمرة. قل أمرك بشكل طبيعي: بيع سريع، إضافة مواد، الاستعلام عن الرصيد، أو أي قسم تريده.",
+            f"{hour_greeting()}. أنا مساعدك في {branding.APP_NAME_AR}، معك الآن في مكالمة مستمرة. قل أمرك بشكل طبيعي: بيع سريع، إضافة مواد، الاستعلام عن الرصيد، أو أي قسم تريده.",
             f"{hour_greeting()}. جاهز أساعدك خطوة بخطوة. يمكنك القول مثلاً: أضف سكر للسلة، كم باقي الأرز، مبيعات اليوم، أو افتح الجرد.",
         ]
     elif intent == "pos_add" and ok:
