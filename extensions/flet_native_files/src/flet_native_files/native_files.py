@@ -129,13 +129,16 @@ class NativeFiles(Control):
         name: str = "nano-report",
         paper_layout: str = "sheet",
         roll_width_mm: int = 80,
-        direct: bool = False,
+        direct: bool = True,
     ) -> bool:
         """Print an HTML document through the native bridge.
 
-        ``direct=True`` currently bypasses the print dialog on Windows only:
-        the document is rendered to PDF with headless Edge/Chrome and sent to
-        the default printer. Other platforms keep their normal print UI.
+        ``direct=True`` bypasses the print dialog on Windows: the document is
+        rendered to PDF with headless Edge/Chrome and sent to the default
+        printer. This is the default so every "print" action (invoice/report/
+        voucher/label/statement dialogs' continue button, the printer test,
+        POS F12) prints silently; ``create_pdf``/preview keep their own path.
+        Other platforms keep their normal print UI.
         """
         raw = await self.invoke_method_async(
             "print_html",

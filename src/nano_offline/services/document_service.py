@@ -400,7 +400,7 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
             description = line.get("description") or line.get("item_name") or "—"
             unit = line.get("unit_abbreviation") or line.get("unit_name") or ""
             unit_html = f'<span class="unit">{self._e(unit)}</span>' if unit else ""
-            equiv_text = _equiv_text(line)
+            equiv_text = _equiv_text(line) if print_options.get("show_unit_equiv") else ""
             equiv_html = f'<span class="equiv">{equiv_text}</span>' if equiv_text else ""
             line_rows.append(
                 f"<tr><td class='item-cell'>{self._e(description)}</td>"

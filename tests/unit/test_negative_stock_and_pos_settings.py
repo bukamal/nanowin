@@ -220,7 +220,8 @@ def test_f12_prints_the_last_completed_sale(tmp_path):
     pos._print_receipt = fake_print
     pos.page.on_keyboard_event(SimpleNamespace(key="F12", ctrl=False, meta=False))
 
-    assert calls == [(invoice_id, True)]
+    # F12 prints the last sale silently, without the paper-profile dialog.
+    assert calls == [(invoice_id, False)]
 
 
 def test_f12_shortcut_can_be_disabled_from_settings(tmp_path):

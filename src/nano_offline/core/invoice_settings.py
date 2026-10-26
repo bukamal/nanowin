@@ -37,6 +37,7 @@ SHOW_BARCODE_KEY = "invoice_print_show_barcode"
 SHOW_EXCHANGE_RATE_KEY = "invoice_print_show_exchange_rate"
 SHOW_PROGRESS_KEY = "invoice_print_show_progress"
 SHOW_REMAINING_KEY = "invoice_print_show_remaining"
+SHOW_UNIT_EQUIV_KEY = "invoice_print_show_unit_equiv"
 SHOW_VERIFY_QR_KEY = "invoice_show_verify_qr"
 
 # --- Stock policy ---------------------------------------------------------#
@@ -53,6 +54,7 @@ DEFAULT_SHOW_BARCODE = False
 DEFAULT_SHOW_EXCHANGE_RATE = False
 DEFAULT_SHOW_PROGRESS = False
 DEFAULT_SHOW_REMAINING = False
+DEFAULT_SHOW_UNIT_EQUIV = False
 DEFAULT_SHOW_VERIFY_QR = False
 DEFAULT_ALLOW_NEGATIVE_STOCK = False
 DEFAULT_SHOW_STOCK_BADGE = True
@@ -165,6 +167,16 @@ def show_remaining(settings) -> bool:
     return _flag(settings, SHOW_REMAINING_KEY, DEFAULT_SHOW_REMAINING)
 
 
+def show_unit_equiv(settings) -> bool:
+    """Whether printed lines show the cross-unit equivalent.
+
+    e.g. a 10-metre line printing "≈ 0.5 كرتونة" underneath its quantity.
+    Off by default so a plain receipt stays uncluttered; opt in from the
+    admin "الفواتير" tab. Snapshotted per invoice like the other flags.
+    """
+    return _flag(settings, SHOW_UNIT_EQUIV_KEY, DEFAULT_SHOW_UNIT_EQUIV)
+
+
 def show_verify_qr(settings) -> bool:
     return _flag(settings, SHOW_VERIFY_QR_KEY, DEFAULT_SHOW_VERIFY_QR)
 
@@ -189,6 +201,7 @@ PRINT_SNAPSHOT_KEYS = (
     "show_exchange_rate",
     "show_progress",
     "show_remaining",
+    "show_unit_equiv",
     "show_verify_qr",
     "footer_text",
     "due_days",
@@ -204,6 +217,7 @@ def print_snapshot_from_settings(settings) -> dict:
         "show_exchange_rate": show_exchange_rate(settings),
         "show_progress": show_payment_progress(settings),
         "show_remaining": show_remaining(settings),
+        "show_unit_equiv": show_unit_equiv(settings),
         "show_verify_qr": show_verify_qr(settings),
         "footer_text": footer_text(settings),
         "due_days": default_due_days(settings),
@@ -256,7 +270,7 @@ def print_snapshot(inv: dict | None, settings) -> dict:
     for key in PRINT_SNAPSHOT_KEYS:
         if key in saved:
             merged[key] = saved[key]
-    for key in ("show_number", "show_barcode", "show_exchange_rate", "show_progress", "show_remaining", "show_verify_qr"):
+    for key in ("show_number", "show_barcode", "show_exchange_rate", "show_progress", "show_remaining", "show_unit_equiv", "show_verify_qr"):
         merged[key] = _snapshot_bool(merged.get(key), current[key])
     try:
         merged["due_days"] = max(0, int(merged.get("due_days")))
@@ -271,20 +285,23 @@ __all__ = [
     "NUMBER_PREFIX_KEY", "NUMBER_PADDING_KEY", "DEFAULT_DUE_DAYS_KEY",
     "OVERDUE_DAYS_KEY", "FOOTER_TEXT_KEY",
     "SHOW_NUMBER_KEY", "SHOW_BARCODE_KEY", "SHOW_EXCHANGE_RATE_KEY",
-    "SHOW_PROGRESS_KEY", "SHOW_REMAINING_KEY", "SHOW_VERIFY_QR_KEY",
+    "SHOW_PROGRESS_KEY", "SHOW_REMAINING_KEY", "SHOW_UNIT_EQUIV_KEY",
+    "SHOW_VERIFY_QR_KEY",
     "ALLOW_NEGATIVE_STOCK_KEY", "SHOW_STOCK_BADGE_KEY",
     "DEFAULT_NUMBER_PREFIX", "DEFAULT_NUMBER_PADDING", "DEFAULT_DUE_DAYS",
     "DEFAULT_OVERDUE_DAYS", "DEFAULT_FOOTER_TEXT",
     "DEFAULT_SHOW_NUMBER", "DEFAULT_SHOW_BARCODE",
     "DEFAULT_SHOW_EXCHANGE_RATE", "DEFAULT_SHOW_PROGRESS",
-    "DEFAULT_SHOW_REMAINING", "DEFAULT_SHOW_VERIFY_QR",
+    "DEFAULT_SHOW_REMAINING", "DEFAULT_SHOW_UNIT_EQUIV",
+    "DEFAULT_SHOW_VERIFY_QR",
     "DEFAULT_ALLOW_NEGATIVE_STOCK", "DEFAULT_SHOW_STOCK_BADGE",
     "VALID_NUMBER_PADDING",
     "number_prefix", "number_padding", "format_invoice_number",
     "default_due_days", "overdue_days", "due_date_for", "due_date_from_days",
     "footer_text", "show_invoice_number", "show_invoice_barcode",
     "show_exchange_rate", "show_payment_progress", "show_remaining",
-    "show_verify_qr", "allow_negative_stock", "show_stock_badge",
+    "show_unit_equiv", "show_verify_qr", "allow_negative_stock",
+    "show_stock_badge",
     "PRINT_SNAPSHOT_KEYS", "print_snapshot_from_settings",
     "encode_print_snapshot", "decode_print_snapshot", "print_snapshot",
 ]

@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from nano_offline.app_context import AppContext
 from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
 from nano_offline.core.database import Database
@@ -217,3 +218,36 @@ def test_schema_migration_adds_and_backfills_print_options(tmp_path):
 
     assert row["print_options"]
     assert version == "17"
+
+
+def test_printed_unit_equivalence_is_opt_in(tmp_path):
+    ctx = AppContext.create(str(tmp_path / "equiv.db"))
+    piece = ctx.definitions.create_unit("قطعة", "ق")
+    carton = ctx.definitions.create_unit("كرتونة", "ك")
+    item_id = ctx.items.create(
+        name="مادة",
+        purchase_price=1,
+        selling_price=2,
+        quantity=100,
+        base_unit_id=piece,
+        item_units=[
+            {"unit_id": carton, "conversion_factor": 12, "selling_price": 20, "purchase_price": 12}
+        ],
+    )
+
+    def render(enable: bool) -> str:
+        # Off by default -> the snapshot leaves show_unit_equiv False.
+        ctx.settings.set(invoice_settings.SHOW_UNIT_EQUIV_KEY, "1" if enable else "")
+        invoice_id = ctx.invoices.create_invoice(
+            invoice_type="sale",
+            lines=[
+                InvoiceLineInput(
+                    description="مادة", item_id=item_id, quantity=6, unit_price=2, unit_id=piece
+                )
+            ],
+            paid_amount=12,
+        )
+        return ctx.documents.invoice_html(invoice_id).split("<body>", 1)[1]
+
+    assert 'class="equiv"' not in render(enable=False)
+    assert 'class="equiv"' in render(enable=True)

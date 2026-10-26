@@ -1106,6 +1106,10 @@ class AdminCenter:
             label="إظهار المبلغ المتبقي في الطباعة",
             value=invoice_settings.show_remaining(iset),
         )
+        invoice_show_unit_equiv_switch = ft.Switch(
+            label="إظهار معادل الوحدة في الطباعة (مثال: القطعة ≈ كذا كرتونة)",
+            value=invoice_settings.show_unit_equiv(iset),
+        )
         invoice_verify_qr_switch = ft.Switch(
             label="إظهار رمز التحقق (QR) من صحة الفاتورة عند الطباعة",
             value=invoice_settings.show_verify_qr(iset),
@@ -1142,6 +1146,7 @@ class AdminCenter:
                     invoice_settings.SHOW_EXCHANGE_RATE_KEY: "1" if invoice_show_exchange_rate_switch.value else "0",
                     invoice_settings.SHOW_PROGRESS_KEY: "1" if invoice_show_progress_switch.value else "0",
                     invoice_settings.SHOW_REMAINING_KEY: "1" if invoice_show_remaining_switch.value else "0",
+                    invoice_settings.SHOW_UNIT_EQUIV_KEY: "1" if invoice_show_unit_equiv_switch.value else "0",
                     invoice_settings.SHOW_VERIFY_QR_KEY: "1" if invoice_verify_qr_switch.value else "0",
                     invoice_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if invoice_negative_stock_switch.value else "0",
                     invoice_settings.SHOW_STOCK_BADGE_KEY: "1" if invoice_show_stock_badge_switch.value else "0",
@@ -2221,8 +2226,9 @@ class AdminCenter:
                     invoice_show_exchange_rate_switch,
                     invoice_show_progress_switch,
                     invoice_show_remaining_switch,
+                    invoice_show_unit_equiv_switch,
                     invoice_verify_qr_switch,
-                    ft.Text("سعر الصرف ومعادل الدولار وشريط السداد والمبلغ المتبقي وQR مخفية افتراضيًا.", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Text("سعر الصرف ومعادل الدولار وشريط السداد والمبلغ المتبقي ومعادل الوحدة وQR مخفية افتراضيًا.", size=11, color=Colors.TEXT_SECONDARY),
                     invoice_footer_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("سياسة المخزون", size=12, weight=ft.FontWeight.W_600),

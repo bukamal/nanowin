@@ -595,7 +595,7 @@ class POSCenter:
         def _receive_settings():
             """Settings view whose display currency matches the cash-entry mode.
 
-            The numpad always types in *some* currency; by default that is
+            The received amount is entered in *some* currency; by default that is
             the app's display currency. ``_receive_currency`` lets the
             cashier flip to the other supported currency for this sale
             without touching admin settings.
@@ -603,8 +603,8 @@ class POSCenter:
             return self._receive_settings_obj()
 
         def received_amount() -> float:
-            # The cashier types the cash handed over in the currency shown
-            # on the numpad (display currency by default); convert it to the
+            # The cashier enters the cash handed over in the currency shown
+            # in the payment sheet (display currency by default); convert it to the
             # stored USD unit so it can be compared against total_amount()
             # (also USD).
             try:
@@ -731,7 +731,7 @@ class POSCenter:
                     for idx, h in enumerate(self.held)
                 ]
 
-        # ---- numpad for amount received ---------------------------------
+        # ---- amount received display -------------------------------------
         def _sync_received_display():
             received_display.value = (
                 self._money_receive(received_amount())
@@ -740,24 +740,9 @@ class POSCenter:
             )
             _apply_change_text()
 
-        def numpad_press(key: str):
-            if key == "C":
-                self.received_digits = ""
-            elif key == "⌫":
-                self.received_digits = self.received_digits[:-1]
-            elif key == ".":
-                if "." not in self.received_digits:
-                    self.received_digits = (self.received_digits or "0") + "."
-            else:
-                if len(self.received_digits.replace(".", "")) >= 9:
-                    return
-                self.received_digits += key
-            _sync_received_display()
-            self.page.update()
-
         # ---- quick cash buttons ------------------------------------------
-        # Common round amounts a cashier can tap instead of typing on the
-        # numpad for every sale -- the exact total plus the next 2-3 round
+        # Common round amounts a cashier can tap for the amount received --
+        # the exact total plus the next 2-3 round
         # figures above it, sized to whichever currency is displayed (SYP
         # notes vs USD notes have very different natural denominations).
         quick_cash_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, wrap=False)
@@ -796,24 +781,6 @@ class POSCenter:
                     if len(seen) == max_buttons:
                         break
             quick_cash_row.controls = buttons
-
-        def numpad_key(label: str):
-            return ft.Container(
-                ft.Text(label, size=18, weight=ft.FontWeight.BOLD),
-                width=52, height=42, alignment=ft.alignment.center,
-                bgcolor=Colors.BACKGROUND_ALT, border_radius=10, ink=True,
-                on_click=lambda _, k=label: numpad_press(k),
-            )
-
-        numpad = ft.Column(
-            [
-                ft.Row([numpad_key("1"), numpad_key("2"), numpad_key("3")], spacing=6),
-                ft.Row([numpad_key("4"), numpad_key("5"), numpad_key("6")], spacing=6),
-                ft.Row([numpad_key("7"), numpad_key("8"), numpad_key("9")], spacing=6),
-                ft.Row([numpad_key("C"), numpad_key("0"), numpad_key("⌫")], spacing=6),
-            ],
-            spacing=6,
-        )
 
         # ---- actions: undo / hold / new -----------------------------------
         def undo_last(_=None):
@@ -1021,7 +988,7 @@ class POSCenter:
                 self._checkout_in_progress = False
 
         # ---- payment sheet --------------------------------------------
-        # Everything needed to actually take money (customer, numpad, quick
+        # Everything needed to actually take money (customer, quick
         # cash, auto-print) used to sit permanently inside the cart column,
         # pushing "دفع" itself to the bottom of a long scroll once the cart
         # had more than a couple of lines. It now opens on demand from the
@@ -1031,7 +998,7 @@ class POSCenter:
         # fix as new_form_sheet() (components/form_sheet.py) -- without
         # is_scroll_controlled, Flutter shrink-wraps a modal BottomSheet to
         # a ~9/16-screen ceiling, and this sheet's content (customer field +
-        # totals + change text + quick-cash row + numpad + print switch +
+        # totals + change text + quick-cash row + print switch +
         # confirm button) is tall enough to blow past that on most phones.
         # The confirm button was landing below that ceiling with no scroll
         # to reach it -- effectively invisible/unusable in quick sale.
@@ -1196,7 +1163,6 @@ class POSCenter:
                 received_display,
                 change_text,
                 quick_cash_row,
-                numpad,
                 ft.Divider(height=1, color=Colors.BORDER),
                 ft.Text("العميل (اختياري)", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
                 ft.Text("اتركه فارغًا للبيع النقدي السريع", size=11, color=Colors.TEXT_FAINT),
@@ -1303,7 +1269,7 @@ class POSCenter:
         )
 
         # Cart pane keeps only what a cashier needs while still browsing --
-        # customer, received-amount numpad, quick cash and auto-print all
+        # customer, received-amount quick cash and auto-print all
         # moved into the payment sheet (see open_payment_sheet above), so
         # this column stays short even with several lines in the cart.
         hold_btn = ft.IconButton(icon=ft.Icons.PAUSE_CIRCLE_OUTLINED, tooltip="تعليق الفاتورة", on_click=hold_cart, icon_size=IconSize.HEADER)
@@ -2430,7 +2396,9 @@ class POSCenter:
             last.opacity = 0
 
         async def print_sale(_=None):
-            await self._print_receipt(invoice_id, interactive=True)
+            # Reprint the just-completed sale silently, matching the F12 /
+            # auto-print behaviour -- no paper dialog in between.
+            await self._print_receipt(invoice_id, interactive=False)
 
         def start_new_sale(_=None):
             clear_cart_fn(undoable=False)
@@ -2673,7 +2641,7 @@ class POSCenter:
         if self.native_files is None:
             self.notify("الطباعة غير متاحة في هذا البناء", kind="warning")
             return
-        self.page.run_task(self._print_receipt, int(invoice_id), interactive=True)
+        self.page.run_task(self._print_receipt, int(invoice_id), interactive=False)
 
     async def _print_receipt(self, invoice_id: int, *, interactive: bool = True) -> None:
         if self.native_files is None:
