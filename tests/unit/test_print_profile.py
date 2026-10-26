@@ -21,7 +21,7 @@ def test_thermal_profile_overrides_document_page_size_and_width():
 
     result = apply_print_profile(html, "roll", 58)
 
-    assert "@page { size: 58mm auto; margin: 0; }" in result
+    assert "@page { size: 58mm 297mm; margin: 0; }" in result
     assert "width: 58mm !important" in result
     assert result.index('id="nano-print-profile"') < result.lower().index("</head>")
     assert ".totals-wrap { width: 100% !important" in result
@@ -29,6 +29,9 @@ def test_thermal_profile_overrides_document_page_size_and_width():
     # browser treat the rest of the document as CSS and print a blank page
     # (barcode labels worked only because they skip this wrapper).
     assert result.count("<style") == result.count("</style>")
+    # The content-height autosize script must also be closed and present.
+    assert result.count("<script") == result.count("</script>")
+    assert "nano-page-size" in result
 
 
 def test_a4_profile_overrides_preexisting_thermal_template():
@@ -45,7 +48,7 @@ def test_profile_can_be_applied_to_html_without_head():
     result = apply_print_profile("<main>document</main>", "roll", 80)
 
     assert '<head>\n<style id="nano-print-profile">' in result
-    assert "80mm auto" in result
+    assert "80mm 297mm" in result
 
 
 def test_saved_print_profile_defaults_to_a4_sheet():
@@ -133,7 +136,7 @@ def test_preview_document_uses_browser_fallback_without_sharing():
     assert native.share_calls == []
     assert native.pdf_calls[0][1] == "nano-preview-invoice-preview.pdf"
     assert native.pdf_calls[0][2:] == ("roll", 80)
-    assert "80mm auto" in native.pdf_calls[0][0]
+    assert "80mm 297mm" in native.pdf_calls[0][0]
 
 
 def test_preview_document_shares_pdf_on_native_platforms():

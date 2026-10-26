@@ -42,7 +42,7 @@ def test_invoice_print_defaults_to_clean_layout(tmp_path):
     assert "<th>المادة</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th>" in body
     assert 'class="totals-table"' in body
     assert "الإجمالي" in body
-    assert "المتبقي" in body
+    assert "المتبقي" not in body
 
 
 def test_invoice_print_optional_blocks_follow_admin_settings(tmp_path):
@@ -53,6 +53,7 @@ def test_invoice_print_optional_blocks_follow_admin_settings(tmp_path):
             invoice_settings.SHOW_BARCODE_KEY: "1",
             invoice_settings.SHOW_EXCHANGE_RATE_KEY: "1",
             invoice_settings.SHOW_PROGRESS_KEY: "1",
+            invoice_settings.SHOW_REMAINING_KEY: "1",
             invoice_settings.SHOW_VERIFY_QR_KEY: "1",
         },
     )
@@ -61,6 +62,7 @@ def test_invoice_print_optional_blocks_follow_admin_settings(tmp_path):
     assert '<span class="num-barcode">' in body
     assert '<div class="rate-note">' in body
     assert '<div class="progress-wrap">' in body
+    assert "المتبقي" in body
     assert '<div class="verify-box">' in body
 
 

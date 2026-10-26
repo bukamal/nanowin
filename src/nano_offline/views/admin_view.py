@@ -1102,6 +1102,10 @@ class AdminCenter:
             label="إظهار شريط نسبة السداد",
             value=invoice_settings.show_payment_progress(iset),
         )
+        invoice_show_remaining_switch = ft.Switch(
+            label="إظهار المبلغ المتبقي في الطباعة",
+            value=invoice_settings.show_remaining(iset),
+        )
         invoice_verify_qr_switch = ft.Switch(
             label="إظهار رمز التحقق (QR) من صحة الفاتورة عند الطباعة",
             value=invoice_settings.show_verify_qr(iset),
@@ -1137,6 +1141,7 @@ class AdminCenter:
                     invoice_settings.SHOW_BARCODE_KEY: "1" if invoice_show_barcode_switch.value else "0",
                     invoice_settings.SHOW_EXCHANGE_RATE_KEY: "1" if invoice_show_exchange_rate_switch.value else "0",
                     invoice_settings.SHOW_PROGRESS_KEY: "1" if invoice_show_progress_switch.value else "0",
+                    invoice_settings.SHOW_REMAINING_KEY: "1" if invoice_show_remaining_switch.value else "0",
                     invoice_settings.SHOW_VERIFY_QR_KEY: "1" if invoice_verify_qr_switch.value else "0",
                     invoice_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if invoice_negative_stock_switch.value else "0",
                     invoice_settings.SHOW_STOCK_BADGE_KEY: "1" if invoice_show_stock_badge_switch.value else "0",
@@ -2215,8 +2220,9 @@ class AdminCenter:
                     ft.Text("محتوى الطباعة", size=12, weight=ft.FontWeight.W_600),
                     invoice_show_exchange_rate_switch,
                     invoice_show_progress_switch,
+                    invoice_show_remaining_switch,
                     invoice_verify_qr_switch,
-                    ft.Text("سعر الصرف ومعادل الدولار وشريط السداد وQR مخفية افتراضيًا.", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Text("سعر الصرف ومعادل الدولار وشريط السداد والمبلغ المتبقي وQR مخفية افتراضيًا.", size=11, color=Colors.TEXT_SECONDARY),
                     invoice_footer_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("سياسة المخزون", size=12, weight=ft.FontWeight.W_600),

@@ -513,11 +513,12 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
                 f'<tr><td>المدفوع</td>'
                 f'<td class="money">{self._money(paid, inv)}{_fx_line(paid)}</td></tr>'
             )
-        remaining_class = "remaining-row" if remaining > 1e-9 else "settled-row"
-        totals_rows.append(
-            f'<tr class="{remaining_class}"><td>المتبقي</td>'
-            f'<td class="money">{self._money(remaining, inv)}{_fx_line(remaining)}</td></tr>'
-        )
+        if print_options.get("show_remaining"):
+            remaining_class = "remaining-row" if remaining > 1e-9 else "settled-row"
+            totals_rows.append(
+                f'<tr class="{remaining_class}"><td>المتبقي</td>'
+                f'<td class="money">{self._money(remaining, inv)}{_fx_line(remaining)}</td></tr>'
+            )
         totals_html = (
             '<div class="totals-wrap"><table class="totals-table"><tbody>'
             + "".join(totals_rows)

@@ -330,39 +330,74 @@ def open_print_profile_dialog(
 def apply_print_profile(html: str, layout: str, roll_width_mm: int) -> str:
     """Override document page geometry for the selected paper profile."""
     if layout == "roll":
+        width_mm = int(roll_width_mm)
+        # Thermal roll: the page width must equal the paper width, or the
+        # printer only prints a blank sliver of the (default Letter-width)
+        # page. Two explicit lengths are valid CSS -- ``size: 58mm auto`` is
+        # not and Chromium silently drops it -- so we seed a safe fallback
+        # height and let ``fit()`` (run before print) replace it with the
+        # real content height, avoiding both a cut-off and a blank tail.
         style = f"""
 <style id="nano-print-profile">
-@page {{ size: {int(roll_width_mm)}mm auto; margin: 0; }}
-html, body {{ width: {int(roll_width_mm)}mm !important; min-width: 0 !important; max-width: {int(roll_width_mm)}mm !important; margin: 0 !important; padding: 0 !important; }}
-body {{ font-size: 9px !important; line-height: 1.4 !important; }}
-.sheet {{ width: 100% !important; max-width: 100% !important; }}
-.header {{ display: block !important; padding: 7px !important; margin-bottom: 8px !important; border-radius: 5px !important; }}
-.logo {{ max-width: 42px !important; height: 32px !important; }}
-.brand {{ font-size: 16px !important; }}
-.brand-meta {{ font-size: 8px !important; gap: 2px 6px !important; }}
-.doc-title {{ font-size: 13px !important; }}
-.doc-number {{ font-size: 8px !important; padding: 3px 6px !important; }}
-.meta-row {{ gap: 4px 8px !important; margin-bottom: 6px !important; font-size: 8px !important; }}
-.badge {{ padding: 2px 6px !important; font-size: 8px !important; }}
-.rate-note {{ margin-bottom: 6px !important; padding: 4px 6px !important; font-size: 8px !important; }}
+@page {{ size: {width_mm}mm 297mm; margin: 0; }}
+html, body {{ width: {width_mm}mm !important; min-width: 0 !important; max-width: {width_mm}mm !important; margin: 0 !important; padding: 0 !important; }}
+body {{ font-size: 10px !important; line-height: 1.45 !important; -webkit-print-color-adjust: exact !important; }}
+.sheet {{ width: 100% !important; max-width: 100% !important; padding: 4px !important; }}
+.header {{ display: block !important; padding: 8px !important; margin-bottom: 8px !important; border-radius: 5px !important; }}
+.logo {{ max-width: 44px !important; height: 34px !important; }}
+.brand {{ font-size: 17px !important; }}
+.brand-meta {{ font-size: 9px !important; gap: 2px 6px !important; }}
+.doc-title {{ font-size: 14px !important; }}
+.doc-number {{ font-size: 9px !important; padding: 3px 6px !important; }}
+.meta-row {{ gap: 4px 8px !important; margin-bottom: 6px !important; font-size: 9px !important; }}
+.badge {{ padding: 2px 6px !important; font-size: 9px !important; }}
+.rate-note {{ margin-bottom: 6px !important; padding: 4px 7px !important; font-size: 9px !important; }}
 .grid, .metrics {{ display: block !important; }}
 .metric {{ margin: 4px 0 !important; padding: 6px !important; }}
-table {{ width: 100% !important; table-layout: fixed !important; font-size: 8px !important; }}
-th, td {{ padding: 3px 2px !important; overflow-wrap: anywhere !important; }}
-.inv-table .item-cell {{ font-size: 8px !important; }}
-.inv-table .unit, .inv-table .equiv {{ font-size: 7px !important; }}
+table {{ width: 100% !important; table-layout: fixed !important; font-size: 9px !important; }}
+th, td {{ padding: 4px 3px !important; overflow-wrap: anywhere !important; }}
+.inv-table .item-cell {{ font-size: 9px !important; }}
+.inv-table .unit, .inv-table .equiv {{ font-size: 8px !important; }}
 .totals-wrap {{ width: 100% !important; margin: 0 !important; }}
 .totals-table {{ border: 0 !important; border-radius: 0 !important; }}
-.totals-table td {{ padding: 3px 2px !important; font-size: 8px !important; }}
-.totals-table .total-row td, .totals-table .remaining-row td, .totals-table .settled-row td {{ font-size: 9px !important; }}
-.note {{ margin-top: 6px !important; padding: 5px !important; border-radius: 5px !important; font-size: 8px !important; }}
-.footer {{ margin-top: 8px !important; padding-top: 4px !important; font-size: 7px !important; }}
+.totals-table td {{ padding: 4px 3px !important; font-size: 9px !important; }}
+.totals-table .total-row td, .totals-table .remaining-row td, .totals-table .settled-row td {{ font-size: 10px !important; }}
+.note {{ margin-top: 6px !important; padding: 5px 6px !important; border-radius: 5px !important; font-size: 9px !important; }}
+.footer {{ margin-top: 8px !important; padding-top: 5px !important; font-size: 8px !important; }}
 .sign-row {{ margin-top: 8px !important; }}
-.verify-box svg {{ width: 42px !important; height: 42px !important; }}
-.verify-token b {{ font-size: 9px !important; }}
+.verify-box svg {{ width: 46px !important; height: 46px !important; }}
+.verify-token b {{ font-size: 10px !important; }}
 .progress-wrap {{ margin-bottom: 6px !important; }}
-.watermark {{ font-size: 32px !important; }}
+.watermark {{ font-size: 34px !important; }}
 </style>
+<script id="nano-print-size">
+(function () {{
+  var MM = {width_mm};
+  function fit() {{
+    try {{
+      var sheet = document.querySelector('.sheet') || document.body;
+      var px = Math.max(
+        sheet ? sheet.scrollHeight : 0,
+        document.body ? document.body.scrollHeight : 0,
+        document.documentElement ? document.documentElement.scrollHeight : 0
+      );
+      var mm = Math.ceil((px * 25.4) / 96) + 4;
+      if (!isFinite(mm) || mm < 40) mm = 40;
+      if (mm > 2000) mm = 2000;
+      var node = document.getElementById('nano-page-size');
+      if (!node) {{
+        node = document.createElement('style');
+        node.id = 'nano-page-size';
+        document.head.appendChild(node);
+      }}
+      node.textContent = '@page {{ size: ' + MM + 'mm ' + mm + 'mm; margin: 0; }}';
+    }} catch (e) {{}}
+  }}
+  if (document.readyState === 'complete') {{ fit(); }}
+  else {{ window.addEventListener('load', fit); }}
+  setTimeout(fit, 400);
+}})();
+</script>
 """
     else:
         style = """

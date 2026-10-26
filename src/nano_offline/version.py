@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.6"
-BUILD_NUMBER = 51  # FIX_0.17.6: filesystem-safe Windows shortcut names (0x8007007B)
+APP_VERSION = "0.17.7"
+BUILD_NUMBER = 52  # FIX_0.17.7: optional printed remaining line + thermal roll page sizing
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

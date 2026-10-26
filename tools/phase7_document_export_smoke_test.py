@@ -4,11 +4,16 @@ from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.core import invoice_settings
 from nano_offline.core.fsutil import tempdir
 
 
 with tempdir(prefix="qeid-phase7-docs-") as td:
     ctx = AppContext.create(Path(td) / "nano.db")
+    # The outstanding (remaining) line is opt-in from the admin invoice tab,
+    # so enable it here to keep verifying its currency conversion on the
+    # printed document.
+    ctx.settings.set(invoice_settings.SHOW_REMAINING_KEY, "1")
     customer_id = ctx.customers.create("شركة الاختبار", "0999999999", "دمشق")
     service_id = ctx.items.create(name="خدمة تدقيق", item_type="خدمة", purchase_price=25, selling_price=75)
     invoice_id = ctx.invoices.create_invoice(
