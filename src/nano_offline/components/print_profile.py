@@ -19,7 +19,7 @@ PreviewHtml = Callable[[str, int], str | Awaitable[str]]
 PRINT_LAYOUT_KEY = "print_layout"
 PRINT_ROLL_WIDTH_KEY = "print_roll_width"
 DEFAULT_PRINT_LAYOUT = "sheet"
-DEFAULT_PRINT_ROLL_WIDTH = "58"
+DEFAULT_PRINT_ROLL_WIDTH = "80"
 
 # Per-surface overrides. The original global keys stay as the fallback, so
 # existing installs keep their last confirmed choice until they print from a
@@ -333,7 +333,7 @@ def apply_print_profile(html: str, layout: str, roll_width_mm: int) -> str:
         width_mm = int(roll_width_mm)
         # Thermal roll: the page width must equal the paper width, or the
         # printer only prints a blank sliver of the (default Letter-width)
-        # page. Two explicit lengths are valid CSS -- ``size: 58mm auto`` is
+        # page. Two explicit lengths are valid CSS -- ``size: 80mm auto`` is
         # not and Chromium silently drops it -- so we seed a safe fallback
         # height and let ``fit()`` (run before print) replace it with the
         # real content height, avoiding both a cut-off and a blank tail.

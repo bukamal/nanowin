@@ -29,8 +29,8 @@ LABEL_SHOW_TEXT_KEY = "barcode_label_show_text"
 LABEL_SIZE_KEY = "barcode_label_size"
 # Printer profile: "sheet" is the original A4 multi-column grid meant for
 # sticker sheets on a regular printer; "roll" is a single-column continuous
-# strip sized to a thermal receipt/label roll's fixed width (58mm/80mm are
-# the two near-universal roll widths on cheap thermal printers). Both go
+# strip sized to a thermal receipt/label roll's fixed width (80mm is the
+# common thermal roll width on cheap printers). Both go
 # through the exact same native print/PDF pipeline (services.document_service
 # just renders different HTML/CSS for the page) -- no new hardware/driver
 # code, so this works with whatever printer the OS already knows how to
@@ -55,7 +55,7 @@ DEFAULT_LABEL_PRICE_QR = False
 DEFAULT_LABEL_SHOW_TEXT = True
 DEFAULT_LABEL_SIZE = "medium"
 DEFAULT_LABEL_LAYOUT = "sheet"
-DEFAULT_LABEL_ROLL_WIDTH = "58"
+DEFAULT_LABEL_ROLL_WIDTH = "80"
 DEFAULT_SCAN_FEEDBACK = "detailed"
 DEFAULT_STOCKTAKE_COOLDOWN_MS = 1200
 DEFAULT_STOCKTAKE_SOUND = True
@@ -74,8 +74,8 @@ LABEL_LAYOUT_LABELS = {"sheet": "ورق A4", "roll": "لفة حرارية"}
 # (label width in mm) -- the printable strip width; height grows with
 # content since a thermal roll feeds continuously rather than being cut to
 # a fixed sheet size ahead of time.
-LABEL_ROLL_WIDTH_MM = {"58": 58, "80": 80}
-LABEL_ROLL_WIDTH_LABELS = {"58": "٥٨ مم", "80": "٨٠ مم"}
+LABEL_ROLL_WIDTH_MM = {"80": 80}
+LABEL_ROLL_WIDTH_LABELS = {"80": "٨٠ مم"}
 
 SCAN_FEEDBACK_LABELS = {"brief": "مختصرة (نغمة نجاح فقط)", "detailed": "مفصّلة (اسم المادة والكمية)"}
 
