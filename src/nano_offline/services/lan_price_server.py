@@ -170,7 +170,10 @@ body::before {
   background: linear-gradient(0deg, rgba(6,10,20,.92), transparent);
 }
 .pad.show { display: block; }
-.manual { text-align: center; font-size: clamp(16px,3vmin,22px); font-weight: 900; letter-spacing: 3px; min-height: 1.4em; margin-bottom: 8px; color: #fff; direction: ltr; }
+.manual { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 1.7em; margin-bottom: 8px; color: #fff; }
+.manual #manualView { font-size: clamp(16px,3vmin,22px); font-weight: 900; letter-spacing: 3px; direction: ltr; min-width: 2ch; }
+.manual #manualView.empty { opacity: .45; font-weight: 700; letter-spacing: 1px; }
+.mini { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); color: #fff; border-radius: 999px; padding: 4px 12px; font-size: clamp(11px,1.8vmin,13px); font-weight: 700; cursor: pointer; }
 .pad .grid { max-width: 460px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(6px,1.4vmin,10px); }
 .key {
   min-height: clamp(38px,7vmin,58px); background: rgba(255,255,255,.10); color: #fff; border: 1px solid rgba(255,255,255,.18);
@@ -238,7 +241,7 @@ body::before {
 </main>
 
 <div class="pad" id="pad">
-  <div class="manual" id="manualView"></div>
+  <div class="manual"><span id="manualView" class="empty">—</span><button type="button" class="mini" id="padClear">مسح</button></div>
   <div class="grid" id="padGrid"></div>
 </div>
 
@@ -264,6 +267,8 @@ body::before {
   var pName = document.getElementById('pName'), pCat = document.getElementById('pCat');
   var pUnit = document.getElementById('pUnit'), pBadge = document.getElementById('pBadge');
   var idleTimer = null, buffer = '';
+  var IDLE_MS = $idle_ms;
+  var IDLE_MS_MANUAL = Math.max(30000, IDLE_MS * 3);
 
   function t(k) { return TEXT[LANG][k] || ''; }
   function isDigits(s) { if (!s) { return false; } for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); if (c < 48 || c > 57) { return false; } } return true; }
@@ -292,12 +297,23 @@ body::before {
     document.getElementById('missTitle').textContent = t('missT');
     document.getElementById('missText').textContent = t('missP');
     document.getElementById('langBtn').textContent = (LANG === 'ar') ? 'EN' : 'ع';
+    document.getElementById('padClear').textContent = t('clear');
     revealBuffer();
   }
 
   function hideAll() { idle.style.display = 'none'; pricePlate.classList.remove('show'); missPlate.classList.remove('show'); resultsEl.classList.remove('show'); }
-  function reset() { hideAll(); idle.style.display = ''; buffer = ''; revealBuffer(); try { input.focus(); } catch (e) {} scheduleReset(); }
-  function scheduleReset() { if (idleTimer) { clearTimeout(idleTimer); } idleTimer = setTimeout(reset, $idle_ms); }
+  function scheduleReset() {
+    if (idleTimer) { clearTimeout(idleTimer); }
+    var composing = pad.classList.contains('show') && buffer.length > 0;
+    idleTimer = setTimeout(reset, composing ? IDLE_MS_MANUAL : IDLE_MS);
+  }
+  function reset() {
+    hideAll(); idle.style.display = '';
+    buffer = ''; revealBuffer();
+    pad.classList.remove('show');
+    try { input.focus(); } catch (e) {}
+    scheduleReset();
+  }
 
   function unitLabel(data) {
     var u = data.unit || '';
@@ -362,6 +378,7 @@ body::before {
   }
 
   input.addEventListener('keydown', function (e) {
+    scheduleReset();
     if (e.key === 'Enter' || e.keyCode === 13) { var v = input.value; input.value = ''; dispatch(v); e.preventDefault(); }
   });
   document.addEventListener('click', function () { try { input.focus(); } catch (e) {} });
@@ -369,18 +386,23 @@ body::before {
 
   // on-screen numeric keypad (kiosks without a scanner) -- in normal flow, so
   // it shrinks the main area instead of covering it, on any screen size.
-  function press(d) { if (buffer.length < 24) { buffer += d; revealBuffer(); } }
-  function revealBuffer() { manualView.textContent = buffer; }
-  var keys = ['1','2','3','4','5','6','7','8','9','C','0','OK'];
+  function press(d) { if (buffer.length < 24) { buffer += d; revealBuffer(); scheduleReset(); } }
+  function backspace() { buffer = buffer.slice(0, -1); revealBuffer(); scheduleReset(); }
+  function clearBuffer() { buffer = ''; revealBuffer(); scheduleReset(); }
+  function revealBuffer() {
+    if (buffer) { manualView.textContent = buffer; manualView.classList.remove('empty'); }
+    else { manualView.textContent = '—'; manualView.classList.add('empty'); }
+  }
+  var keys = ['1','2','3','4','5','6','7','8','9','⌫','0','OK'];
   for (var k = 0; k < keys.length; k++) {
     (function (label) {
       var el = document.createElement('div');
       el.className = 'key' + ((label === 'OK') ? ' acc' : '');
-      el.textContent = (label === 'OK') ? t('enter') : ((label === 'C') ? t('clear') : label);
+      el.textContent = (label === 'OK') ? t('enter') : label;
       el.setAttribute('data-key', label);
       el.onclick = function () {
-        if (label === 'C') { buffer = ''; revealBuffer(); }
-        else if (label === 'OK') { var v = buffer; buffer = ''; revealBuffer(); dispatch(v); }
+        if (label === 'OK') { var v = buffer; buffer = ''; revealBuffer(); dispatch(v); }
+        else if (label === '⌫') { backspace(); }
         else { press(label); }
       };
       document.getElementById('padGrid').appendChild(el);
@@ -389,14 +411,14 @@ body::before {
   function relabelKeys() {
     var nodes = document.querySelectorAll('#padGrid .key');
     for (var i = 0; i < nodes.length; i++) {
-      var dk = nodes[i].getAttribute('data-key');
-      if (dk === 'OK') { nodes[i].textContent = t('enter'); }
-      else if (dk === 'C') { nodes[i].textContent = t('clear'); }
+      if (nodes[i].getAttribute('data-key') === 'OK') { nodes[i].textContent = t('enter'); }
     }
   }
+  document.getElementById('padClear').onclick = clearBuffer;
   document.getElementById('manualBtn').onclick = function () {
     pad.classList.toggle('show');
-    if (pad.classList.contains('show')) { revealBuffer(); }
+    revealBuffer();
+    scheduleReset();
     try { input.focus(); } catch (e) {}
   };
   document.getElementById('langBtn').onclick = function () { LANG = (LANG === 'ar') ? 'en' : 'ar'; applyLang(); relabelKeys(); };
