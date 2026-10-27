@@ -12,11 +12,13 @@ reads existing rows through the normal repositories (SQLite is already WAL, so
 concurrent reads never block the cashier). See ``core.lan_settings`` for the
 admin-configurable keys.
 
-Phase 1 (MVP) endpoints::
+Endpoints::
 
-    GET /                -> kiosk web page (RTL, big fonts)
-    GET /api/health      -> {"ok": true, ...}
-    GET /api/price?barcode=...  -> {"found": bool, "name", "price_text", "unit"}
+    GET /                       -> kiosk web page (responsive, RTL, big fonts)
+    GET /api/health             -> {"ok": true, ...}
+    GET /api/price?barcode=...  -> {"found": bool, "name", "price_number",
+                                    "price_symbol", "unit", "weighted", ...}
+    GET /api/search?q=...       -> {"results": [...]}
 """
 
 import json
@@ -62,96 +64,135 @@ def _darken(value, factor: float = 0.72) -> str:
 
 # The kiosk page. Uses string.Template ($name) instead of an f-string so the
 # CSS/JS braces stay untouched. No other '$' must appear in the markup.
+# Layout is a single flex column (header / main / keypad) sized to 100dvh:
+# nothing is position:fixed except the decorative floor, so it never overlaps
+# at any size or orientation.
 _KIOSK_TEMPLATE = string.Template(
     """<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>$title</title>
 <style>
 :root { --accent: $accent; --accent-deep: $accent_deep; --accent-rgb: $accent_rgb; --ink:#0f172a; --paper:rgba(255,255,255,.96); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin:0; height:100%; font-family:'Cairo','Segoe UI',Tahoma,Arial,sans-serif; }
+html { height: 100%; }
 body {
-  color:#eaf1ff; overflow:hidden;
+  margin: 0; color: #eaf1ff; overflow: hidden;
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; flex-direction: column;
+  font-family: 'Cairo','Segoe UI',Tahoma,Arial,sans-serif;
   background:
     radial-gradient(1100px 620px at 84% -12%, rgba(var(--accent-rgb),.55), transparent 60%),
     radial-gradient(900px 560px at -8% 116%, rgba(var(--accent-rgb),.35), transparent 62%),
     linear-gradient(155deg,#0a1020 0%,#111c33 52%,#0a1020 100%);
 }
 body::before {
-  content:''; position:fixed; left:-25%; right:-25%; bottom:-32%; height:72%; pointer-events:none;
+  content:''; position:fixed; left:-25%; right:-25%; bottom:-32%; height:70%; pointer-events:none; z-index:0;
   background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
   background-size:46px 46px; transform:perspective(620px) rotateX(62deg); transform-origin:bottom center;
-  -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.55),transparent 82%);
-  mask-image:linear-gradient(to top,rgba(0,0,0,.55),transparent 82%);
+  -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.5),transparent 82%);
+  mask-image:linear-gradient(to top,rgba(0,0,0,.5),transparent 82%);
 }
-.stage { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; padding:9vh 4vw 12vh; perspective:1500px; }
-.topbar { position:fixed; top:0; left:0; right:0; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:16px 24px; z-index:5; }
-.brand { display:flex; align-items:center; gap:14px; transform-style:preserve-3d; }
-.logo-badge { width:62px; height:62px; border-radius:18px; display:grid; place-items:center; overflow:hidden;
-  background:linear-gradient(150deg,#ffffff,#e9f0ff);
-  box-shadow:0 18px 30px -12px rgba(0,0,0,.65), inset 0 2px 0 rgba(255,255,255,.9), inset 0 -6px 14px rgba(var(--accent-rgb),.20);
-  transform:translateZ(40px) rotateX(6deg); }
-.logo-badge img { width:100%; height:100%; object-fit:contain; }
-.wordmark { transform:translateZ(22px); }
-.wordmark .ar { font-size:26px; font-weight:800; line-height:1; }
-.wordmark .en { font-size:12px; letter-spacing:3px; opacity:.78; text-transform:uppercase; margin-top:2px; }
-.tools { display:flex; align-items:center; gap:10px; }
-.pill { border:1px solid rgba(255,255,255,.20); background:rgba(255,255,255,.08); color:#fff; border-radius:999px;
-  padding:9px 15px; font-size:14px; font-weight:700; cursor:pointer; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
-.pill.on { background:var(--accent); border-color:transparent; box-shadow:0 12px 26px -12px var(--accent-deep); }
-.dot { width:9px; height:9px; border-radius:50%; background:#22c55e; box-shadow:0 0 12px #22c55e; }
-.idle { text-align:center; transform-style:preserve-3d; animation:float 5.5s ease-in-out infinite; }
-.idle .glyph { font-size:104px; transform:translateZ(60px); filter:drop-shadow(0 26px 32px rgba(0,0,0,.5)); }
-.idle h1 { font-size:30px; margin:16px 0 8px; }
-.idle p { font-size:18px; opacity:.75; margin:0; }
-@keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-12px); } }
-.plate { position:relative; width:min(840px,94vw); transform-style:preserve-3d; display:none; }
-.plate.show { display:block; animation:rise .40s cubic-bezier(.2,.8,.2,1); }
-@keyframes rise { from { opacity:0; transform:translateY(28px) rotateX(16deg) scale(.96); } to { opacity:1; transform:translateY(0) rotateX(0) scale(1); } }
-.plate .glow { position:absolute; inset:auto 8% -28px 8%; height:64px; background:radial-gradient(closest-side, rgba(0,0,0,.55), transparent); filter:blur(6px); transform:translateZ(-40px); }
-.card { position:relative; background:var(--paper); color:var(--ink); border-radius:30px; padding:40px 44px; text-align:center;
-  box-shadow:0 44px 74px -32px rgba(0,0,0,.72), 0 18px 30px -20px rgba(0,0,0,.5), inset 0 2px 0 #fff; transform:rotateX(5deg); }
-.card::after { content:''; position:absolute; inset:0; border-radius:30px; background:linear-gradient(180deg,rgba(var(--accent-rgb),.07),transparent 42%); pointer-events:none; }
-.cat { display:inline-block; font-size:14px; font-weight:700; color:var(--accent-deep); background:rgba(var(--accent-rgb),.13); padding:6px 15px; border-radius:999px; margin-bottom:12px; }
-.name { font-size:34px; font-weight:800; line-height:1.25; margin-bottom:16px; }
-.price { display:flex; align-items:baseline; justify-content:center; gap:14px; direction:rtl; }
-.price .num { font-size:clamp(52px,12vw,108px); font-weight:900; direction:ltr; unicode-bidi:isolate; font-variant-numeric:tabular-nums; letter-spacing:1px;
-  background:linear-gradient(180deg, var(--accent), var(--accent-deep)); -webkit-background-clip:text; background-clip:text; color:transparent;
-  text-shadow:0 2px 0 rgba(255,255,255,.55), 0 18px 26px rgba(var(--accent-rgb),.28); }
-.price .cur { font-size:26px; font-weight:800; color:#64748b; }
-.unit { margin-top:12px; font-size:20px; color:#475569; }
-.badge { display:inline-block; margin-top:16px; font-size:14px; font-weight:700; color:#b45309; background:#fff7ed; padding:6px 15px; border-radius:999px; }
-.miss { text-align:center; padding:40px; }
-.miss .x { font-size:72px; filter:drop-shadow(0 18px 24px rgba(239,68,68,.35)); }
-.miss h2 { font-size:28px; margin:12px 0 4px; }
-.miss p { opacity:.75; margin:0; }
-.results { width:min(840px,94vw); display:none; }
-.results.show { display:block; }
-.rrow { display:flex; justify-content:space-between; align-items:center; gap:16px; background:var(--paper); color:var(--ink);
-  border-radius:18px; padding:16px 22px; margin-bottom:12px; box-shadow:0 26px 42px -26px rgba(0,0,0,.6); }
-.rrow .rn { font-size:20px; font-weight:700; }
-.rrow .rp { font-size:24px; font-weight:900; color:var(--accent-deep); direction:rtl; white-space:nowrap; }
-.rrow .rp .cur { font-size:14px; color:#64748b; margin-inline-start:6px; }
-.pad { position:fixed; left:0; right:0; bottom:0; padding:14px 16px 18px; display:none; z-index:6; background:linear-gradient(0deg,rgba(6,10,20,.92),transparent); }
-.pad.show { display:block; }
-.pad .grid { max-width:430px; margin:0 auto; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-.key { background:rgba(255,255,255,.10); color:#fff; border:1px solid rgba(255,255,255,.18); border-radius:16px; padding:16px;
-  font-size:22px; font-weight:800; cursor:pointer; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
-.key:active { transform:translateY(2px); }
-.key.acc { background:var(--accent); border-color:transparent; }
-.manual { position:fixed; bottom:82px; left:0; right:0; text-align:center; font-size:22px; font-weight:900; letter-spacing:3px; min-height:28px; z-index:6; color:#fff; }
-.taskbar { position:fixed; bottom:20px; left:0; right:0; display:flex; justify-content:center; gap:10px; z-index:6; }
-.hidden-input { position:fixed; top:-120px; left:-120px; width:1px; height:1px; opacity:0; border:0; }
-@media (max-width:560px){ .name{font-size:26px} .wordmark .ar{font-size:20px} .logo-badge{width:50px;height:50px} .card{padding:28px 22px} }
+.topbar {
+  flex: 0 0 auto; position: relative; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: clamp(8px,2vw,16px);
+  padding: clamp(10px,2.2vh,20px) clamp(12px,3vw,28px);
+}
+.brand { display: flex; align-items: center; gap: clamp(8px,1.6vw,14px); min-width: 0; transform-style: preserve-3d; }
+.logo-badge {
+  width: clamp(42px,7vmin,62px); height: clamp(42px,7vmin,62px); flex: 0 0 auto; border-radius: clamp(12px,2vmin,18px);
+  display: grid; place-items: center; overflow: hidden;
+  background: linear-gradient(150deg,#ffffff,#e9f0ff);
+  box-shadow: 0 16px 28px -12px rgba(0,0,0,.65), inset 0 2px 0 rgba(255,255,255,.9), inset 0 -6px 14px rgba(var(--accent-rgb),.20);
+  transform: translateZ(30px) rotateX(6deg);
+}
+.logo-badge img { width: 100%; height: 100%; object-fit: contain; }
+.wordmark { min-width: 0; transform: translateZ(18px); }
+.wordmark .ar { font-size: clamp(18px,3.2vmin,26px); font-weight: 800; line-height: 1; white-space: nowrap; }
+.wordmark .en { font-size: clamp(9px,1.5vmin,12px); letter-spacing: 3px; opacity: .78; text-transform: uppercase; margin-top: 2px; white-space: nowrap; }
+.tools { display: flex; align-items: center; gap: clamp(6px,1.4vw,10px); flex: 0 0 auto; }
+.pill {
+  border: 1px solid rgba(255,255,255,.20); background: rgba(255,255,255,.08); color: #fff; border-radius: 999px;
+  padding: clamp(7px,1.5vmin,10px) clamp(11px,2.2vmin,15px); font-size: clamp(12px,1.9vmin,14px); font-weight: 700; cursor: pointer;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.pill.on { background: var(--accent); border-color: transparent; box-shadow: 0 12px 26px -12px var(--accent-deep); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 12px #22c55e; }
+.main {
+  flex: 1 1 auto; min-height: 0; position: relative; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  padding: clamp(8px,2.4vh,28px) clamp(12px,4vw,40px); overflow: auto;
+}
+.idle { text-align: center; transform-style: preserve-3d; animation: float 5.5s ease-in-out infinite; }
+.idle .glyph { font-size: clamp(48px,13vmin,104px); transform: translateZ(50px); filter: drop-shadow(0 24px 30px rgba(0,0,0,.5)); }
+.idle h1 { font-size: clamp(18px,3.4vmin,30px); margin: clamp(8px,2vh,16px) 0 8px; }
+.idle p { font-size: clamp(13px,2.2vmin,18px); opacity: .75; margin: 0; }
+@keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+.plate { width: min(840px,94%); transform-style: preserve-3d; display: none; }
+.plate.show { display: block; animation: rise .40s cubic-bezier(.2,.8,.2,1); }
+@keyframes rise { from { opacity:0; transform: translateY(24px) rotateX(14deg) scale(.96); } to { opacity:1; transform: translateY(0) rotateX(0) scale(1); } }
+.plate .glow { position: absolute; inset: auto 8% -24px 8%; height: 56px; background: radial-gradient(closest-side, rgba(0,0,0,.5), transparent); filter: blur(6px); transform: translateZ(-40px); }
+.card {
+  position: relative; background: var(--paper); color: var(--ink); text-align: center;
+  border-radius: clamp(18px,3vmin,30px); padding: clamp(20px,4vmin,44px) clamp(20px,5vmin,44px);
+  box-shadow: 0 44px 74px -32px rgba(0,0,0,.72), 0 18px 30px -20px rgba(0,0,0,.5), inset 0 2px 0 #fff;
+  transform: rotateX(4deg); max-width: 100%;
+}
+.card::after { content:''; position:absolute; inset:0; border-radius: inherit; background: linear-gradient(180deg,rgba(var(--accent-rgb),.07),transparent 42%); pointer-events:none; }
+.cat { display: inline-block; font-size: clamp(11px,1.8vmin,14px); font-weight: 700; color: var(--accent-deep); background: rgba(var(--accent-rgb),.13); padding: 5px 14px; border-radius: 999px; margin-bottom: clamp(6px,1.4vmin,12px); }
+.name { font-size: clamp(20px,4.4vmin,34px); font-weight: 800; line-height: 1.25; margin-bottom: clamp(8px,1.8vmin,16px); overflow-wrap: anywhere; }
+.price { display: flex; align-items: baseline; justify-content: center; gap: clamp(8px,2vmin,14px); direction: rtl; flex-wrap: wrap; }
+.price .num {
+  font-size: clamp(40px,12vmin,108px); font-weight: 900; direction: ltr; unicode-bidi: isolate; font-variant-numeric: tabular-nums; letter-spacing: 1px; line-height: 1;
+  background: linear-gradient(180deg, var(--accent), var(--accent-deep)); -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 2px 0 rgba(255,255,255,.55), 0 18px 26px rgba(var(--accent-rgb),.28);
+}
+.price .cur { font-size: clamp(16px,3vmin,26px); font-weight: 800; color: #64748b; }
+.unit { margin-top: clamp(6px,1.6vmin,12px); font-size: clamp(13px,2.2vmin,20px); color: #475569; }
+.badge { display: inline-block; margin-top: clamp(8px,1.8vmin,16px); font-size: clamp(11px,1.8vmin,14px); font-weight: 700; color: #b45309; background: #fff7ed; padding: 5px 14px; border-radius: 999px; }
+.miss { padding: clamp(20px,4vmin,40px); }
+.miss .x { font-size: clamp(40px,9vmin,72px); filter: drop-shadow(0 16px 22px rgba(239,68,68,.35)); }
+.miss h2 { font-size: clamp(18px,3.4vmin,28px); margin: 10px 0 4px; }
+.miss p { opacity: .75; margin: 0; font-size: clamp(12px,2vmin,16px); }
+.results { width: min(840px,94%); display: none; }
+.results.show { display: block; }
+.rrow { display: flex; justify-content: space-between; align-items: center; gap: clamp(8px,2vw,16px); background: var(--paper); color: var(--ink);
+  border-radius: clamp(12px,2vmin,18px); padding: clamp(10px,2vmin,16px) clamp(14px,3vmin,22px); margin-bottom: clamp(8px,1.6vmin,12px);
+  box-shadow: 0 26px 42px -26px rgba(0,0,0,.6); }
+.rrow .rn { font-size: clamp(14px,2.4vmin,20px); font-weight: 700; overflow-wrap: anywhere; }
+.rrow .rp { font-size: clamp(16px,2.8vmin,24px); font-weight: 900; color: var(--accent-deep); direction: rtl; white-space: nowrap; }
+.rrow .rp .cur { font-size: clamp(10px,1.7vmin,14px); color: #64748b; margin-inline-start: 6px; }
+.pad {
+  flex: 0 0 auto; display: none; position: relative; z-index: 2;
+  padding: clamp(8px,1.8vh,16px) clamp(12px,4vw,24px) calc(clamp(8px,1.8vh,16px) + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(0deg, rgba(6,10,20,.92), transparent);
+}
+.pad.show { display: block; }
+.manual { text-align: center; font-size: clamp(16px,3vmin,22px); font-weight: 900; letter-spacing: 3px; min-height: 1.4em; margin-bottom: 8px; color: #fff; direction: ltr; }
+.pad .grid { max-width: 460px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(6px,1.4vmin,10px); }
+.key {
+  min-height: clamp(38px,7vmin,58px); background: rgba(255,255,255,.10); color: #fff; border: 1px solid rgba(255,255,255,.18);
+  border-radius: clamp(10px,2vmin,16px); font-size: clamp(16px,3vmin,22px); font-weight: 800; cursor: pointer;
+  display: grid; place-items: center; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.key:active { transform: translateY(2px); }
+.key.acc { background: var(--accent); border-color: transparent; }
+.hidden-input { position: fixed; top: -120px; left: -120px; width: 1px; height: 1px; opacity: 0; border: 0; }
+@media (max-height: 520px) {
+  .idle .glyph { display: none; }
+  .logo-badge { width: clamp(36px,9vmin,48px); height: clamp(36px,9vmin,48px); }
+  .price .num { font-size: clamp(34px,15vmin,72px); }
+  .name { font-size: clamp(18px,4.4vmin,26px); }
+  .main { padding: clamp(6px,1.6vh,14px) clamp(10px,3vw,24px); }
+}
 </style>
 </head>
 <body>
 <input id="scan" class="hidden-input" autocomplete="off" inputmode="none">
 
-<div class="topbar">
+<header class="topbar">
   <div class="brand">
     <div class="logo-badge"><img id="logo" src="$logo" alt=""></div>
     <div class="wordmark">
@@ -164,41 +205,42 @@ body::before {
     <div class="pill" id="manualBtn">إدخال يدوي</div>
     <div class="pill" style="pointer-events:none"><span class="dot"></span></div>
   </div>
-</div>
+</header>
 
-<div class="stage">
-  <div class="idle" id="idle">
+<main class="main">
+  <section class="idle" id="idle">
     <div class="glyph">🛒</div>
     <h1 id="idleTitle">امسح باركود المنتج</h1>
     <p id="hint">مرّر الباركود أمام القارئ لمعرفة السعر</p>
-  </div>
+  </section>
 
-  <div class="plate" id="pricePlate">
+  <section class="plate" id="pricePlate">
     <div class="glow"></div>
     <div class="card">
-      <div class="cat" id="pCat"></div>
+      <div class="cat" id="pCat" style="display:none"></div>
       <div class="name" id="pName"></div>
       <div class="price"><span class="num" id="pNum">0</span><span class="cur" id="pCur"></span></div>
       <div class="unit" id="pUnit"></div>
       <div class="badge" id="pBadge" style="display:none"></div>
     </div>
-  </div>
+  </section>
 
-  <div class="plate" id="missPlate">
+  <section class="plate" id="missPlate">
     <div class="glow"></div>
     <div class="card miss">
       <div class="x">⚠️</div>
       <h2 id="missTitle">هذا المنتج غير مُدرَج في النظام</h2>
-      <p id="missText">جرّب مسحًا آخر أو استخدم البحث بالاسم</p>
+      <p id="missText">جرّب مسحًا آخر أو ابحث بالاسم</p>
     </div>
-  </div>
+  </section>
 
-  <div class="results" id="results"></div>
+  <section class="results" id="results"></section>
+</main>
+
+<div class="pad" id="pad">
+  <div class="manual" id="manualView"></div>
+  <div class="grid" id="padGrid"></div>
 </div>
-
-<div class="manual" id="manualView"></div>
-<div class="pad" id="pad"><div class="grid" id="padGrid"></div></div>
-<div class="taskbar"><div class="pill" id="enterBtn">استعلام</div><div class="pill" id="clearBtn">مسح</div></div>
 
 <script>
 (function () {
@@ -206,10 +248,10 @@ body::before {
   var TEXT = {
     ar: { hint:'مرّر الباركود أمام القارئ لمعرفة السعر', manual:'إدخال يدوي', enter:'استعلام', clear:'مسح',
           missT:'هذا المنتج غير مُدرَج في النظام', missP:'جرّب مسحًا آخر أو ابحث بالاسم', idleT:'امسح باركود المنتج',
-          weigh:'يُوزن', perUnit:'السعر لكل', price:'سعر', results:'نتائج البحث', notFound:'لا نتائج' },
+          weigh:'يُوزن', perUnit:'السعر لكل', price:'سعر' },
     en: { hint:'Pass the barcode in front of the reader to see the price', manual:'Keypad', enter:'Check', clear:'Clear',
           missT:'Item not found', missP:'Try another scan or search by name', idleT:'Scan a product barcode',
-          weigh:'Sold by weight', perUnit:'Price per', price:'Price', results:'Search results', notFound:'No results' }
+          weigh:'Sold by weight', perUnit:'Price per', price:'Price' }
   };
   var input = document.getElementById('scan');
   var idle = document.getElementById('idle');
@@ -247,8 +289,6 @@ body::before {
     document.getElementById('hint').textContent = t('hint');
     document.getElementById('idleTitle').textContent = t('idleT');
     document.getElementById('manualBtn').textContent = t('manual');
-    document.getElementById('enterBtn').textContent = t('enter');
-    document.getElementById('clearBtn').textContent = t('clear');
     document.getElementById('missTitle').textContent = t('missT');
     document.getElementById('missText').textContent = t('missP');
     document.getElementById('langBtn').textContent = (LANG === 'ar') ? 'EN' : 'ع';
@@ -327,7 +367,8 @@ body::before {
   document.addEventListener('click', function () { try { input.focus(); } catch (e) {} });
   window.addEventListener('load', function () { try { input.focus(); } catch (e) {} scheduleReset(); });
 
-  // on-screen numeric keypad (kiosks without a scanner)
+  // on-screen numeric keypad (kiosks without a scanner) -- in normal flow, so
+  // it shrinks the main area instead of covering it, on any screen size.
   function press(d) { if (buffer.length < 24) { buffer += d; revealBuffer(); } }
   function revealBuffer() { manualView.textContent = buffer; }
   var keys = ['1','2','3','4','5','6','7','8','9','C','0','OK'];
@@ -335,7 +376,8 @@ body::before {
     (function (label) {
       var el = document.createElement('div');
       el.className = 'key' + ((label === 'OK') ? ' acc' : '');
-      el.textContent = label;
+      el.textContent = (label === 'OK') ? t('enter') : ((label === 'C') ? t('clear') : label);
+      el.setAttribute('data-key', label);
       el.onclick = function () {
         if (label === 'C') { buffer = ''; revealBuffer(); }
         else if (label === 'OK') { var v = buffer; buffer = ''; revealBuffer(); dispatch(v); }
@@ -344,10 +386,20 @@ body::before {
       document.getElementById('padGrid').appendChild(el);
     })(keys[k]);
   }
-  document.getElementById('manualBtn').onclick = function () { pad.classList.toggle('show'); try { input.focus(); } catch (e) {} };
-  document.getElementById('enterBtn').onclick = function () { var v = buffer; buffer = ''; revealBuffer(); dispatch(v); };
-  document.getElementById('clearBtn').onclick = function () { buffer = ''; revealBuffer(); reset(); };
-  document.getElementById('langBtn').onclick = function () { LANG = (LANG === 'ar') ? 'en' : 'ar'; applyLang(); };
+  function relabelKeys() {
+    var nodes = document.querySelectorAll('#padGrid .key');
+    for (var i = 0; i < nodes.length; i++) {
+      var dk = nodes[i].getAttribute('data-key');
+      if (dk === 'OK') { nodes[i].textContent = t('enter'); }
+      else if (dk === 'C') { nodes[i].textContent = t('clear'); }
+    }
+  }
+  document.getElementById('manualBtn').onclick = function () {
+    pad.classList.toggle('show');
+    if (pad.classList.contains('show')) { revealBuffer(); }
+    try { input.focus(); } catch (e) {}
+  };
+  document.getElementById('langBtn').onclick = function () { LANG = (LANG === 'ar') ? 'en' : 'ar'; applyLang(); relabelKeys(); };
 
   applyLang();
 })();
@@ -482,8 +534,7 @@ class LanPriceServer:
         """Number + symbol separately so the kiosk can place the symbol itself.
 
         ``format_amount`` converts a *stored USD* price into the display
-        currency (the previous code used ``format_display_value``, which does
-        not convert -- a 11000 SYP item therefore showed as "1").
+        currency (``format_display_value`` does not convert).
         """
         number = ""
         symbol = ""
