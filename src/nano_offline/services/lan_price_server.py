@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, urlparse
 
 from nano_offline.core import branding, currency, lan_settings
 from nano_offline.core.logging_config import get_logger
+from nano_offline.core.units import is_weighted_unit
 from nano_offline.repositories.item_repository import ItemRepository
 from nano_offline.version import APP_VERSION
 
@@ -61,6 +62,11 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
 .price { font-size: 62px; font-weight: 900; color: var(--accent); margin: 12px 0; direction: ltr; }
 .unit { font-size: 22px; color: #475569; }
 .miss { font-size: 30px; font-weight: 800; color: #b42318; }
+.results { width: min(760px, 92vw); background: #fff; color: #0f172a; border-radius: 20px; padding: 8px 4px; display: none; box-shadow: 0 18px 44px rgba(0,0,0,.3); max-height: 58vh; overflow: auto; }
+.results.show { display: block; }
+.rrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #eef2f7; font-size: 22px; }
+.rrow:last-child { border-bottom: 0; }
+.rrow .rp { font-weight: 900; color: var(--accent); direction: ltr; white-space: nowrap; }
 .hidden-input { position: fixed; top: -100px; left: -100px; width: 1px; height: 1px; opacity: 0; }
 </style>
 </head>
@@ -75,6 +81,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
     <div class="unit" id="unit"></div>
   </div>
   <div class="card" id="misscard"><div class="miss">هذا المنتج غير مُدرَج في النظام</div></div>
+  <div class="results" id="results"></div>
 </div>
 <input id="scan" class="hidden-input" autocomplete="off" inputmode="none">
 <script>
@@ -86,6 +93,7 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
   var catEl = document.getElementById('cat');
   var priceEl = document.getElementById('price');
   var unitEl = document.getElementById('unit');
+  var resultsEl = document.getElementById('results');
   var idleTimer = null;
 
   function beep(ok) {
@@ -112,6 +120,8 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
     catEl.textContent = '';
     priceEl.textContent = '';
     unitEl.textContent = '';
+    resultsEl.classList.remove('show');
+    resultsEl.innerHTML = '';
     input.value = '';
     try { input.focus(); } catch (e) {}
   }
@@ -126,12 +136,16 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
       nameEl.textContent = data.name || '';
       catEl.textContent = data.category || '';
       priceEl.textContent = data.price_text || '';
-      unitEl.textContent = data.unit ? ('سعر ' + data.unit) : '';
+      unitEl.textContent = data.weighted
+        ? ('يُوزن' + (data.unit ? (' — السعر لكل ' + data.unit) : ''))
+        : (data.unit ? ('سعر ' + data.unit) : '');
+      resultsEl.classList.remove('show');
       miss.classList.remove('show');
       card.classList.add('show');
       beep(true);
     } else {
       card.classList.remove('show');
+      resultsEl.classList.remove('show');
       miss.classList.add('show');
       beep(false);
     }
@@ -149,11 +163,45 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sa
     }
   }
 
+  function renderResults(data) {
+    var rows = (data && data.results) || [];
+    card.classList.remove('show');
+    miss.classList.remove('show');
+    if (!rows.length) { show({ found: false }); return; }
+    resultsEl.innerHTML = '';
+    rows.forEach(function (row) {
+      var el = document.createElement('div');
+      el.className = 'rrow';
+      var name = document.createElement('span');
+      name.textContent = row.weighted ? (row.name + ' · يُوزن') : row.name;
+      var price = document.createElement('span');
+      price.className = 'rp';
+      price.textContent = row.price_text || '';
+      el.appendChild(name);
+      el.appendChild(price);
+      resultsEl.appendChild(el);
+    });
+    resultsEl.classList.add('show');
+    beep(true);
+    scheduleReset();
+  }
+
+  async function search(query) {
+    query = (query || '').trim();
+    if (!query) { return; }
+    try {
+      var r = await fetch('/api/search?q=' + encodeURIComponent(query), { cache: 'no-store' });
+      renderResults(await r.json());
+    } catch (e) {
+      show({ found: false });
+    }
+  }
+
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' || e.keyCode === 13) {
-      var v = input.value;
+      var v = (input.value || '').trim();
       input.value = '';
-      lookup(v);
+      if (/^\\d{4,}$$/.test(v)) { lookup(v); } else { search(v); }
       e.preventDefault();
     }
   });
@@ -210,6 +258,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/price":
             code = (parse_qs(parsed.query).get("barcode") or [""])[0]
             self._json(app.lookup(code))
+        elif path == "/api/search":
+            query = (parse_qs(parsed.query).get("q") or [""])[0]
+            self._json(app.search(query))
         else:
             self._json({"ok": False, "error": "not_found"}, 404)
 
@@ -284,21 +335,42 @@ class LanPriceServer:
             return {"found": False}
         if not item:
             return {"found": False}
-        try:
-            price_text = currency.format_display_value(
-                item.get("selling_price"), self._settings, with_symbol=True
-            )
-        except Exception:
-            price_text = ""
         unit = str(item.get("unit_abbreviation") or item.get("unit_name") or "").strip()
         return {
             "found": True,
             "barcode": code,
             "name": str(item.get("name") or ""),
             "category": str(item.get("category_name") or ""),
-            "price_text": price_text,
+            "price_text": self._price_text(item.get("selling_price")),
             "unit": unit,
+            "weighted": is_weighted_unit(item.get("unit_abbreviation"), item.get("unit_name")),
         }
+
+    def _price_text(self, value) -> str:
+        try:
+            return currency.format_display_value(value, self._settings, with_symbol=True)
+        except Exception:
+            return ""
+
+    def search(self, query: str, limit: int = 8) -> dict:
+        text = (query or "").strip()[:64]
+        if not text:
+            return {"results": []}
+        try:
+            rows = self._items.list(search=text, limit=limit)
+        except Exception:
+            log.warning("LAN price search failed for %r", text, exc_info=True)
+            return {"results": []}
+        results = []
+        for item in rows:
+            unit = str(item.get("unit_abbreviation") or item.get("unit_name") or "").strip()
+            results.append({
+                "name": str(item.get("name") or ""),
+                "price_text": self._price_text(item.get("selling_price")),
+                "unit": unit,
+                "weighted": is_weighted_unit(item.get("unit_abbreviation"), item.get("unit_name")),
+            })
+        return {"results": results}
 
     def start(self) -> None:
         with self._lock:

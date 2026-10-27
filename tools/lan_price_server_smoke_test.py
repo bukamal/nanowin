@@ -9,6 +9,7 @@ surfaces, plus the admin settings plumbing.
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -37,6 +38,15 @@ with tempdir(prefix="qeid-lan-price-") as td:
         quantity=100,
         base_unit_id=unit,
     )
+    kg = ctx.definitions.create_unit("كغ", "كغ")
+    ctx.items.create(
+        name="موز",
+        barcode="2000000000017",
+        selling_price=1.2,
+        purchase_price=0.8,
+        quantity=50,
+        base_unit_id=kg,
+    )
 
     server = LanPriceServer(
         ctx.db,
@@ -64,6 +74,16 @@ with tempdir(prefix="qeid-lan-price-") as td:
 
         status, body = _get(f"{base}/api/price?barcode=0000000000000")
         assert json.loads(body)["found"] is False, body
+
+        # Weighted (weight/volume base unit) items are flagged for the kiosk.
+        status, body = _get(f"{base}/api/price?barcode=2000000000017")
+        banana = json.loads(body)
+        assert banana["found"] is True and banana["weighted"] is True, banana
+
+        # Name search (for kiosks without a scanner / a missing barcode).
+        status, body = _get(f"{base}/api/search?q=" + urllib.parse.quote("ماء"))
+        results = json.loads(body).get("results") or []
+        assert status == 200 and results and results[0]["name"] == "ماء صغير 330مل", results
 
         status, body = _get(f"{base}/")
         page = body.decode("utf-8")

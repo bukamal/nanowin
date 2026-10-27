@@ -24,6 +24,7 @@ from nano_offline.core import currency
 from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_margin
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
+from nano_offline.core.units import is_weighted_unit
 from nano_offline.core.platform_capabilities import supports
 from nano_offline.core import sound as sound_engine
 from nano_offline.core.voice_nlu import normalize_ar
@@ -38,17 +39,8 @@ CHIP_PALETTE = LazyPalette("PRIMARY", "PURPLE_LIGHT", "ORANGE", "WARNING_DARK", 
 # Phase C: heuristic for "sold by weight" items -- there is no dedicated
 # flag on units/items for this, so a cart line is treated as weighted when
 # its base unit's name/abbreviation matches a common weight/volume unit.
-# Deliberately a plain set match (not substring) against the trimmed,
-# case-folded unit text, so an unrelated unit that merely contains one of
-# these letters (e.g. "غرفة") never false-matches.
-WEIGHT_UNIT_HINTS = {
-    "كغ", "كجم", "كغم", "كيلو", "كيلوغرام", "كيلوجرام",
-    "غ", "غرام", "جرام",
-    "طن",
-    "لتر", "مل",
-    "kg", "kgs", "g", "gram", "grams",
-    "l", "liter", "litre", "ml",
-}
+# The shared list/heuristic now lives in core/units.py so the LAN price
+# server (and any other surface) applies the exact same rule.
 
 # Comfortable receipt-rail width on desktop: narrow enough to leave the
 # catalog most of the screen, wide enough for name + qty stepper + line total.
@@ -2518,14 +2510,10 @@ class POSCenter:
     def _is_weighted_item(item: dict) -> bool:
         """True when ``item``'s base unit looks like a weight/volume unit.
 
-        See ``WEIGHT_UNIT_HINTS`` above for why this is a heuristic rather
-        than a stored flag.
+        Delegates to :func:`nano_offline.core.units.is_weighted_unit` so the
+        POS and the LAN price server share one heuristic.
         """
-        for key in ("unit_abbreviation", "unit_name"):
-            text = str(item.get(key) or "").strip().casefold()
-            if text and text in WEIGHT_UNIT_HINTS:
-                return True
-        return False
+        return is_weighted_unit(item.get("unit_abbreviation"), item.get("unit_name"))
 
     def _add_by_barcode(self, code: str) -> None:
         found = self.ctx.items.find_by_barcode(code)
