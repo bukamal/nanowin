@@ -36,6 +36,31 @@ class InvoiceService:
     def __init__(self, db: Database):
         self.db = db
 
+    def check_purchase_price(
+        self,
+        *,
+        item_id: int | None,
+        unit_price: float,
+        conversion_factor: float = 1.0,
+        supplier_id: int | None = None,
+        exclude_invoice_id: int | None = None,
+    ) -> dict:
+        """Compare a purchase line's per-base-unit price against recent history.
+
+        Thin service wrapper around ``core.price_fingerprint`` so the invoice
+        editor never has to reach into ``ctx.db`` directly.
+        """
+        from nano_offline.core.price_fingerprint import check_purchase_price
+
+        return check_purchase_price(
+            self.db,
+            item_id=item_id,
+            unit_price=unit_price,
+            conversion_factor=conversion_factor,
+            supplier_id=supplier_id,
+            exclude_invoice_id=exclude_invoice_id,
+        )
+
     def list_invoices(self, invoice_type: str | None = None, limit: int = 200) -> list[dict]:
         sql = """
         SELECT i.*,

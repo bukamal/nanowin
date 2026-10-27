@@ -10,6 +10,7 @@ from nano_offline.repositories.party_repository import PartyRepository
 from nano_offline.repositories.settings_repository import SettingsRepository
 from nano_offline.repositories.stocktake_repository import StocktakeRepository
 from nano_offline.services.auth_service import AuthService
+from nano_offline.services.audit_service import AuditService
 from nano_offline.services.backup_service import BackupService
 from nano_offline.services.dashboard_service import DashboardService
 from nano_offline.services.document_service import DocumentService
@@ -49,6 +50,7 @@ class AppContext:
     documents: DocumentService
     settings: SettingsRepository
     auth: AuthService
+    audit: AuditService
     backup: BackupService
     license: LicenseService
     notifications: NotificationService
@@ -141,6 +143,7 @@ class AppContext:
             documents=DocumentService(db, invoices, StatementService(db)),
             settings=settings_repo,
             auth=auth,
+            audit=AuditService(db),
             backup=backup,
             license=license_svc,
             notifications=notifications_svc,
@@ -155,6 +158,10 @@ class AppContext:
             quick_commands=quick_commands_svc,
             voice_learning=voice_learning_svc,
         )
+
+    def database_path(self):
+        """Path of this context's SQLite file (local installs only)."""
+        return self.db.path
 
     def reload(self, db_path: str | Path) -> None:
         """Rebuild every repository/service against a freshly-opened ``Database``.

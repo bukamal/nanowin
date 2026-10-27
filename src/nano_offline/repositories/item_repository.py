@@ -211,6 +211,41 @@ class ItemRepository(Offloadable):
             ).fetchone()
             return dict(alt) if alt else None
 
+    def build_item_card(self, **kwargs) -> str:
+        """Signed QR payload for one item (see core.item_card_signing)."""
+        from nano_offline.core.item_card_signing import build_item_card
+
+        return build_item_card(self.db, **kwargs)
+
+    def verify_item_card(self, payload: str) -> tuple[str, dict | None, str]:
+        """Verify a scanned item-card payload against this device's secret."""
+        from nano_offline.core.item_card_signing import verify_item_card
+
+        return verify_item_card(self.db, payload)
+
+    def quiet_item_ids(self, days: int = 30) -> set[int]:
+        """Stock item ids with no sale movement in the last ``days`` days."""
+        try:
+            window = f"-{max(1, int(days))} day"
+        except (TypeError, ValueError):
+            window = "-30 day"
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT it.id
+                FROM items it
+                WHERE it.item_type='مخزون'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM inventory_movements im
+                    WHERE im.item_id=it.id
+                      AND im.movement_type='sale'
+                      AND im.movement_date >= date('now', ?)
+                  )
+                """,
+                (window,),
+            ).fetchall()
+        return {int(r[0]) for r in rows}
+
     @blocking
     def list_barcodes(self, item_id: int) -> list[dict]:
         """Secondary codes registered for an item (primary code lives on

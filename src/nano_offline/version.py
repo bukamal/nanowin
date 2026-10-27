@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.15"
-BUILD_NUMBER = 60  # FEAT_0.17.15: kiosk name-search + weighted hint; shared unit heuristic
+APP_VERSION = "0.17.16"
+BUILD_NUMBER = 61  # FEAT_0.17.16: LAN client/server data plane (phases 0-10)
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

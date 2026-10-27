@@ -14,7 +14,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField
 from nano_offline.services.auth_service import ROLE_LABELS
-from nano_offline.services import lan_price_server
+from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import theme_settings
@@ -24,6 +24,8 @@ from nano_offline.core import branding
 from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
 from nano_offline.core import lan_settings
+from nano_offline.core import api_settings
+from nano_offline.core import remote_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import backup_settings
 from nano_offline.core import reporting_settings
@@ -119,7 +121,7 @@ class AdminCenter:
         self.ctx.auth.require("admin")
         self._pending_section = section
         session = self.ctx.auth.current()
-        backups_dir = self.ctx.db.path.parent / "backups"
+        backups_dir = self.ctx.backup.default_dir()
         backups_dir.mkdir(parents=True, exist_ok=True)
 
         username = SelectAllTextField(label="اسم المستخدم")
@@ -526,7 +528,7 @@ class AdminCenter:
                         # query -- so without this, the restored data silently
                         # never reaches the screen and it looks like "restore does
                         # nothing" even though the file on disk is correct.
-                        self.ctx.reload(self.ctx.db.path)
+                        self.ctx.reload(self.ctx.database_path())
                         log("4: context reloaded, syncing home widget with restored DB")
                         # FIX_0.9.2: without this step the widget keeps showing
                         # the LAST-PUSH snapshot (or the first-run hint seen in
@@ -1953,8 +1955,7 @@ class AdminCenter:
                     self.page.open(dlg2)
                 def _delete_unknown(_e=None, r=raw_phrase):
                     try:
-                        with self.ctx.db.transaction() as conn:
-                            conn.execute("DELETE FROM voice_unknown_log WHERE phrase_raw=?", (r,))
+                        self.ctx.voice_learning.delete_unknown(r)
                         refresh_voice_memory()
                     except Exception as exc:
                         self._notify_error(str(exc))
@@ -2086,6 +2087,112 @@ class AdminCenter:
                 self._notify(str(exc), kind="error")
 
         _render_lan_status()
+
+        # --- LAN API server (client/server) + client config -------------
+        api_iset = self.ctx.settings.get_all()
+        from nano_offline.core.local_prefs import LocalPrefs
+
+        _client_prefs = LocalPrefs(self.ctx.database_path().parent / "local_prefs.json")
+        api_enabled_switch = ft.Switch(
+            label="تشغيل خادم الـAPI (وضع الخادم) على الشبكة المحلية",
+            value=api_settings.enabled(api_iset),
+        )
+        api_port_field = SelectAllTextField(
+            label="منفذ الـAPI",
+            value=str(api_settings.port(api_iset)),
+            width=170,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        api_token_field = SelectAllTextField(
+            label="رمز الخادم (اختياري)",
+            value=api_settings.token(api_iset),
+            width=240,
+            password=True,
+            can_reveal_password=True,
+        )
+        api_status_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
+        api_url_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY, selectable=True)
+
+        client_mode_switch = ft.Switch(
+            label="تشغيل هذا الجهاز كعميل (يتصل بالخادم المركزي)",
+            value=remote_settings.client_mode(_client_prefs),
+        )
+        client_url_field = SelectAllTextField(
+            label="عنوان الخادم المركزي (وضع العميل)",
+            value=remote_settings.server_url(_client_prefs),
+            width=320,
+        )
+        client_token_field = SelectAllTextField(
+            label="رمز العميل (اختياري)",
+            value=remote_settings.server_token(_client_prefs),
+            width=240,
+            password=True,
+            can_reveal_password=True,
+        )
+        client_test_status = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
+
+        def _render_api_status():
+            server = lan_api_server.current()
+            if server is not None and server.running:
+                api_status_text.value = "خادم الـAPI يعمل — قراءة + كتابة مُصرّح بها."
+                api_status_text.color = Colors.SUCCESS_DARK
+                api_url_text.value = f"عنوان الخادم للعملاء: {server.url}"
+            else:
+                api_status_text.value = "خادم الـAPI متوقف."
+                api_status_text.color = Colors.TEXT_SECONDARY
+                api_url_text.value = ""
+
+        def save_api_settings(_):
+            try:
+                try:
+                    port = int((api_port_field.value or "").strip())
+                except ValueError:
+                    port = api_settings.DEFAULT_PORT
+                if not (api_settings.MIN_PORT <= port <= api_settings.MAX_PORT):
+                    port = api_settings.DEFAULT_PORT
+                self.ctx.settings.set_many({
+                    api_settings.ENABLED_KEY: "1" if api_enabled_switch.value else "0",
+                    api_settings.PORT_KEY: str(port),
+                    api_settings.TOKEN_KEY: (api_token_field.value or "").strip(),
+                })
+                # Client config is device-local: it must be readable before any
+                # context exists, and it never belongs to the shared server data.
+                _client_prefs.set_many({
+                    remote_settings.MODE_KEY: "1" if client_mode_switch.value else "0",
+                    remote_settings.SERVER_URL_KEY: remote_settings.normalize_url(client_url_field.value),
+                    remote_settings.SERVER_TOKEN_KEY: (client_token_field.value or "").strip(),
+                })
+                api_port_field.value = str(port)
+                try:
+                    lan_api_server.restart(self.ctx)
+                except Exception:
+                    pass
+                _render_api_status()
+                self._notify("تم حفظ إعدادات الخادم/العميل")
+                self.page.update()
+            except Exception as exc:
+                self._notify(str(exc), kind="error")
+
+        def test_connection(_):
+            url = remote_settings.normalize_url(client_url_field.value)
+            if not url:
+                client_test_status.value = "أدخل عنوان الخادم أولًا."
+                client_test_status.color = Colors.DANGER
+                self.page.update()
+                return
+            client_test_status.value = "جارٍ اختبار الاتصال..."
+            client_test_status.color = Colors.TEXT_SECONDARY
+            self.page.update()
+            try:
+                info = remote_client.probe(url, token=(client_token_field.value or "").strip())
+                client_test_status.value = f"تم الاتصال — إصدار الخادم {info.get('version', '?')}."
+                client_test_status.color = Colors.SUCCESS_DARK
+            except Exception as exc:
+                client_test_status.value = f"تعذر الاتصال: {exc}"
+                client_test_status.color = Colors.DANGER
+            self.page.update()
+
+        _render_api_status()
 
         section_panels: dict[str, ft.Container] = {
             "appearance": self._section(
@@ -2486,6 +2593,39 @@ class AdminCenter:
                     ),
                 ],
             ),
+            "server": self._section(
+                "الخادم والعميل (شبكة محلية)",
+                [
+                    ft.Text(
+                        "وضع الخادم: جهاز مركزي يملك البيانات ويخدم بقية الأجهزة عبر الـAPI. "
+                        "وضع العميل: أجهزة تتصل بالخادم (العنوان أدناه).",
+                        size=12, color=Colors.TEXT_SECONDARY,
+                    ),
+                    api_enabled_switch,
+                    ft.Row(
+                        [api_port_field, api_token_field],
+                        spacing=12,
+                        wrap=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.FilledButton("حفظ وتشغيل الخادم", icon=ft.Icons.SAVE_OUTLINED, on_click=save_api_settings),
+                    api_status_text,
+                    api_url_text,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("العميل: عنوان الخادم المركزي", size=12, weight=ft.FontWeight.W_600),
+                    client_mode_switch,
+                    client_url_field,
+                    client_token_field,
+                    ft.Row([
+                        ft.OutlinedButton("اختبار الاتصال", icon=ft.Icons.REFRESH, on_click=test_connection),
+                    ]),
+                    client_test_status,
+                    ft.Text(
+                        "القراءة من الخادم جاهزة؛ تمكين تشغيل الواجهة كاملةً في وضع العميل خطوة لاحقة.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                ],
+            ),
 
         }
 
@@ -2500,6 +2640,7 @@ class AdminCenter:
             ("invoice", "الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED),
             ("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE_OUTLINED),
             ("lan", "شاشة الأسعار", ft.Icons.STOREFRONT_OUTLINED),
+            ("server", "الخادم والعميل", ft.Icons.CLOUD_OUTLINED),
             ("stocktake", "الجرد", ft.Icons.FACT_CHECK_OUTLINED),
             ("sound", "الصوت", ft.Icons.VOLUME_UP_OUTLINED),
             ("voice", "الذاكرة الصوتية", ft.Icons.RECORD_VOICE_OVER_OUTLINED),
@@ -2509,7 +2650,7 @@ class AdminCenter:
         ADMIN_GROUPS = [
             ("setup", "الإعداد والتخصيص", ft.Icons.TUNE_ROUNDED, ("appearance", "branding", "users", "license")),
             ("operations", "العمليات والمخزون", ft.Icons.STORE_OUTLINED, ("barcode", "invoice", "pos", "lan", "stocktake", "crisis")),
-            ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED, ("backup", "reports", "audit")),
+            ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED, ("backup", "reports", "audit", "server")),
             ("assistant", "الصوت والمساعد", ft.Icons.RECORD_VOICE_OVER_OUTLINED, ("sound", "voice")),
         ]
         initial = getattr(self, "_pending_section", None) or "users"

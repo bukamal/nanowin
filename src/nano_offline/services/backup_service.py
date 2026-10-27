@@ -58,6 +58,13 @@ class BackupService:
     def __init__(self, db: Database):
         self.db = db
 
+    def default_dir(self) -> Path:
+        """The app's default backups folder (next to the database file).
+
+        Exposed as a method so admin views never read ``ctx.db.path`` directly.
+        """
+        return self.db.path.parent / "backups"
+
     @staticmethod
     def _sha256(path: Path) -> str:
         h = hashlib.sha256()

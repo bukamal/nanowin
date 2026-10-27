@@ -5,9 +5,9 @@ import hmac
 import json
 import os
 import secrets
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from nano_offline.core.database import Database
 
@@ -176,6 +176,20 @@ class AuthService:
             raise PermissionError("ليست لديك صلاحية لتنفيذ هذه العملية")
         return self._session
 
+    @contextlib.contextmanager
+    def as_actor(self, session: UserSession):
+        """Run a block with ``session`` as the process session.
+
+        The LAN API server uses this to run an ``auth.*`` call as the remote
+        user, so ``require(...)`` inside (e.g. ``create_user``) sees them.
+        """
+        previous = self._session
+        self._session = session
+        try:
+            yield
+        finally:
+            self._session = previous
+
     def create_initial_admin(self, username: str, full_name: str, password: str) -> int:
         if self.has_users():
             raise ValueError("تم إنشاء المستخدم الأول مسبقًا")
@@ -275,6 +289,35 @@ class AuthService:
         self.set_remembered_username(session.username if (remember_username or remember_login) else None)
         self._set_saved_login(session, remember_login)
         return session
+
+    def verify_credentials(self, username: str, password: str) -> UserSession | None:
+        """Check a username/password without establishing a process session.
+
+        Used by the LAN API server (client/server mode): it must authenticate a
+        remote user and learn their identity/role, but must NOT touch the shared
+        process session or actor -- many clients share one server process. On
+        success returns the ``UserSession``; on failure returns ``None``.
+        Lockout / failed-attempt handling mirrors :meth:`login`.
+        """
+        username = self._normalize_username(username)
+        conn = self.db.connect()
+        try:
+            try:
+                row = self._checked_user(conn, username)
+            except (ValueError, PermissionError):
+                return None
+            expected, _ = self._hash_password(password or "", str(row["password_salt"]))
+            if not hmac.compare_digest(expected, str(row["password_hash"])):
+                self._failed_attempt(conn, row)
+                return None
+            conn.execute(
+                "UPDATE users SET failed_attempts=0,locked_until=NULL,last_login_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (self._iso(self._now()), row["id"]),
+            )
+            conn.commit()
+            return UserSession(int(row["id"]), str(row["username"]), str(row["full_name"]), str(row["role"]))
+        finally:
+            conn.close()
 
     def restore_saved_session(self) -> UserSession | None:
         prefs = self._load_prefs()

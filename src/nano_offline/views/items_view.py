@@ -21,7 +21,6 @@ from nano_offline.core.theme import Colors, IconSize, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import barcode_quality
 from nano_offline.core import barcode_settings
-from nano_offline.core import item_card_signing
 from nano_offline.core.platform_capabilities import supports
 
 # Desktop grid columns. Only name + the two prices are inline-editable:
@@ -1552,8 +1551,7 @@ class ItemsCenter:
             base_unit_name = (base_unit_row or {}).get("name")
 
             def build_payload() -> str:
-                return item_card_signing.build_item_card(
-                    ctx.db,
+                return ctx.items.build_item_card(
                     name=item.get("name") or "",
                     barcode=item.get("barcode") or "",
                     purchase_price=float(item.get("purchase_price") or 0) if include_purchase.value else None,
@@ -1738,7 +1736,7 @@ class ItemsCenter:
                     scan_status.color = Colors.DANGER
                     page.update()
                     return
-                status, parsed, reason = item_card_signing.verify_item_card(ctx.db, code)
+                status, parsed, reason = ctx.items.verify_item_card(code)
                 if status == "invalid":
                     scan_status.value = reason
                     scan_status.color = Colors.DANGER
@@ -3033,21 +3031,7 @@ class ItemsCenter:
         def _quiet_item_ids() -> set[int]:
             """Stock item ids with no sale movements in the last 30 days."""
             try:
-                with ctx.db.connect() as conn:
-                    rows = conn.execute(
-                        """
-                        SELECT it.id
-                        FROM items it
-                        WHERE it.item_type='مخزون'
-                          AND NOT EXISTS (
-                            SELECT 1 FROM inventory_movements im
-                            WHERE im.item_id=it.id
-                              AND im.movement_type='sale'
-                              AND im.movement_date >= date('now', '-30 day')
-                          )
-                        """
-                    ).fetchall()
-                return {int(r[0] if not hasattr(r, 'keys') else r['id']) for r in rows}
+                return ctx.items.quiet_item_ids(30)
             except Exception:
                 return set()
 

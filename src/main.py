@@ -842,7 +842,18 @@ def main(page: ft.Page):
     #   from nano_offline.core.voice_command import set_engine, YourEngine
     #   set_engine(YourEngine(...))
     migrate_legacy_database(LEGACY_APP_DB, APP_DB)
-    ctx = AppContext.create(APP_DB)
+    # Local (default) or client mode. Client mode routes the shared business
+    # data to a central LAN server (services.hybrid_context.context_for); it is
+    # off unless this device opted in, so local behaviour is unchanged when off.
+    # Never blocks startup on failure.
+    try:
+        from nano_offline.core.local_prefs import LocalPrefs
+        from nano_offline.services.hybrid_context import context_for
+
+        ctx = context_for(APP_DB, LocalPrefs(APP_DB.parent / "local_prefs.json"))
+    except Exception:
+        _log.warning("client-mode setup failed; using local context", exc_info=True)
+        ctx = AppContext.create(APP_DB)
     native_files = PlatformNativeFiles()
     page.overlay.append(native_files)
 
@@ -855,6 +866,15 @@ def main(page: ft.Page):
         lan_price_server.start_if_enabled(ctx)
     except Exception:
         _log.warning("LAN price server startup failed", exc_info=True)
+
+    # Read-only LAN API server (client/server data plane, phase 1): same
+    # best-effort, gated by its own admin setting, never blocks startup.
+    try:
+        from nano_offline.services import lan_api_server
+
+        lan_api_server.start_if_enabled(ctx)
+    except Exception:
+        _log.warning("LAN API server startup failed", exc_info=True)
 
     # Voice: prefer Android on-device SpeechRecognizer when available.
     try:

@@ -14,6 +14,18 @@ class PaymentService:
     def __init__(self, db: Database):
         self.db = db
 
+    def payment_source(self, payment_id: int) -> dict | None:
+        """Return ``{"source_type", "source_id"}`` for a payment row, or None.
+
+        Used by the ledger drill-down to tell a real voucher from an invoice's
+        own derived initial payment (whose id lives in a different id space).
+        """
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT source_type, source_id FROM payments WHERE id=?", (int(payment_id),)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def _display_amount(self, value: float | int | None) -> str:
         """Format a stored USD amount for user-facing messages, in the currently displayed currency."""
         with self.db.connect() as conn:

@@ -97,6 +97,12 @@ SCRIPTS = [
     "tools/money_consistency_smoke_test.py",
     "tools/phase11_router_contract_smoke_test.py",
     "tools/lan_price_server_smoke_test.py",
+    "tools/lan_api_server_smoke_test.py",
+    "tools/remote_client_config_smoke_test.py",
+    "tools/client_mode_smoke_test.py",
+    "tools/hybrid_context_smoke_test.py",
+    "tools/client_startup_smoke_test.py",
+    "tools/rpc_parity_smoke_test.py",
     "tools/version_consistency_smoke_test.py",
     "tools/apk_release_preflight.py",
 ]

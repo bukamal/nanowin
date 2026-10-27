@@ -564,13 +564,10 @@ class FinanceCenter:
         tap can never land on an unrelated voucher that merely shares the
         numeric id."""
         try:
-            with self.ctx.db.connect() as conn:
-                prow = conn.execute(
-                    "SELECT source_type, source_id FROM payments WHERE id=?", (payment_id,)
-                ).fetchone()
+            prow = self.ctx.payments.payment_source(payment_id)
         except Exception:
             prow = None
-        if prow is not None and str(prow["source_type"]) == "invoice_initial" and prow["source_id"] is not None:
+        if prow is not None and str(prow.get("source_type")) == "invoice_initial" and prow.get("source_id") is not None:
             if self.on_open_invoice is not None:
                 try:
                     self.on_open_invoice(int(prow["source_id"]))

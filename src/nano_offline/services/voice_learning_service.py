@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 
 def _norm(text: str) -> str:
@@ -297,6 +296,10 @@ class VoiceLearningService:
     def delete_phrase(self, row_id: int) -> None:
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM voice_phrase_memory WHERE id=?", (int(row_id),))
+
+    def delete_unknown(self, phrase_raw: str) -> None:
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM voice_unknown_log WHERE phrase_raw=?", (str(phrase_raw),))
 
     def delete_alias(self, row_id: int) -> None:
         with self.db.transaction() as conn:

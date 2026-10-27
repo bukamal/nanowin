@@ -37,7 +37,6 @@ from nano_offline.components.print_profile import apply_print_profile, open_prin
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core.margin_guard import check_sale_margin
-from nano_offline.core.price_fingerprint import check_purchase_price
 from nano_offline.core import invoice_settings
 from nano_offline.core import barcode_settings
 from nano_offline.core.platform_capabilities import supports
@@ -126,18 +125,13 @@ class InvoiceCenter:
         except Exception:
             username, user_id = None, None
         try:
-            with self.ctx.db.transaction() as conn:
-                conn.execute(
-                    """INSERT INTO audit_log(action,entity_type,entity_id,details,user_id,username)
-                       VALUES('print','invoice',?,?,?,?)""",
-                    (int(invoice_id), channel, user_id, username),
-                )
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM audit_log WHERE action='print' AND entity_type='invoice' AND entity_id=?",
-                    (int(invoice_id),),
-                ).fetchone()
-                count = int(row[0] if row is not None else 0)
-            return count
+            return self.ctx.audit.log_print(
+                entity_type="invoice",
+                entity_id=int(invoice_id),
+                channel=channel,
+                user_id=user_id,
+                username=username,
+            )
         except Exception:
             return 0
 
@@ -3419,8 +3413,7 @@ class InvoiceCenter:
                     price_usd = None
                 factor = float(state.get("factor") or 1)
                 if price_usd is not None and price_usd >= 0 and factor > 0:
-                    result = check_purchase_price(
-                        self.ctx.db,
+                    result = self.ctx.invoices.check_purchase_price(
                         item_id=int(state["item"].value),
                         unit_price=price_usd,
                         conversion_factor=factor,

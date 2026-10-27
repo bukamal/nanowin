@@ -2656,12 +2656,13 @@ class POSCenter:
                 except Exception:
                     username, user_id = None, None
                 try:
-                    with self.ctx.db.transaction() as conn:
-                        conn.execute(
-                            """INSERT INTO audit_log(action,entity_type,entity_id,details,user_id,username)
-                               VALUES('print','invoice',?,?,?,?)""",
-                            (int(invoice_id), "pos", user_id, username),
-                        )
+                    self.ctx.audit.log_print(
+                        entity_type="invoice",
+                        entity_id=int(invoice_id),
+                        channel="pos",
+                        user_id=user_id,
+                        username=username,
+                    )
                 except Exception:
                     pass
             except Exception as exc:

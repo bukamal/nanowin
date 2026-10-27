@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Iterator
 
@@ -484,8 +485,11 @@ class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._actor_user_id: int | None = None
-        self._actor_username: str | None = None
+        # The audit trigger stamps the "acting user" through these SQLite
+        # functions. Stored per-thread (not on the instance) so a LAN API
+        # server handling several clients concurrently can never attribute one
+        # user's write to another: each server worker sets its own actor.
+        self._actor = threading.local()
         # Set by initialize(): the search-index tokenizer when FTS5/trigram is
         # available and the index is live; None means "use the LIKE fallback".
         # Repositories read it when choosing a search path.
@@ -503,8 +507,8 @@ class Database:
         # phone and noticeably faster once tables have thousands of rows.
         conn.execute("PRAGMA cache_size = -20000")
         conn.execute("PRAGMA temp_store = MEMORY")
-        conn.create_function("qeid_actor_id", 0, lambda: self._actor_user_id)
-        conn.create_function("qeid_actor_username", 0, lambda: self._actor_username)
+        conn.create_function("qeid_actor_id", 0, lambda: getattr(self._actor, "user_id", None))
+        conn.create_function("qeid_actor_username", 0, lambda: getattr(self._actor, "username", None))
         conn.create_function("nano_chain_hash", 8, _nano_chain_hash)
         return conn
 
@@ -776,11 +780,11 @@ class Database:
             )
 
     def set_actor(self, user_id: int | None, username: str | None) -> None:
-        self._actor_user_id = int(user_id) if user_id is not None else None
-        self._actor_username = (username or "").strip() or None
+        self._actor.user_id = int(user_id) if user_id is not None else None
+        self._actor.username = (username or "").strip() or None
 
     def actor(self) -> tuple[int | None, str | None]:
-        return self._actor_user_id, self._actor_username
+        return getattr(self._actor, "user_id", None), getattr(self._actor, "username", None)
 
     def checkpoint(self) -> None:
         with self.connect() as conn:
