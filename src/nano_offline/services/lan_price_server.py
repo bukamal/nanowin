@@ -26,7 +26,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from nano_offline.core import branding, currency, lan_settings
+from nano_offline.core import branding, currency, default_brand, lan_settings
 from nano_offline.core.logging_config import get_logger
 from nano_offline.core.units import is_weighted_unit
 from nano_offline.repositories.item_repository import ItemRepository
@@ -38,6 +38,28 @@ _DEFAULT_ACCENT = "#0B5FCC"
 _DEFAULT_IDLE_MS = 12000
 _MAX_BARCODE_LEN = 64
 
+
+def _safe_hex(value, fallback: str = _DEFAULT_ACCENT) -> str:
+    """Normalize a user-provided colour to a safe ``#rrggbb`` string."""
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3 and all(c in "0123456789abcdefABCDEF" for c in text):
+        text = "".join(c * 2 for c in text)
+    if len(text) == 6 and all(c in "0123456789abcdefABCDEF" for c in text):
+        return "#" + text.lower()
+    return fallback
+
+
+def _rgb_csv(value) -> str:
+    text = _safe_hex(value).lstrip("#")
+    return f"{int(text[0:2], 16)},{int(text[2:4], 16)},{int(text[4:6], 16)}"
+
+
+def _darken(value, factor: float = 0.72) -> str:
+    text = _safe_hex(value).lstrip("#")
+    r, g, b = (int(text[i:i + 2], 16) for i in (0, 2, 4))
+    return "#{:02x}{:02x}{:02x}".format(int(r * factor), int(g * factor), int(b * factor))
+
+
 # The kiosk page. Uses string.Template ($name) instead of an f-string so the
 # CSS/JS braces stay untouched. No other '$' must appear in the markup.
 _KIOSK_TEMPLATE = string.Template(
@@ -48,165 +70,286 @@ _KIOSK_TEMPLATE = string.Template(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$title</title>
 <style>
-:root { --accent: $accent; }
-* { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; background: #0f172a; color: #fff; }
-.wrap { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 32px; text-align: center; }
-.brand { font-size: 34px; font-weight: 800; opacity: .96; }
-.hint { font-size: 22px; opacity: .72; }
-.card { width: min(760px, 92vw); background: #fff; color: #0f172a; border-radius: 24px; padding: 34px; box-shadow: 0 24px 60px rgba(0,0,0,.35); display: none; }
-.card.show { display: block; animation: pop .18s ease; }
-@keyframes pop { from { transform: scale(.96); opacity: .3; } to { transform: scale(1); opacity: 1; } }
-.name { font-size: 34px; font-weight: 800; }
-.cat { font-size: 20px; color: #64748b; margin-top: 4px; }
-.price { font-size: 62px; font-weight: 900; color: var(--accent); margin: 12px 0; direction: ltr; }
-.unit { font-size: 22px; color: #475569; }
-.miss { font-size: 30px; font-weight: 800; color: #b42318; }
-.results { width: min(760px, 92vw); background: #fff; color: #0f172a; border-radius: 20px; padding: 8px 4px; display: none; box-shadow: 0 18px 44px rgba(0,0,0,.3); max-height: 58vh; overflow: auto; }
-.results.show { display: block; }
-.rrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #eef2f7; font-size: 22px; }
-.rrow:last-child { border-bottom: 0; }
-.rrow .rp { font-weight: 900; color: var(--accent); direction: ltr; white-space: nowrap; }
-.hidden-input { position: fixed; top: -100px; left: -100px; width: 1px; height: 1px; opacity: 0; }
+:root { --accent: $accent; --accent-deep: $accent_deep; --accent-rgb: $accent_rgb; --ink:#0f172a; --paper:rgba(255,255,255,.96); }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin:0; height:100%; font-family:'Cairo','Segoe UI',Tahoma,Arial,sans-serif; }
+body {
+  color:#eaf1ff; overflow:hidden;
+  background:
+    radial-gradient(1100px 620px at 84% -12%, rgba(var(--accent-rgb),.55), transparent 60%),
+    radial-gradient(900px 560px at -8% 116%, rgba(var(--accent-rgb),.35), transparent 62%),
+    linear-gradient(155deg,#0a1020 0%,#111c33 52%,#0a1020 100%);
+}
+body::before {
+  content:''; position:fixed; left:-25%; right:-25%; bottom:-32%; height:72%; pointer-events:none;
+  background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
+  background-size:46px 46px; transform:perspective(620px) rotateX(62deg); transform-origin:bottom center;
+  -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.55),transparent 82%);
+  mask-image:linear-gradient(to top,rgba(0,0,0,.55),transparent 82%);
+}
+.stage { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; padding:9vh 4vw 12vh; perspective:1500px; }
+.topbar { position:fixed; top:0; left:0; right:0; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:16px 24px; z-index:5; }
+.brand { display:flex; align-items:center; gap:14px; transform-style:preserve-3d; }
+.logo-badge { width:62px; height:62px; border-radius:18px; display:grid; place-items:center; overflow:hidden;
+  background:linear-gradient(150deg,#ffffff,#e9f0ff);
+  box-shadow:0 18px 30px -12px rgba(0,0,0,.65), inset 0 2px 0 rgba(255,255,255,.9), inset 0 -6px 14px rgba(var(--accent-rgb),.20);
+  transform:translateZ(40px) rotateX(6deg); }
+.logo-badge img { width:100%; height:100%; object-fit:contain; }
+.wordmark { transform:translateZ(22px); }
+.wordmark .ar { font-size:26px; font-weight:800; line-height:1; }
+.wordmark .en { font-size:12px; letter-spacing:3px; opacity:.78; text-transform:uppercase; margin-top:2px; }
+.tools { display:flex; align-items:center; gap:10px; }
+.pill { border:1px solid rgba(255,255,255,.20); background:rgba(255,255,255,.08); color:#fff; border-radius:999px;
+  padding:9px 15px; font-size:14px; font-weight:700; cursor:pointer; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+.pill.on { background:var(--accent); border-color:transparent; box-shadow:0 12px 26px -12px var(--accent-deep); }
+.dot { width:9px; height:9px; border-radius:50%; background:#22c55e; box-shadow:0 0 12px #22c55e; }
+.idle { text-align:center; transform-style:preserve-3d; animation:float 5.5s ease-in-out infinite; }
+.idle .glyph { font-size:104px; transform:translateZ(60px); filter:drop-shadow(0 26px 32px rgba(0,0,0,.5)); }
+.idle h1 { font-size:30px; margin:16px 0 8px; }
+.idle p { font-size:18px; opacity:.75; margin:0; }
+@keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-12px); } }
+.plate { position:relative; width:min(840px,94vw); transform-style:preserve-3d; display:none; }
+.plate.show { display:block; animation:rise .40s cubic-bezier(.2,.8,.2,1); }
+@keyframes rise { from { opacity:0; transform:translateY(28px) rotateX(16deg) scale(.96); } to { opacity:1; transform:translateY(0) rotateX(0) scale(1); } }
+.plate .glow { position:absolute; inset:auto 8% -28px 8%; height:64px; background:radial-gradient(closest-side, rgba(0,0,0,.55), transparent); filter:blur(6px); transform:translateZ(-40px); }
+.card { position:relative; background:var(--paper); color:var(--ink); border-radius:30px; padding:40px 44px; text-align:center;
+  box-shadow:0 44px 74px -32px rgba(0,0,0,.72), 0 18px 30px -20px rgba(0,0,0,.5), inset 0 2px 0 #fff; transform:rotateX(5deg); }
+.card::after { content:''; position:absolute; inset:0; border-radius:30px; background:linear-gradient(180deg,rgba(var(--accent-rgb),.07),transparent 42%); pointer-events:none; }
+.cat { display:inline-block; font-size:14px; font-weight:700; color:var(--accent-deep); background:rgba(var(--accent-rgb),.13); padding:6px 15px; border-radius:999px; margin-bottom:12px; }
+.name { font-size:34px; font-weight:800; line-height:1.25; margin-bottom:16px; }
+.price { display:flex; align-items:baseline; justify-content:center; gap:14px; direction:rtl; }
+.price .num { font-size:clamp(52px,12vw,108px); font-weight:900; direction:ltr; unicode-bidi:isolate; font-variant-numeric:tabular-nums; letter-spacing:1px;
+  background:linear-gradient(180deg, var(--accent), var(--accent-deep)); -webkit-background-clip:text; background-clip:text; color:transparent;
+  text-shadow:0 2px 0 rgba(255,255,255,.55), 0 18px 26px rgba(var(--accent-rgb),.28); }
+.price .cur { font-size:26px; font-weight:800; color:#64748b; }
+.unit { margin-top:12px; font-size:20px; color:#475569; }
+.badge { display:inline-block; margin-top:16px; font-size:14px; font-weight:700; color:#b45309; background:#fff7ed; padding:6px 15px; border-radius:999px; }
+.miss { text-align:center; padding:40px; }
+.miss .x { font-size:72px; filter:drop-shadow(0 18px 24px rgba(239,68,68,.35)); }
+.miss h2 { font-size:28px; margin:12px 0 4px; }
+.miss p { opacity:.75; margin:0; }
+.results { width:min(840px,94vw); display:none; }
+.results.show { display:block; }
+.rrow { display:flex; justify-content:space-between; align-items:center; gap:16px; background:var(--paper); color:var(--ink);
+  border-radius:18px; padding:16px 22px; margin-bottom:12px; box-shadow:0 26px 42px -26px rgba(0,0,0,.6); }
+.rrow .rn { font-size:20px; font-weight:700; }
+.rrow .rp { font-size:24px; font-weight:900; color:var(--accent-deep); direction:rtl; white-space:nowrap; }
+.rrow .rp .cur { font-size:14px; color:#64748b; margin-inline-start:6px; }
+.pad { position:fixed; left:0; right:0; bottom:0; padding:14px 16px 18px; display:none; z-index:6; background:linear-gradient(0deg,rgba(6,10,20,.92),transparent); }
+.pad.show { display:block; }
+.pad .grid { max-width:430px; margin:0 auto; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.key { background:rgba(255,255,255,.10); color:#fff; border:1px solid rgba(255,255,255,.18); border-radius:16px; padding:16px;
+  font-size:22px; font-weight:800; cursor:pointer; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+.key:active { transform:translateY(2px); }
+.key.acc { background:var(--accent); border-color:transparent; }
+.manual { position:fixed; bottom:82px; left:0; right:0; text-align:center; font-size:22px; font-weight:900; letter-spacing:3px; min-height:28px; z-index:6; color:#fff; }
+.taskbar { position:fixed; bottom:20px; left:0; right:0; display:flex; justify-content:center; gap:10px; z-index:6; }
+.hidden-input { position:fixed; top:-120px; left:-120px; width:1px; height:1px; opacity:0; border:0; }
+@media (max-width:560px){ .name{font-size:26px} .wordmark .ar{font-size:20px} .logo-badge{width:50px;height:50px} .card{padding:28px 22px} }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="brand">$company</div>
-  <div class="hint" id="hint">امسح باركود المنتج لمعرفة السعر</div>
-  <div class="card" id="card">
-    <div class="name" id="name"></div>
-    <div class="cat" id="cat"></div>
-    <div class="price" id="price"></div>
-    <div class="unit" id="unit"></div>
+<input id="scan" class="hidden-input" autocomplete="off" inputmode="none">
+
+<div class="topbar">
+  <div class="brand">
+    <div class="logo-badge"><img id="logo" src="$logo" alt=""></div>
+    <div class="wordmark">
+      <div class="ar">$app_ar</div>
+      <div class="en">$app_en</div>
+    </div>
   </div>
-  <div class="card" id="misscard"><div class="miss">هذا المنتج غير مُدرَج في النظام</div></div>
+  <div class="tools">
+    <div class="pill" id="langBtn">EN</div>
+    <div class="pill" id="manualBtn">إدخال يدوي</div>
+    <div class="pill" style="pointer-events:none"><span class="dot"></span></div>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="idle" id="idle">
+    <div class="glyph">🛒</div>
+    <h1 id="idleTitle">امسح باركود المنتج</h1>
+    <p id="hint">مرّر الباركود أمام القارئ لمعرفة السعر</p>
+  </div>
+
+  <div class="plate" id="pricePlate">
+    <div class="glow"></div>
+    <div class="card">
+      <div class="cat" id="pCat"></div>
+      <div class="name" id="pName"></div>
+      <div class="price"><span class="num" id="pNum">0</span><span class="cur" id="pCur"></span></div>
+      <div class="unit" id="pUnit"></div>
+      <div class="badge" id="pBadge" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="plate" id="missPlate">
+    <div class="glow"></div>
+    <div class="card miss">
+      <div class="x">⚠️</div>
+      <h2 id="missTitle">هذا المنتج غير مُدرَج في النظام</h2>
+      <p id="missText">جرّب مسحًا آخر أو استخدم البحث بالاسم</p>
+    </div>
+  </div>
+
   <div class="results" id="results"></div>
 </div>
-<input id="scan" class="hidden-input" autocomplete="off" inputmode="none">
+
+<div class="manual" id="manualView"></div>
+<div class="pad" id="pad"><div class="grid" id="padGrid"></div></div>
+<div class="taskbar"><div class="pill" id="enterBtn">استعلام</div><div class="pill" id="clearBtn">مسح</div></div>
+
 <script>
 (function () {
+  var LANG = 'ar';
+  var TEXT = {
+    ar: { hint:'مرّر الباركود أمام القارئ لمعرفة السعر', manual:'إدخال يدوي', enter:'استعلام', clear:'مسح',
+          missT:'هذا المنتج غير مُدرَج في النظام', missP:'جرّب مسحًا آخر أو ابحث بالاسم', idleT:'امسح باركود المنتج',
+          weigh:'يُوزن', perUnit:'السعر لكل', price:'سعر', results:'نتائج البحث', notFound:'لا نتائج' },
+    en: { hint:'Pass the barcode in front of the reader to see the price', manual:'Keypad', enter:'Check', clear:'Clear',
+          missT:'Item not found', missP:'Try another scan or search by name', idleT:'Scan a product barcode',
+          weigh:'Sold by weight', perUnit:'Price per', price:'Price', results:'Search results', notFound:'No results' }
+  };
   var input = document.getElementById('scan');
-  var card = document.getElementById('card');
-  var miss = document.getElementById('misscard');
-  var nameEl = document.getElementById('name');
-  var catEl = document.getElementById('cat');
-  var priceEl = document.getElementById('price');
-  var unitEl = document.getElementById('unit');
+  var idle = document.getElementById('idle');
+  var pricePlate = document.getElementById('pricePlate');
+  var missPlate = document.getElementById('missPlate');
   var resultsEl = document.getElementById('results');
-  var idleTimer = null;
+  var pad = document.getElementById('pad');
+  var manualView = document.getElementById('manualView');
+  var pNum = document.getElementById('pNum'), pCur = document.getElementById('pCur');
+  var pName = document.getElementById('pName'), pCat = document.getElementById('pCat');
+  var pUnit = document.getElementById('pUnit'), pBadge = document.getElementById('pBadge');
+  var idleTimer = null, buffer = '';
+
+  function t(k) { return TEXT[LANG][k] || ''; }
+  function isDigits(s) { if (!s) { return false; } for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); if (c < 48 || c > 57) { return false; } } return true; }
 
   function beep(ok) {
     try {
       var Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) { return; }
       var ac = window.__ac || (window.__ac = new Ctx());
-      var osc = ac.createOscillator();
-      var gain = ac.createGain();
-      osc.connect(gain); gain.connect(ac.destination);
-      osc.type = 'sine';
-      osc.frequency.value = ok ? 880 : 220;
-      gain.gain.setValueAtTime(0.001, ac.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.2, ac.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.18);
-      osc.start(); osc.stop(ac.currentTime + 0.2);
+      var osc = ac.createOscillator(), g = ac.createGain();
+      osc.connect(g); g.connect(ac.destination);
+      osc.type = 'sine'; osc.frequency.value = ok ? 900 : 200;
+      g.gain.setValueAtTime(0.001, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.2);
+      osc.start(); osc.stop(ac.currentTime + 0.22);
     } catch (e) {}
   }
 
-  function reset() {
-    card.classList.remove('show');
-    miss.classList.remove('show');
-    nameEl.textContent = '';
-    catEl.textContent = '';
-    priceEl.textContent = '';
-    unitEl.textContent = '';
-    resultsEl.classList.remove('show');
-    resultsEl.innerHTML = '';
-    input.value = '';
-    try { input.focus(); } catch (e) {}
+  function applyLang() {
+    document.documentElement.lang = LANG;
+    document.documentElement.dir = (LANG === 'ar') ? 'rtl' : 'ltr';
+    document.getElementById('hint').textContent = t('hint');
+    document.getElementById('idleTitle').textContent = t('idleT');
+    document.getElementById('manualBtn').textContent = t('manual');
+    document.getElementById('enterBtn').textContent = t('enter');
+    document.getElementById('clearBtn').textContent = t('clear');
+    document.getElementById('missTitle').textContent = t('missT');
+    document.getElementById('missText').textContent = t('missP');
+    document.getElementById('langBtn').textContent = (LANG === 'ar') ? 'EN' : 'ع';
+    revealBuffer();
   }
 
-  function scheduleReset() {
-    if (idleTimer) { clearTimeout(idleTimer); }
-    idleTimer = setTimeout(reset, $idle_ms);
+  function hideAll() { idle.style.display = 'none'; pricePlate.classList.remove('show'); missPlate.classList.remove('show'); resultsEl.classList.remove('show'); }
+  function reset() { hideAll(); idle.style.display = ''; buffer = ''; revealBuffer(); try { input.focus(); } catch (e) {} scheduleReset(); }
+  function scheduleReset() { if (idleTimer) { clearTimeout(idleTimer); } idleTimer = setTimeout(reset, $idle_ms); }
+
+  function unitLabel(data) {
+    var u = data.unit || '';
+    if (data.weighted) { return t('weigh') + (u ? (' — ' + t('perUnit') + ' ' + u) : ''); }
+    return u ? (t('price') + ' / ' + u) : '';
   }
 
-  function show(data) {
-    if (data && data.found) {
-      nameEl.textContent = data.name || '';
-      catEl.textContent = data.category || '';
-      priceEl.textContent = data.price_text || '';
-      unitEl.textContent = data.weighted
-        ? ('يُوزن' + (data.unit ? (' — السعر لكل ' + data.unit) : ''))
-        : (data.unit ? ('سعر ' + data.unit) : '');
-      resultsEl.classList.remove('show');
-      miss.classList.remove('show');
-      card.classList.add('show');
-      beep(true);
-    } else {
-      card.classList.remove('show');
-      resultsEl.classList.remove('show');
-      miss.classList.add('show');
-      beep(false);
-    }
+  function showPrice(data) {
+    hideAll();
+    pCat.textContent = data.category || '';
+    pCat.style.display = data.category ? '' : 'none';
+    pName.textContent = data.name || '';
+    pNum.textContent = data.price_number || data.price_text || '0';
+    pCur.textContent = data.price_symbol || '';
+    pUnit.textContent = unitLabel(data);
+    pBadge.style.display = data.weighted ? '' : 'none';
+    pBadge.textContent = data.weighted ? t('weigh') : '';
+    pricePlate.classList.add('show');
+    beep(true);
     scheduleReset();
   }
 
-  async function lookup(code) {
-    code = (code || '').replace(/\\s+/g, '');
-    if (!code) { return; }
-    try {
-      var r = await fetch('/api/price?barcode=' + encodeURIComponent(code), { cache: 'no-store' });
-      show(await r.json());
-    } catch (e) {
-      show({ found: false });
-    }
-  }
+  function showMiss() { hideAll(); missPlate.classList.add('show'); beep(false); scheduleReset(); }
 
-  function renderResults(data) {
-    var rows = (data && data.results) || [];
-    card.classList.remove('show');
-    miss.classList.remove('show');
-    if (!rows.length) { show({ found: false }); return; }
+  function renderResults(rows) {
+    hideAll();
+    if (!rows.length) { showMiss(); return; }
     resultsEl.innerHTML = '';
-    rows.forEach(function (row) {
-      var el = document.createElement('div');
-      el.className = 'rrow';
-      var name = document.createElement('span');
-      name.textContent = row.weighted ? (row.name + ' · يُوزن') : row.name;
-      var price = document.createElement('span');
-      price.className = 'rp';
-      price.textContent = row.price_text || '';
-      el.appendChild(name);
-      el.appendChild(price);
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var el = document.createElement('div'); el.className = 'rrow';
+      var rn = document.createElement('span'); rn.className = 'rn';
+      rn.textContent = row.name + (row.weighted ? (' · ' + t('weigh')) : '');
+      var rp = document.createElement('span'); rp.className = 'rp';
+      var b = document.createElement('span'); b.textContent = row.price_number || row.price_text || '';
+      var c = document.createElement('span'); c.className = 'cur'; c.textContent = row.price_symbol || '';
+      rp.appendChild(b); rp.appendChild(c);
+      el.appendChild(rn); el.appendChild(rp);
       resultsEl.appendChild(el);
-    });
+    }
     resultsEl.classList.add('show');
     beep(true);
     scheduleReset();
   }
 
-  async function search(query) {
-    query = (query || '').trim();
-    if (!query) { return; }
-    try {
-      var r = await fetch('/api/search?q=' + encodeURIComponent(query), { cache: 'no-store' });
-      renderResults(await r.json());
-    } catch (e) {
-      show({ found: false });
-    }
+  function lookup(code) {
+    code = (code || '').replace(/[^0-9A-Za-z]/g, '');
+    if (!code) { return; }
+    fetch('/api/price?barcode=' + encodeURIComponent(code), { cache: 'no-store' })
+      .then(function (r) { return r.json(); }).then(showPrice).catch(function () { showMiss(); });
+  }
+  function search(q) {
+    q = (q || '').trim();
+    if (!q) { return; }
+    fetch('/api/search?q=' + encodeURIComponent(q), { cache: 'no-store' })
+      .then(function (r) { return r.json(); }).then(function (d) { renderResults(d.results || []); }).catch(function () { showMiss(); });
+  }
+  function dispatch(v) {
+    v = (v || '').trim();
+    if (!v) { return; }
+    if (isDigits(v) && v.length >= 4) { lookup(v); } else { search(v); }
   }
 
   input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' || e.keyCode === 13) {
-      var v = (input.value || '').trim();
-      input.value = '';
-      if (/^\\d{4,}$$/.test(v)) { lookup(v); } else { search(v); }
-      e.preventDefault();
-    }
+    if (e.key === 'Enter' || e.keyCode === 13) { var v = input.value; input.value = ''; dispatch(v); e.preventDefault(); }
   });
   document.addEventListener('click', function () { try { input.focus(); } catch (e) {} });
   window.addEventListener('load', function () { try { input.focus(); } catch (e) {} scheduleReset(); });
+
+  // on-screen numeric keypad (kiosks without a scanner)
+  function press(d) { if (buffer.length < 24) { buffer += d; revealBuffer(); } }
+  function revealBuffer() { manualView.textContent = buffer; }
+  var keys = ['1','2','3','4','5','6','7','8','9','C','0','OK'];
+  for (var k = 0; k < keys.length; k++) {
+    (function (label) {
+      var el = document.createElement('div');
+      el.className = 'key' + ((label === 'OK') ? ' acc' : '');
+      el.textContent = label;
+      el.onclick = function () {
+        if (label === 'C') { buffer = ''; revealBuffer(); }
+        else if (label === 'OK') { var v = buffer; buffer = ''; revealBuffer(); dispatch(v); }
+        else { press(label); }
+      };
+      document.getElementById('padGrid').appendChild(el);
+    })(keys[k]);
+  }
+  document.getElementById('manualBtn').onclick = function () { pad.classList.toggle('show'); try { input.focus(); } catch (e) {} };
+  document.getElementById('enterBtn').onclick = function () { var v = buffer; buffer = ''; revealBuffer(); dispatch(v); };
+  document.getElementById('clearBtn').onclick = function () { buffer = ''; revealBuffer(); reset(); };
+  document.getElementById('langBtn').onclick = function () { LANG = (LANG === 'ar') ? 'en' : 'ar'; applyLang(); };
+
+  applyLang();
 })();
 </script>
 </body>
@@ -278,6 +421,9 @@ class LanPriceServer:
         company: str = "",
         title: str = "",
         accent: str = _DEFAULT_ACCENT,
+        logo: str = "",
+        app_ar: str = branding.APP_NAME_AR,
+        app_en: str = branding.APP_NAME_EN,
         idle_ms: int = _DEFAULT_IDLE_MS,
     ):
         self._db = db
@@ -287,7 +433,10 @@ class LanPriceServer:
         self._port = int(port)
         self._company = company or branding.APP_NAME_AR
         self._title = title or self._company
-        self._accent = accent or _DEFAULT_ACCENT
+        self._accent = _safe_hex(accent)
+        self._logo = logo or default_brand.DEFAULT_COMPANY_LOGO
+        self._app_ar = app_ar or branding.APP_NAME_AR
+        self._app_en = app_en or branding.APP_NAME_EN
         self._idle_ms = int(idle_ms)
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -321,8 +470,36 @@ class LanPriceServer:
             company=self._company,
             title=self._title,
             accent=self._accent,
+            accent_rgb=_rgb_csv(self._accent),
+            accent_deep=_darken(self._accent),
+            logo=self._logo,
+            app_ar=self._app_ar,
+            app_en=self._app_en,
             idle_ms=str(self._idle_ms),
         )
+
+    def _price_fields(self, value) -> dict:
+        """Number + symbol separately so the kiosk can place the symbol itself.
+
+        ``format_amount`` converts a *stored USD* price into the display
+        currency (the previous code used ``format_display_value``, which does
+        not convert -- a 11000 SYP item therefore showed as "1").
+        """
+        number = ""
+        symbol = ""
+        try:
+            number = currency.format_amount(value, self._settings, with_symbol=False)
+        except Exception:
+            number = ""
+        try:
+            symbol = currency.get_display_symbol(self._settings)
+        except Exception:
+            symbol = ""
+        return {
+            "price_number": number,
+            "price_symbol": symbol,
+            "price_text": (number + " " + symbol).strip(),
+        }
 
     def lookup(self, barcode: str) -> dict:
         code = (barcode or "").strip()[:_MAX_BARCODE_LEN]
@@ -336,21 +513,16 @@ class LanPriceServer:
         if not item:
             return {"found": False}
         unit = str(item.get("unit_abbreviation") or item.get("unit_name") or "").strip()
-        return {
+        result = {
             "found": True,
             "barcode": code,
             "name": str(item.get("name") or ""),
             "category": str(item.get("category_name") or ""),
-            "price_text": self._price_text(item.get("selling_price")),
             "unit": unit,
             "weighted": is_weighted_unit(item.get("unit_abbreviation"), item.get("unit_name")),
         }
-
-    def _price_text(self, value) -> str:
-        try:
-            return currency.format_display_value(value, self._settings, with_symbol=True)
-        except Exception:
-            return ""
+        result.update(self._price_fields(item.get("selling_price")))
+        return result
 
     def search(self, query: str, limit: int = 8) -> dict:
         text = (query or "").strip()[:64]
@@ -364,12 +536,13 @@ class LanPriceServer:
         results = []
         for item in rows:
             unit = str(item.get("unit_abbreviation") or item.get("unit_name") or "").strip()
-            results.append({
+            row = {
                 "name": str(item.get("name") or ""),
-                "price_text": self._price_text(item.get("selling_price")),
                 "unit": unit,
                 "weighted": is_weighted_unit(item.get("unit_abbreviation"), item.get("unit_name")),
-            })
+            }
+            row.update(self._price_fields(item.get("selling_price")))
+            results.append(row)
         return {"results": results}
 
     def start(self) -> None:
@@ -428,7 +601,8 @@ def current() -> LanPriceServer | None:
 def _build(ctx) -> LanPriceServer:
     settings = ctx.settings
     company = str(settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
-    accent = str(settings.get("invoice_color", "") or "").strip() or _DEFAULT_ACCENT
+    accent = _safe_hex(settings.get("invoice_color"))
+    logo = str(settings.get("company_logo", "") or "").strip() or default_brand.DEFAULT_COMPANY_LOGO
     return LanPriceServer(
         ctx.db,
         settings,
@@ -437,6 +611,9 @@ def _build(ctx) -> LanPriceServer:
         company=company,
         title=lan_settings.title(settings, company),
         accent=accent,
+        logo=logo,
+        app_ar=branding.APP_NAME_AR,
+        app_en=branding.APP_NAME_EN,
         idle_ms=lan_settings.idle_seconds(settings) * 1000,
     )
 
