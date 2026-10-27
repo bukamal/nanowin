@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.19"
-BUILD_NUMBER = 64  # FIX_0.17.19: professional manual entry on the price kiosk
+APP_VERSION = "0.17.20"
+BUILD_NUMBER = 65  # FEAT_0.17.20: HTTPS + PWA + camera for the price kiosk
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

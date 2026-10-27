@@ -14,18 +14,28 @@ admin-configurable keys.
 
 Endpoints::
 
-    GET /                       -> kiosk web page (responsive, RTL, big fonts)
-    GET /api/health             -> {"ok": true, ...}
-    GET /api/price?barcode=...  -> {"found": bool, "name", "price_number",
-                                    "price_symbol", "unit", "weighted", ...}
-    GET /api/search?q=...       -> {"results": [...]}
+    GET /                        -> kiosk web page (responsive, RTL, 3D)
+    GET /manifest.webmanifest    -> PWA manifest
+    GET /sw.js                   -> service worker (offline shell)
+    GET /icon-192.png /icon-512.png
+    GET /api/health              -> {"ok": true, ...}
+    GET /api/price?barcode=...   -> {"found": bool, "name", "price_number", ...}
+    GET /api/search?q=...        -> {"results": [...]}
+
+``lan_price_server_https`` serves the kiosk over HTTPS (self-signed) so the
+browser Camera API (``getUserMedia``) and the Wake Lock API -- both blocked in
+insecure contexts -- work on phones and Windows terminals.
 """
 
+import base64
 import json
+import os
 import socket
+import ssl
 import string
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from nano_offline.core import branding, currency, default_brand, lan_settings
@@ -39,6 +49,26 @@ log = get_logger("nano.lan")
 _DEFAULT_ACCENT = "#0B5FCC"
 _DEFAULT_IDLE_MS = 12000
 _MAX_BARCODE_LEN = 64
+
+_SERVICE_WORKER = """const CACHE = 'cashir-price-v1';
+self.addEventListener('install', function () { self.skipWaiting(); });
+self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
+self.addEventListener('fetch', function (e) {
+  var req = e.request;
+  if (req.method !== 'GET') { return; }
+  var url = new URL(req.url);
+  if (url.pathname.indexOf('/api/') === 0) {
+    e.respondWith(fetch(req).catch(function () { return caches.match(req); }));
+    return;
+  }
+  e.respondWith(caches.open(CACHE).then(function (c) {
+    return c.match(req).then(function (r) {
+      if (r) { return r; }
+      return fetch(req).then(function (resp) { try { c.put(req, resp.clone()); } catch (err) {} return resp; });
+    });
+  }));
+});
+"""
 
 
 def _safe_hex(value, fallback: str = _DEFAULT_ACCENT) -> str:
@@ -62,6 +92,64 @@ def _darken(value, factor: float = 0.72) -> str:
     return "#{:02x}{:02x}{:02x}".format(int(r * factor), int(g * factor), int(b * factor))
 
 
+def _ensure_self_signed(cert_dir, lan_ip: str):
+    """Generate (once) a self-signed cert/key for the price server; return paths.
+
+    Uses ``cryptography`` (already a dependency). The cert covers ``localhost``
+    plus the machine's LAN IP so ``https://<ip>:port`` validates once trusted.
+    Returns ``(cert_path, key_path)`` or ``None`` when it can't be created.
+    """
+    try:
+        import datetime as _dt
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except Exception:
+        return None
+    directory = Path(cert_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    cert_path = directory / "price_server_cert.pem"
+    key_path = directory / "price_server_key.pem"
+    if cert_path.exists() and key_path.exists():
+        return str(cert_path), str(key_path)
+    try:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Cashir Price Server")])
+        sans = [x509.DNSName("localhost")]
+        try:
+            import ipaddress as _ip
+
+            sans.append(x509.IPAddress(_ip.ip_address(lan_ip)))
+        except Exception:
+            pass
+        now = _dt.datetime.now(_dt.timezone.utc)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - _dt.timedelta(days=1))
+            .not_valid_after(now + _dt.timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+            .sign(key, hashes.SHA256())
+        )
+        key_path.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        return str(cert_path), str(key_path)
+    except Exception:
+        log.warning("تعذّر إنشاء شهادة TLS", exc_info=True)
+        return None
+
+
 # The kiosk page. Uses string.Template ($name) instead of an f-string so the
 # CSS/JS braces stay untouched. No other '$' must appear in the markup.
 # Layout is a single flex column (header / main / keypad) sized to 100dvh:
@@ -73,7 +161,9 @@ _KIOSK_TEMPLATE = string.Template(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="$accent">
 <title>$title</title>
+<link rel="manifest" href="/manifest.webmanifest">
 <style>
 :root { --accent: $accent; --accent-deep: $accent_deep; --accent-rgb: $accent_rgb; --ink:#0f172a; --paper:rgba(255,255,255,.96); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -82,12 +172,14 @@ body {
   margin: 0; color: #eaf1ff; overflow: hidden;
   min-height: 100vh; min-height: 100dvh;
   display: flex; flex-direction: column;
+  overscroll-behavior: none;
   font-family: 'Cairo','Segoe UI',Tahoma,Arial,sans-serif;
   background:
     radial-gradient(1100px 620px at 84% -12%, rgba(var(--accent-rgb),.55), transparent 60%),
     radial-gradient(900px 560px at -8% 116%, rgba(var(--accent-rgb),.35), transparent 62%),
     linear-gradient(155deg,#0a1020 0%,#111c33 52%,#0a1020 100%);
 }
+body.idle-cursor { cursor: none; }
 body::before {
   content:''; position:fixed; left:-25%; right:-25%; bottom:-32%; height:70%; pointer-events:none; z-index:0;
   background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
@@ -116,7 +208,7 @@ body::before {
 .pill {
   border: 1px solid rgba(255,255,255,.20); background: rgba(255,255,255,.08); color: #fff; border-radius: 999px;
   padding: clamp(7px,1.5vmin,10px) clamp(11px,2.2vmin,15px); font-size: clamp(12px,1.9vmin,14px); font-weight: 700; cursor: pointer;
-  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); white-space: nowrap;
 }
 .pill.on { background: var(--accent); border-color: transparent; box-shadow: 0 12px 26px -12px var(--accent-deep); }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 12px #22c55e; }
@@ -183,12 +275,22 @@ body::before {
 .key:active { transform: translateY(2px); }
 .key.acc { background: var(--accent); border-color: transparent; }
 .hidden-input { position: fixed; top: -120px; left: -120px; width: 1px; height: 1px; opacity: 0; border: 0; }
+.cam { position: fixed; inset: 0; z-index: 20; display: none; background: #05070d; }
+.cam.show { display: block; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam .frame { position: absolute; left: 8%; right: 8%; top: 26%; height: 30%; border: 3px solid rgba(255,255,255,.9); border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); }
+.cam .scanline { position: absolute; left: 8%; right: 8%; height: 3px; background: var(--accent); box-shadow: 0 0 18px 4px rgba(var(--accent-rgb),.9); top: 27%; animation: scan 2.2s ease-in-out infinite; }
+@keyframes scan { 0%,100% { top: 27%; } 50% { top: 55%; } }
+.cam .cambar { position: absolute; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); display: flex; justify-content: center; gap: 12px; }
+.cam .cambar .pill { background: rgba(255,255,255,.16); }
+.cam .msg { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; font-size: clamp(14px,2.6vmin,20px); padding: 0 24px; }
 @media (max-height: 520px) {
   .idle .glyph { display: none; }
   .logo-badge { width: clamp(36px,9vmin,48px); height: clamp(36px,9vmin,48px); }
   .price .num { font-size: clamp(34px,15vmin,72px); }
   .name { font-size: clamp(18px,4.4vmin,26px); }
   .main { padding: clamp(6px,1.6vh,14px) clamp(10px,3vw,24px); }
+  .cam .frame { top: 18%; height: 40%; }
 }
 </style>
 </head>
@@ -206,6 +308,8 @@ body::before {
   <div class="tools">
     <div class="pill" id="langBtn">EN</div>
     <div class="pill" id="manualBtn">إدخال يدوي</div>
+    <div class="pill" id="camBtn">الكاميرا</div>
+    <div class="pill" id="fullBtn">⛶</div>
     <div class="pill" style="pointer-events:none"><span class="dot"></span></div>
   </div>
 </header>
@@ -245,16 +349,32 @@ body::before {
   <div class="grid" id="padGrid"></div>
 </div>
 
+<div class="cam" id="cam">
+  <video id="camVideo" playsinline muted></video>
+  <div class="frame"></div>
+  <div class="scanline"></div>
+  <div class="msg" id="camMsg"></div>
+  <div class="cambar">
+    <div class="pill" id="camSwitch">تبديل الكاميرا</div>
+    <div class="pill" id="camTorch">الفلاش</div>
+    <div class="pill" id="camClose">إغلاق</div>
+  </div>
+</div>
+
 <script>
 (function () {
   var LANG = 'ar';
   var TEXT = {
     ar: { hint:'مرّر الباركود أمام القارئ لمعرفة السعر', manual:'إدخال يدوي', enter:'استعلام', clear:'مسح',
           missT:'هذا المنتج غير مُدرَج في النظام', missP:'جرّب مسحًا آخر أو ابحث بالاسم', idleT:'امسح باركود المنتج',
-          weigh:'يُوزن', perUnit:'السعر لكل', price:'سعر' },
+          weigh:'يُوزن', perUnit:'السعر لكل', price:'سعر', cam:'الكاميرا', camNoHttps:'الكاميرا تتطلّب تشغيل الخادم عبر HTTPS',
+          camUnsupported:'قراءة الباركود بالكاميرا غير مدعومة في هذا المتصفح', camDenied:'تعذّر الوصول للكاميرا أو رُفض الإذن',
+          camSwitch:'تبديل الكاميرا', camTorch:'الفلاش', camClose:'إغلاق' },
     en: { hint:'Pass the barcode in front of the reader to see the price', manual:'Keypad', enter:'Check', clear:'Clear',
           missT:'Item not found', missP:'Try another scan or search by name', idleT:'Scan a product barcode',
-          weigh:'Sold by weight', perUnit:'Price per', price:'Price' }
+          weigh:'Sold by weight', perUnit:'Price per', price:'Price', cam:'Camera', camNoHttps:'The camera needs the server served over HTTPS',
+          camUnsupported:'Camera barcode scanning is not supported in this browser', camDenied:'Camera unavailable or permission denied',
+          camSwitch:'Switch camera', camTorch:'Flash', camClose:'Close' }
   };
   var input = document.getElementById('scan');
   var idle = document.getElementById('idle');
@@ -266,7 +386,7 @@ body::before {
   var pNum = document.getElementById('pNum'), pCur = document.getElementById('pCur');
   var pName = document.getElementById('pName'), pCat = document.getElementById('pCat');
   var pUnit = document.getElementById('pUnit'), pBadge = document.getElementById('pBadge');
-  var idleTimer = null, buffer = '';
+  var idleTimer = null, buffer = '', cursorTimer = null;
   var IDLE_MS = $idle_ms;
   var IDLE_MS_MANUAL = Math.max(30000, IDLE_MS * 3);
 
@@ -294,6 +414,10 @@ body::before {
     document.getElementById('hint').textContent = t('hint');
     document.getElementById('idleTitle').textContent = t('idleT');
     document.getElementById('manualBtn').textContent = t('manual');
+    document.getElementById('camBtn').textContent = t('cam');
+    document.getElementById('camSwitch').textContent = t('camSwitch');
+    document.getElementById('camTorch').textContent = t('camTorch');
+    document.getElementById('camClose').textContent = t('camClose');
     document.getElementById('missTitle').textContent = t('missT');
     document.getElementById('missText').textContent = t('missP');
     document.getElementById('langBtn').textContent = (LANG === 'ar') ? 'EN' : 'ع';
@@ -381,7 +505,10 @@ body::before {
     scheduleReset();
     if (e.key === 'Enter' || e.keyCode === 13) { var v = input.value; input.value = ''; dispatch(v); e.preventDefault(); }
   });
-  document.addEventListener('click', function () { try { input.focus(); } catch (e) {} });
+  document.addEventListener('click', function (e) {
+    if (cam.classList.contains('show')) { return; }
+    try { input.focus(); } catch (err) {}
+  });
   window.addEventListener('load', function () { try { input.focus(); } catch (e) {} scheduleReset(); });
 
   // on-screen numeric keypad (kiosks without a scanner) -- in normal flow, so
@@ -422,6 +549,105 @@ body::before {
     try { input.focus(); } catch (e) {}
   };
   document.getElementById('langBtn').onclick = function () { LANG = (LANG === 'ar') ? 'en' : 'ar'; applyLang(); relabelKeys(); };
+
+  // fullscreen + wake lock (appliance mode)
+  function toggleFull() {
+    try {
+      if (document.fullscreenElement) { document.exitFullscreen(); }
+      else if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+    } catch (e) {}
+  }
+  document.getElementById('fullBtn').onclick = toggleFull;
+  var wakeLock = null;
+  function requestWake() {
+    try {
+      if (navigator.wakeLock && navigator.wakeLock.request) {
+        navigator.wakeLock.request('screen').then(function (wl) { wakeLock = wl; }).catch(function () {});
+      }
+    } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { requestWake(); } });
+  document.addEventListener('click', requestWake, { once: true });
+
+  // hide the cursor when idle (kiosk)
+  function markCursor() {
+    document.body.classList.remove('idle-cursor');
+    if (cursorTimer) { clearTimeout(cursorTimer); }
+    cursorTimer = setTimeout(function () { document.body.classList.add('idle-cursor'); }, 4000);
+  }
+  document.addEventListener('mousemove', markCursor);
+  document.addEventListener('touchstart', markCursor, { passive: true });
+  markCursor();
+
+  // camera barcode scanning (BarcodeDetector + getUserMedia; needs HTTPS)
+  var cam = document.getElementById('cam');
+  var video = document.getElementById('camVideo');
+  var camMsg = document.getElementById('camMsg');
+  var camState = { stream: null, detector: null, timer: null, track: null, facing: 'environment', last: '', lastAt: 0 };
+  function camMessage(m) { camMsg.textContent = m || ''; }
+  function camTick() {
+    if (!camState.stream) { return; }
+    camState.timer = setTimeout(function () {
+      if (video.readyState === 4 && camState.detector) {
+        camState.detector.detect(video).then(function (codes) {
+          if (codes && codes.length) {
+            var v = String(codes[0].rawValue || '');
+            var now = Date.now();
+            if (v && !(v === camState.last && (now - camState.lastAt) < 2500)) {
+              camState.last = v; camState.lastAt = now;
+              closeCamera();
+              dispatch(v);
+              return;
+            }
+          }
+          camTick();
+        }).catch(function () { camTick(); });
+      } else { camTick(); }
+    }, 220);
+  }
+  function openCamera() {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { cam.classList.add('show'); camMessage(t('camNoHttps')); return; }
+    if (!('BarcodeDetector' in window)) { cam.classList.add('show'); camMessage(t('camUnsupported')); return; }
+    cam.classList.add('show');
+    camMessage('');
+    camState.last = ''; camState.lastAt = 0;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camState.facing } }, audio: false })
+      .then(function (s) {
+        camState.stream = s;
+        camState.track = s.getVideoTracks ? s.getVideoTracks()[0] : null;
+        video.srcObject = s;
+        try { video.play(); } catch (e) {}
+        try { camState.detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
+        catch (e) { camState.detector = new BarcodeDetector(); }
+        camTick();
+      })
+      .catch(function () { camMessage(t('camDenied')); });
+  }
+  function closeCamera() {
+    if (camState.timer) { clearTimeout(camState.timer); camState.timer = null; }
+    if (camState.stream) { try { camState.stream.getTracks().forEach(function (tr) { tr.stop(); }); } catch (e) {} }
+    camState.stream = null; camState.detector = null; camState.track = null;
+    cam.classList.remove('show');
+    camMessage('');
+  }
+  document.getElementById('camBtn').onclick = openCamera;
+  document.getElementById('camClose').onclick = closeCamera;
+  document.getElementById('camSwitch').onclick = function () {
+    camState.facing = (camState.facing === 'environment') ? 'user' : 'environment';
+    closeCamera(); openCamera();
+  };
+  document.getElementById('camTorch').onclick = function () {
+    try {
+      if (camState.track && camState.track.applyConstraints) {
+        var on = !(camState.torchOn);
+        camState.torchOn = on;
+        camState.track.applyConstraints({ advanced: [{ torch: on }] });
+      }
+    } catch (e) {}
+  };
+
+  // PWA: register the service worker for offline resilience
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(function () {}); }
 
   applyLang();
 })();
@@ -470,6 +696,12 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path
         if path in ("/", "/index.html"):
             self._send(200, app.kiosk_html().encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/manifest.webmanifest":
+            self._send(200, app.manifest().encode("utf-8"), "application/manifest+json; charset=utf-8")
+        elif path == "/sw.js":
+            self._send(200, app.service_worker().encode("utf-8"), "application/javascript; charset=utf-8")
+        elif path in ("/icon-192.png", "/icon-512.png", "/icon.png"):
+            self._send(200, app.icon_png(), "image/png")
         elif path == "/api/health":
             self._json({"ok": True, "app": "cashir-price-check", "version": APP_VERSION})
         elif path == "/api/price":
@@ -499,6 +731,8 @@ class LanPriceServer:
         app_ar: str = branding.APP_NAME_AR,
         app_en: str = branding.APP_NAME_EN,
         idle_ms: int = _DEFAULT_IDLE_MS,
+        https: bool = False,
+        cert_dir=None,
     ):
         self._db = db
         self._settings = settings
@@ -512,6 +746,9 @@ class LanPriceServer:
         self._app_ar = app_ar or branding.APP_NAME_AR
         self._app_en = app_en or branding.APP_NAME_EN
         self._idle_ms = int(idle_ms)
+        self._https = bool(https)
+        self._cert_dir = cert_dir
+        self._scheme = "https" if self._https else "http"
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -531,7 +768,7 @@ class LanPriceServer:
 
     @property
     def url(self) -> str:
-        return f"http://{self._lan_ip()}:{self.port}/"
+        return f"{self._scheme}://{self._lan_ip()}:{self.port}/"
 
     def client_allowed(self, host: str) -> bool:
         try:
@@ -551,6 +788,37 @@ class LanPriceServer:
             app_en=self._app_en,
             idle_ms=str(self._idle_ms),
         )
+
+    def manifest(self) -> str:
+        return json.dumps(
+            {
+                "name": f"{self._app_ar} · {self._app_en}",
+                "short_name": self._app_ar,
+                "description": branding.APP_TAGLINE,
+                "start_url": "/",
+                "scope": "/",
+                "display": "fullscreen",
+                "orientation": "any",
+                "background_color": "#0a1020",
+                "theme_color": self._accent,
+                "lang": "ar",
+                "dir": "rtl",
+                "icons": [
+                    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    def service_worker(self) -> str:
+        return _SERVICE_WORKER
+
+    def icon_png(self) -> bytes:
+        try:
+            return base64.b64decode(str(default_brand.DEFAULT_COMPANY_LOGO).split(",", 1)[1])
+        except Exception:
+            return b""
 
     def _price_fields(self, value) -> dict:
         """Number + symbol separately so the kiosk can place the symbol itself.
@@ -625,12 +893,22 @@ class LanPriceServer:
             httpd = ThreadingHTTPServer((self._host, self._port), _Handler)
             httpd.daemon_threads = True
             httpd.app = self  # type: ignore[attr-defined]
+            if self._https:
+                pair = _ensure_self_signed(self._cert_dir, self._lan_ip())
+                if pair:
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    context.load_cert_chain(pair[0], pair[1])
+                    httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+                    self._scheme = "https"
+                else:
+                    log.warning("HTTPS مطلوب لكن تعذّر إنشاء الشهادة؛ سيُستخدم HTTP")
+                    self._scheme = "http"
             self._httpd = httpd
             self._thread = threading.Thread(
                 target=httpd.serve_forever, name="lan-price-server", daemon=True
             )
             self._thread.start()
-            log.info("LAN price server listening on %s:%s", self._host, self.port)
+            log.info("LAN price server listening on %s:%s (%s)", self._host, self.port, self._scheme)
 
     def stop(self) -> None:
         with self._lock:
@@ -676,6 +954,11 @@ def _build(ctx) -> LanPriceServer:
     company = str(settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
     accent = _safe_hex(settings.get("invoice_color"))
     logo = str(settings.get("company_logo", "") or "").strip() or default_brand.DEFAULT_COMPANY_LOGO
+    cert_dir = None
+    try:
+        cert_dir = os.path.dirname(str(ctx.db.path))
+    except Exception:
+        cert_dir = None
     return LanPriceServer(
         ctx.db,
         settings,
@@ -688,6 +971,8 @@ def _build(ctx) -> LanPriceServer:
         app_ar=branding.APP_NAME_AR,
         app_en=branding.APP_NAME_EN,
         idle_ms=lan_settings.idle_seconds(settings) * 1000,
+        https=lan_settings.https_enabled(settings),
+        cert_dir=cert_dir,
     )
 
 

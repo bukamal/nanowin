@@ -20,6 +20,7 @@ HOST_KEY = "lan_price_server_host"
 TITLE_KEY = "lan_kiosk_title"
 ALLOWED_SUBNETS_KEY = "lan_allowed_subnets"
 IDLE_SECONDS_KEY = "lan_kiosk_idle_seconds"
+HTTPS_KEY = "lan_price_server_https"
 
 DEFAULT_ENABLED = False
 DEFAULT_PORT = 8770
@@ -27,6 +28,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_TITLE = ""
 DEFAULT_ALLOWED_SUBNETS = ""
 DEFAULT_IDLE_SECONDS = 12
+DEFAULT_HTTPS = False
 
 MIN_PORT = 1024
 MAX_PORT = 65535
@@ -60,6 +62,16 @@ def host(settings) -> str:
 def title(settings, fallback: str = "") -> str:
     value = str(settings.get(TITLE_KEY, DEFAULT_TITLE) or "").strip()
     return value or (fallback or "")
+
+
+def https_enabled(settings) -> bool:
+    """Whether to serve the price kiosk over HTTPS (required for the camera).
+
+    A self-signed certificate is generated on first use; the browser will warn
+    until it is trusted on each device, but ``getUserMedia`` (camera) and the
+    Wake Lock API only work in a secure context.
+    """
+    return _flag(settings, HTTPS_KEY, DEFAULT_HTTPS)
 
 
 def idle_seconds(settings) -> int:
@@ -100,10 +112,10 @@ def client_allowed(settings, host: str) -> bool:
 
 __all__ = [
     "ENABLED_KEY", "PORT_KEY", "HOST_KEY", "TITLE_KEY", "ALLOWED_SUBNETS_KEY",
-    "IDLE_SECONDS_KEY",
+    "IDLE_SECONDS_KEY", "HTTPS_KEY",
     "DEFAULT_ENABLED", "DEFAULT_PORT", "DEFAULT_HOST", "DEFAULT_TITLE",
-    "DEFAULT_ALLOWED_SUBNETS", "DEFAULT_IDLE_SECONDS",
+    "DEFAULT_ALLOWED_SUBNETS", "DEFAULT_IDLE_SECONDS", "DEFAULT_HTTPS",
     "MIN_PORT", "MAX_PORT", "MIN_IDLE_SECONDS", "MAX_IDLE_SECONDS",
-    "enabled", "port", "host", "title", "idle_seconds",
+    "enabled", "port", "host", "title", "idle_seconds", "https_enabled",
     "allowed_networks", "client_allowed",
 ]

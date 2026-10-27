@@ -2039,6 +2039,10 @@ class AdminCenter:
             value=str(self.ctx.settings.get(lan_settings.ALLOWED_SUBNETS_KEY, "") or ""),
             width=380,
         )
+        lan_https_switch = ft.Switch(
+            label="تقديم الصفحة عبر HTTPS (يلزم لعمل كاميرا الباركود ومنع إطفاء الشاشة)",
+            value=lan_settings.https_enabled(lan_iset),
+        )
         lan_status_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
         lan_url_text = ft.Text("", size=12, color=Colors.TEXT_SECONDARY, selectable=True)
 
@@ -2073,6 +2077,7 @@ class AdminCenter:
                     lan_settings.TITLE_KEY: (lan_title_field.value or "").strip(),
                     lan_settings.IDLE_SECONDS_KEY: str(idle),
                     lan_settings.ALLOWED_SUBNETS_KEY: (lan_subnets_field.value or "").strip(),
+                    lan_settings.HTTPS_KEY: "1" if lan_https_switch.value else "0",
                 })
                 lan_port_field.value = str(port)
                 lan_idle_field.value = str(idle)
@@ -2580,6 +2585,7 @@ class AdminCenter:
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     lan_subnets_field,
+                    lan_https_switch,
                     ft.Row(
                         [
                             ft.FilledButton("حفظ وتشغيل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_lan_settings),
