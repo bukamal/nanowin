@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.22"
-BUILD_NUMBER = 67  # FIX_0.17.22: kiosk shows "not found" instead of a blank 0
+APP_VERSION = "0.17.23"
+BUILD_NUMBER = 68  # FIX_0.17.23: client-mode fail-safe (never a blank screen)
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

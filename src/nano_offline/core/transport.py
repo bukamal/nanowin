@@ -81,7 +81,7 @@ class RemoteTransport:
     services and returns ``{"ok": true, "result": ...}``.
     """
 
-    def __init__(self, base_url: str, *, token: str | None = None, session: str | None = None, timeout: float = 15.0):
+    def __init__(self, base_url: str, *, token: str | None = None, session: str | None = None, timeout: float = 6.0):
         self.base_url = str(base_url or "").rstrip("/")
         self.token = token or None
         self.session = session or None

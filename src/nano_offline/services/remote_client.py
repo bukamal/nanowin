@@ -64,7 +64,7 @@ class RemoteService:
 class RemoteContext:
     """A lightweight stand-in for ``AppContext`` whose services are remote."""
 
-    def __init__(self, base_url: str, *, token: str | None = None, timeout: float = 15.0):
+    def __init__(self, base_url: str, *, token: str | None = None, timeout: float = 6.0):
         self.transport = RemoteTransport(base_url, token=token, timeout=timeout)
 
     def service(self, name: str) -> RemoteService:

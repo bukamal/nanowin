@@ -18,10 +18,18 @@ from pathlib import Path
 
 from nano_offline.app_context import AppContext
 from nano_offline.core.local_prefs import LocalPrefs
+from nano_offline.core.logging_config import get_logger
 from nano_offline.core.transport import RemoteTransport
 from nano_offline.services.client_auth import ClientAuth
 from nano_offline.services.client_context import ClientSettings
 from nano_offline.services.remote_client import RemoteService
+
+log = get_logger("nano.lan.client")
+
+#: Set by :func:`context_for` when client mode was requested but the app fell
+#: back to local (server unreachable / setup failed). ``main.py`` surfaces it
+#: as a toast so the user knows why they are running locally.
+LAST_FALLBACK: str | None = None
 
 #: Business services served from the central server (their allow-listed methods
 #: form the shared data plane). Everything else on the AppContext stays local.
@@ -60,14 +68,35 @@ def context_for(db_path: str | Path, prefs: LocalPrefs | None = None) -> AppCont
 
     ``main.py`` calls this at startup. Client mode is off by default, so a normal
     install always gets the plain local context (identical behaviour).
+
+    Fail-safe: if client mode is on but the central server is unreachable (or
+    the client context can't be built), the app falls back to a local context
+    instead of hanging on blocking network calls -- it never shows a blank
+    screen. :data:`LAST_FALLBACK` records why, for the startup toast.
     """
+    global LAST_FALLBACK
+    LAST_FALLBACK = None
+
     from nano_offline.core import remote_settings
+    from nano_offline.services.remote_client import probe
 
     path = Path(db_path)
     prefs = prefs or LocalPrefs(path.parent / "local_prefs.json")
     url = remote_settings.server_url(prefs)
     if remote_settings.client_mode(prefs) and url:
-        return build_hybrid_context(path, url, token=remote_settings.server_token(prefs) or None, prefs=prefs)
+        token = remote_settings.server_token(prefs) or None
+        try:
+            probe(url, token=token, timeout=2.5)
+        except Exception:
+            LAST_FALLBACK = "تعذّر الوصول لخادم المتجر — تم التشغيل محليًا."
+            log.warning("client mode: server unreachable at %s; using local context", url)
+            return AppContext.create(path)
+        try:
+            return build_hybrid_context(path, url, token=token, prefs=prefs)
+        except Exception:
+            LAST_FALLBACK = "تعذّر تهيئة وضع العميل — تم التشغيل محليًا."
+            log.warning("client mode: setup failed; using local context", exc_info=True)
+            return AppContext.create(path)
     return AppContext.create(path)
 
 

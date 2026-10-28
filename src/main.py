@@ -854,6 +854,15 @@ def main(page: ft.Page):
     except Exception:
         _log.warning("client-mode setup failed; using local context", exc_info=True)
         ctx = AppContext.create(APP_DB)
+    # If client mode was requested but the server was unreachable, context_for
+    # fell back to local and left a reason here to surface after startup.
+    _client_fallback = None
+    try:
+        from nano_offline.services import hybrid_context as _hybrid_ctx
+
+        _client_fallback = getattr(_hybrid_ctx, "LAST_FALLBACK", None)
+    except Exception:
+        _client_fallback = None
     native_files = PlatformNativeFiles()
     page.overlay.append(native_files)
 
@@ -1127,6 +1136,16 @@ def main(page: ft.Page):
             show_activation()
 
     SplashGate(page, on_ready=route_after_splash).show()
+
+    if _client_fallback:
+        async def _show_client_fallback():
+            try:
+                await asyncio.sleep(1.2)
+                toast(page, _client_fallback, kind="warning")
+            except Exception:
+                pass
+
+        page.run_task(_show_client_fallback)
 
 
 # NOTE: keep this call unconditional and module-level. The Android Flet
