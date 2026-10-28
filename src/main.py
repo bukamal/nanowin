@@ -195,6 +195,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         on_create_item=lambda code: open_items_for_new(code),
         on_fullscreen_enter=lambda: pos_fullscreen_enter(),
         on_fullscreen_exit=lambda: pos_fullscreen_exit(),
+        on_toggle_fullscreen=lambda: pos_toggle_fullscreen(),
     )
     # set_context_actions is defined a little further below -- wrap it in a
     # late-bound lambda so the name resolves when finance publishes its
@@ -477,26 +478,30 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             try:
                 if scope["v"] == "today":
                     today = _date.today().isoformat()
-                    stmt = ctx.reports.income_statement(date_from=today, date_to=today)
+                    mv = ctx.reports.cash_movement(date_from=today, date_to=today)
                 else:
-                    stmt = ctx.dashboard.summary()
+                    mv = ctx.reports.cash_movement()
                 rows = [
-                    ("المبيعات", stmt.get("sales")),
-                    ("المشتريات", stmt.get("purchases")),
-                    ("الصافي", stmt.get("net_profit")),
+                    ("المقبوض", mv.get("receipts"), Colors.SUCCESS_DARK),
+                    ("المدفوع", mv.get("payments"), Colors.DANGER_DARK),
+                    ("الصافي", mv.get("net_movement"), Colors.TEXT_PRIMARY),
                 ]
             except Exception:
-                rows = [("المبيعات", 0), ("المشتريات", 0), ("الصافي", 0)]
+                rows = [
+                    ("المقبوض", 0, Colors.SUCCESS_DARK),
+                    ("المدفوع", 0, Colors.DANGER_DARK),
+                    ("الصافي", 0, Colors.TEXT_PRIMARY),
+                ]
             metrics_box.controls = [
                 ft.Row(
                     [
                         ft.Text(label, size=11, color=Colors.TEXT_SECONDARY),
                         ft.Container(expand=True),
-                        ft.Text(_private(value), size=12, weight=ft.FontWeight.W_700),
+                        ft.Text(_private(value), size=12, weight=ft.FontWeight.W_700, color=color),
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 )
-                for label, value in rows
+                for label, value, color in rows
             ]
             try:
                 metrics_box.update()
@@ -713,6 +718,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         # POS (tab tap, hardware back, POS's own exit button) restores the
         # shell chrome exactly once, before the next screen renders.
         _pos_fullscreen["value"] = False
+        _pos_fullscreen["window_fs"] = False
+        _set_os_fullscreen(False)
         try:
             if voice_session is not None:
                 voice_header_slot.visible = True
@@ -1246,8 +1253,29 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # ribbon) so the sale screen owns the whole viewport edge-to-edge,
     # kiosk-style. adapt_navigation() re-derives the chrome, so exiting just
     # re-runs it instead of duplicating that logic here.
+    def _set_os_fullscreen(on: bool) -> None:
+        # Real OS fullscreen (covers the taskbar and the window title bar on
+        # Windows) rather than only hiding our own chrome. Every field is
+        # guarded so an unsupported platform never breaks entering/leaving POS.
+        for attr, value in (("full_screen", on), ("title_bar_hidden", on), ("title_bar_buttons_hidden", on)):
+            try:
+                setattr(page.window, attr, value)
+            except Exception:
+                pass
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    def pos_toggle_fullscreen() -> bool:
+        fs = not bool(_pos_fullscreen.get("window_fs", False))
+        _pos_fullscreen["window_fs"] = fs
+        _set_os_fullscreen(fs)
+        return fs
+
     def pos_fullscreen_enter():
         _pos_fullscreen["value"] = True
+        _pos_fullscreen["window_fs"] = True
         sidebar.visible = False
         command_bar.visible = False
         content.padding = ft.padding.all(0)
@@ -1257,7 +1285,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             voice_header_slot.visible = False
         except Exception:
             pass
-        page.update()
+        _set_os_fullscreen(True)
 
     def pos_fullscreen_exit():
         # Leaving POS is a navigation: routing out fires the POS route's

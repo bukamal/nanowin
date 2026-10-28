@@ -101,6 +101,7 @@ class POSCenter:
         on_create_item=None,
         on_fullscreen_enter=None,
         on_fullscreen_exit=None,
+        on_toggle_fullscreen=None,
     ):
         self.page = page
         self.ctx = ctx
@@ -115,6 +116,9 @@ class POSCenter:
         # POSCenter still works standalone (e.g. in tests) without a shell.
         self.on_fullscreen_enter = on_fullscreen_enter
         self.on_fullscreen_exit = on_fullscreen_exit
+        # Toggles the real OS fullscreen (taskbar/title bar) without leaving
+        # POS; returns the new state so the header button can update its icon.
+        self.on_toggle_fullscreen = on_toggle_fullscreen
 
         # Cart lines keyed by item_id -> {"item": row, "qty": float}.
         # A dict (not a list) means "scan again" is a single lookup+bump,
@@ -1420,16 +1424,58 @@ class POSCenter:
         # today going" glance, in one dense row. POS is voice-free and has no
         # flow/full toggle any more (always the full toolset), so the header
         # is just exit + identity -- nothing else competes for the space.
+        def _toggle_fs(_=None):
+            new_state = True
+            if self.on_toggle_fullscreen:
+                try:
+                    new_state = bool(self.on_toggle_fullscreen())
+                except Exception:
+                    new_state = True
+            fs_btn.icon = ft.Icons.FULLSCREEN_EXIT if new_state else ft.Icons.FULLSCREEN
+            fs_btn.tooltip = "إنهاء ملء الشاشة" if new_state else "ملء الشاشة"
+            try:
+                fs_btn.update()
+            except Exception:
+                pass
+
+        fs_btn = ft.IconButton(
+            icon=ft.Icons.FULLSCREEN_EXIT,
+            icon_size=IconSize.HEADER,
+            tooltip="إنهاء ملء الشاشة",
+            on_click=_toggle_fs,
+        )
+        back_btn = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(
+                        ft.Icons.ARROW_FORWARD_IOS if self.page.rtl else ft.Icons.ARROW_BACK_IOS_NEW,
+                        size=IconSize.HEADER,
+                        color=Colors.TEXT_SECONDARY,
+                    ),
+                    ft.Text("رجوع", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                ],
+                spacing=4,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.SM,
+            ink=True,
+            on_click=self._exit_pos,
+            tooltip="إنهاء نقطة البيع والرجوع",
+        )
         pos_header = ft.Container(
             ft.Row(
                 [
-                    ft.IconButton(icon=ft.Icons.ARROW_FORWARD_IOS if self.page.rtl else ft.Icons.ARROW_BACK_IOS_NEW, icon_size=IconSize.HEADER, tooltip="إنهاء البيع السريع", on_click=self._exit_pos),
+                    back_btn,
                     ft.Column(
                         [ft.Text("نقطة البيع", size=15, weight=ft.FontWeight.BOLD), today_summary_text],
                         spacing=0, expand=True,
                     ),
+                    fs_btn,
                 ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8,
             ),
             padding=ft.padding.only(left=14, right=14, top=10, bottom=10),
             bgcolor=Colors.WHITE,
