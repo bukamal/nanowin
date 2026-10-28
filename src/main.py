@@ -184,23 +184,10 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         on_click=notification_center.open_panel,
     )
 
-    # Filled after VoiceSessionController is created (see below).
+    # Filled after VoiceSessionController is created (see below). Both the
+    # notifications bell and the voice button live next to the user/logout in
+    # the command bar's top row (the old per-section identity card was removed).
     voice_header_slot = ft.Container(width=42, height=42, visible=False)
-
-    top_bar = ft.Container(
-        ft.Row(
-            [
-                ft.Column([header_title, header_subtitle], spacing=1, expand=True),
-                voice_header_slot,
-                bell_button,
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=8,
-        ),
-        padding=ft.padding.symmetric(horizontal=18, vertical=12),
-        bgcolor=Colors.WHITE,
-        border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
-    )
 
     invoice_center = InvoiceCenter(page, ctx, content, native_files=native_files, on_title_change=set_header)
     pos_center = POSCenter(
@@ -678,7 +665,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         # POS (tab tap, hardware back, POS's own exit button) restores the
         # shell chrome exactly once, before the next screen renders.
         _pos_fullscreen["value"] = False
-        top_bar.visible = True
         try:
             if voice_session is not None:
                 voice_header_slot.visible = True
@@ -836,6 +822,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         user_sub=session_for_bar.username,
         on_logout=lambda: on_logout(),
         on_search=None,
+        extra=[voice_header_slot, bell_button],
     )
     command_bar.visible = False
 
@@ -986,7 +973,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             bgcolor=Colors.WHITE,
         )
 
-    body = ft.Column([command_bar, top_bar, content, _build_status_bar()], spacing=0, expand=True)
+    body = ft.Column([command_bar, content, _build_status_bar()], spacing=0, expand=True)
 
     def _show_verify_result(is_valid: bool, reason: str) -> None:
         # Same dismiss-it-yourself AlertDialog pattern used elsewhere in the
@@ -1174,7 +1161,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # re-runs it instead of duplicating that logic here.
     def pos_fullscreen_enter():
         _pos_fullscreen["value"] = True
-        top_bar.visible = False
         sidebar.visible = False
         command_bar.visible = False
         content.padding = ft.padding.all(0)

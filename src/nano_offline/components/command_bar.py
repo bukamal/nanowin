@@ -126,8 +126,8 @@ class CommandBar(ft.Container):
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
                 self._menus_row,
                 ft.Container(expand=True),
-                *self.extra,
                 self._search_button(),
+                *self.extra,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
                 ft.Container(
                     ft.Text(avatar_text, color=Colors.WHITE, weight=ft.FontWeight.BOLD, size=12),
