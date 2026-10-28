@@ -389,7 +389,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             on_click=on_click,
             alignment=ft.alignment.center,
             col={"xs": 6, "sm": 4, "md": 3, "lg": 2},
-            shadow=Shadow.sm,
+            shadow=Shadow.SM,
         )
 
     def _render_module_board() -> None:
@@ -423,9 +423,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
     def show_home() -> None:
         if _home_style() == "board":
-            _render_module_board()
-        else:
-            dashboard_center.show_center()
+            try:
+                _render_module_board()
+                return
+            except Exception:
+                import logging
+
+                logging.getLogger("nano.home").warning("module board failed; using classic", exc_info=True)
+        dashboard_center.show_center()
 
     actions["dashboard"] = show_home
 
@@ -696,7 +701,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         except Exception:
             user_text = "—"
 
-        home_label = ft.Text("وحدات" if _home_style() == "board" else "كلاسيكي", size=11, color=Colors.TEXT_SECONDARY)
+        home_label = ft.Text("عرض كلاسيكي" if _home_style() == "board" else "عرض الوحدات", size=11, color=Colors.TEXT_SECONDARY)
 
         def _toggle_home(_=None):
             try:
@@ -704,7 +709,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 ctx.settings.set(_home_style_key, nxt)
             except Exception:
                 nxt = "board"
-            home_label.value = "وحدات" if nxt == "board" else "كلاسيكي"
+            home_label.value = "عرض كلاسيكي" if nxt == "board" else "عرض الوحدات"
             try:
                 navigate("dashboard")
             except Exception:
