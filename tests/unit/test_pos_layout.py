@@ -124,12 +124,16 @@ def test_body_has_vertical_rail_catalog_and_cart():
     assert len(cart_pane_column.controls) == 4
 
 
-def test_pos_header_has_no_voice_or_mode_toggle():
+def test_pos_header_has_back_title_and_fullscreen_only():
     pos = _build_real_pos(1200)
     pos_header = pos.content.content.controls[0].controls[0]
-    # exit button + title/summary column -- the mic and the flow/full toggle
-    # are gone, so POS is voice-free and always shows the full toolset.
-    assert len(pos_header.content.controls) == 2
+    # back button + title/summary column + fullscreen toggle. The mic and the
+    # flow/mode toggle are still gone, so POS stays voice-free and always shows
+    # the full toolset; the third control only toggles the OS fullscreen.
+    controls = pos_header.content.controls
+    assert len(controls) == 3
+    assert isinstance(controls[2], ft.IconButton)
+    assert "fullscreen" in str(controls[2].icon).lower()
     assert not hasattr(pos, "apply_voice_command")
     assert not hasattr(pos, "voice_add_by_name")
 
