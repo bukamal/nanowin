@@ -2134,6 +2134,22 @@ class AdminCenter:
             password=True,
             can_reveal_password=True,
         )
+
+        def _persist_client_settings(_=None):
+            # Device-local client config is saved immediately (not only via the
+            # server "save" button) so toggling the switch is never lost.
+            try:
+                _client_prefs.set_many({
+                    remote_settings.MODE_KEY: "1" if client_mode_switch.value else "0",
+                    remote_settings.SERVER_URL_KEY: remote_settings.normalize_url(client_url_field.value),
+                    remote_settings.SERVER_TOKEN_KEY: (client_token_field.value or "").strip(),
+                })
+            except Exception:
+                pass
+
+        client_mode_switch.on_change = _persist_client_settings
+        client_url_field.on_change = _persist_client_settings
+        client_token_field.on_change = _persist_client_settings
         client_test_status = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
 
         def _render_api_status():
@@ -2627,7 +2643,8 @@ class AdminCenter:
                     ]),
                     client_test_status,
                     ft.Text(
-                        "القراءة من الخادم جاهزة؛ تمكين تشغيل الواجهة كاملةً في وضع العميل خطوة لاحقة.",
+                        "يُحفظ المفتاح والعنوان فورًا، ويتفعّل وضع العميل بعد إعادة تشغيل التطبيق "
+                        "بشرط أن يكون خادم الـAPI يعمل على الجهاز الرئيسي؛ وإن تعذّر الوصول يعمل التطبيق محليًا.",
                         size=11, color=Colors.TEXT_FAINT,
                     ),
                 ],

@@ -359,6 +359,76 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     }
     label_map = {k: v[0] for k, v in page_meta.items()}
     allowed_keys = [k for k in actions if session.can(k)]
+
+    # ---------------- home styles: classic dashboard vs module board --------
+    _home_style_key = "ui.home_style"
+
+    def _home_style() -> str:
+        try:
+            return "board" if str(ctx.settings.get(_home_style_key, "classic")).strip() == "board" else "classic"
+        except Exception:
+            return "classic"
+
+    def _module_tile(icon, label: str, on_click) -> ft.Control:
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Icon(icon, size=30, color=Colors.WHITE),
+                    ft.Text(label, size=12.5, weight=ft.FontWeight.W_700, color=Colors.WHITE, text_align=ft.TextAlign.CENTER),
+                ],
+                spacing=8,
+                tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            bgcolor=Colors.PRIMARY,
+            border_radius=16,
+            padding=14,
+            height=112,
+            ink=True,
+            on_click=on_click,
+            alignment=ft.alignment.center,
+            col={"xs": 6, "sm": 4, "md": 3, "lg": 2},
+            shadow=Shadow.sm,
+        )
+
+    def _render_module_board() -> None:
+        set_header("الوحدات", "اختصارات سريعة لكل الأقسام")
+        tiles: list[ft.Control] = []
+        for key in allowed_keys:
+            if key == "dashboard":
+                continue
+            tiles.append(_module_tile(icon_map[key], label_map[key], (lambda _e=None, k=key: navigate(k))))
+        if session.can("invoices"):
+            for key, label, icon in (
+                ("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE),
+                ("sale", "فاتورة بيع", ft.Icons.RECEIPT_LONG_OUTLINED),
+                ("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART),
+            ):
+                tiles.append(_module_tile(icon, label, (lambda _e=None, k=key: navigate(k))))
+        content.content = ft.Container(
+            ft.Column(
+                [
+                    ft.ResponsiveRow(tiles, spacing=12, run_spacing=12),
+                    ft.Text(
+                        "اختصارات فقط — يمكنك التبديل إلى العرض الكلاسيكي من شريط الحالة بالأسفل.",
+                        size=11,
+                        color=Colors.TEXT_SECONDARY,
+                    ),
+                ],
+                spacing=16,
+            ),
+            padding=ft.padding.only(top=6, bottom=6),
+        )
+
+    def show_home() -> None:
+        if _home_style() == "board":
+            _render_module_board()
+        else:
+            dashboard_center.show_center()
+
+    actions["dashboard"] = show_home
+
     selected_key = {"value": "dashboard"}
     sidebar_buttons: dict[str, ft.Container] = {}
 
@@ -590,7 +660,87 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
     # The desktop ribbon sits above the section header; the old branded
     # sidebar is no longer used -- the ribbon is the one navigation surface.
-    body = ft.Column([command_bar, top_bar, content], spacing=0, expand=True)
+    def _status_item(icon, text) -> ft.Control:
+        return ft.Row(
+            [ft.Icon(icon, size=13, color=Colors.TEXT_SECONDARY), ft.Text(text, size=11, color=Colors.TEXT_SECONDARY)],
+            spacing=5,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _build_status_bar() -> ft.Container:
+        from nano_offline.core import currency as _currency
+        from nano_offline.services.auth_service import ROLE_LABELS as _ROLE_LABELS
+        from nano_offline.version import APP_VERSION as _APP_VERSION
+
+        weekdays = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
+        now = datetime.now()
+        date_text = f"{weekdays.get(now.weekday(), '')} {now:%Y-%m-%d}"
+        try:
+            cash = float(ctx.dashboard.summary().get("cash") or 0)
+            cash_text = _currency.format_amount(cash, ctx.settings)
+        except Exception:
+            cash_text = "—"
+        try:
+            rate = _currency.get_effective_rate(ctx.settings)
+            symbol = _currency.get_display_symbol(ctx.settings)
+            rate_text = f"1$ = {rate:,.0f} {symbol}" if rate else "—"
+        except Exception:
+            rate_text = "—"
+        try:
+            sess = ctx.auth.current()
+            if sess is not None:
+                role = _ROLE_LABELS.get(sess.role, sess.role)
+                user_text = f"{sess.full_name or sess.username} ({role})"
+            else:
+                user_text = "—"
+        except Exception:
+            user_text = "—"
+
+        home_label = ft.Text("وحدات" if _home_style() == "board" else "كلاسيكي", size=11, color=Colors.TEXT_SECONDARY)
+
+        def _toggle_home(_=None):
+            try:
+                nxt = "classic" if _home_style() == "board" else "board"
+                ctx.settings.set(_home_style_key, nxt)
+            except Exception:
+                nxt = "board"
+            home_label.value = "وحدات" if nxt == "board" else "كلاسيكي"
+            try:
+                navigate("dashboard")
+            except Exception:
+                pass
+
+        home_btn = ft.Container(
+            ft.Row(
+                [ft.Icon(ft.Icons.HOME_OUTLINED, size=13, color=Colors.TEXT_SECONDARY), home_label],
+                spacing=5,
+            ),
+            padding=ft.padding.symmetric(horizontal=10, vertical=5),
+            border_radius=10,
+            ink=True,
+            on_click=_toggle_home,
+            tooltip="تبديل شكل الرئيسية (وحدات / كلاسيكي)",
+        )
+        return ft.Container(
+            ft.Row(
+                [
+                    _status_item(ft.Icons.SCHEDULE, date_text),
+                    _status_item(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, cash_text),
+                    _status_item(ft.Icons.CURRENCY_EXCHANGE, rate_text),
+                    _status_item(ft.Icons.PERSON_OUTLINE, user_text),
+                    _status_item(ft.Icons.INFO_OUTLINE, f"v{_APP_VERSION}"),
+                    ft.Container(expand=True),
+                    home_btn,
+                ],
+                spacing=16,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=16, vertical=7),
+            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
+            bgcolor=Colors.WHITE,
+        )
+
+    body = ft.Column([command_bar, top_bar, content, _build_status_bar()], spacing=0, expand=True)
 
     def _show_verify_result(is_valid: bool, reason: str) -> None:
         # Same dismiss-it-yourself AlertDialog pattern used elsewhere in the
