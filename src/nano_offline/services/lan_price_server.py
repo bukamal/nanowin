@@ -501,7 +501,9 @@ body::before {
     code = (code || '').replace(/[^0-9A-Za-z]/g, '');
     if (!code) { return; }
     fetch('/api/price?barcode=' + encodeURIComponent(code), { cache: 'no-store' })
-      .then(function (r) { return r.json(); }).then(showPrice).catch(function () { showMiss(); });
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.found) { showPrice(d); } else { showMiss(); } })
+      .catch(function () { showMiss(); });
   }
   function search(q) {
     q = (q || '').trim();

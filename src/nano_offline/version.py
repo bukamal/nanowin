@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.21"
-BUILD_NUMBER = 66  # FEAT_0.17.21: deeper 3D price kiosk (tilt, ambient, sheen)
+APP_VERSION = "0.17.22"
+BUILD_NUMBER = 67  # FIX_0.17.22: kiosk shows "not found" instead of a blank 0
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]
