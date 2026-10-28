@@ -187,6 +187,12 @@ body::before {
   -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.5),transparent 82%);
   mask-image:linear-gradient(to top,rgba(0,0,0,.5),transparent 82%);
 }
+.bg3d { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.bg3d .blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .5; will-change: transform; }
+.bg3d .b1 { width: 46vmax; height: 46vmax; top: -14vmax; right: -10vmax; background: radial-gradient(circle, rgba(var(--accent-rgb),.75), transparent 65%); animation: drift1 18s ease-in-out infinite; }
+.bg3d .b2 { width: 40vmax; height: 40vmax; bottom: -16vmax; left: -12vmax; background: radial-gradient(circle, rgba(var(--accent-rgb),.5), transparent 65%); animation: drift2 22s ease-in-out infinite; }
+@keyframes drift1 { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(-4vmax,3vmax,0) scale(1.08); } }
+@keyframes drift2 { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(4vmax,-3vmax,0) scale(1.1); } }
 .topbar {
   flex: 0 0 auto; position: relative; z-index: 2;
   display: flex; align-items: center; justify-content: space-between; gap: clamp(8px,2vw,16px);
@@ -230,8 +236,11 @@ body::before {
   position: relative; background: var(--paper); color: var(--ink); text-align: center;
   border-radius: clamp(18px,3vmin,30px); padding: clamp(20px,4vmin,44px) clamp(20px,5vmin,44px);
   box-shadow: 0 44px 74px -32px rgba(0,0,0,.72), 0 18px 30px -20px rgba(0,0,0,.5), inset 0 2px 0 #fff;
-  transform: rotateX(4deg); max-width: 100%;
+  transform: rotateX(calc(var(--rx, 0) * 1deg)) rotateY(calc(var(--ry, 0) * 1deg));
+  transform-style: preserve-3d; transition: transform .15s ease-out; max-width: 100%;
 }
+.card::before { content:''; position:absolute; inset:0; border-radius: inherit; pointer-events:none;
+  background: radial-gradient(circle at var(--mx,50%) var(--my,40%), rgba(255,255,255,.6), transparent 42%); opacity:.45; mix-blend-mode:screen; }
 .card::after { content:''; position:absolute; inset:0; border-radius: inherit; background: linear-gradient(180deg,rgba(var(--accent-rgb),.07),transparent 42%); pointer-events:none; }
 .cat { display: inline-block; font-size: clamp(11px,1.8vmin,14px); font-weight: 700; color: var(--accent-deep); background: rgba(var(--accent-rgb),.13); padding: 5px 14px; border-radius: 999px; margin-bottom: clamp(6px,1.4vmin,12px); }
 .name { font-size: clamp(20px,4.4vmin,34px); font-weight: 800; line-height: 1.25; margin-bottom: clamp(8px,1.8vmin,16px); overflow-wrap: anywhere; }
@@ -292,9 +301,14 @@ body::before {
   .main { padding: clamp(6px,1.6vh,14px) clamp(10px,3vw,24px); }
   .cam .frame { top: 18%; height: 40%; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .idle, .bg3d .blob, .cam .scanline { animation: none !important; }
+  .card { transition: none !important; transform: none !important; }
+}
 </style>
 </head>
 <body>
+<div class="bg3d" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span></div>
 <input id="scan" class="hidden-input" autocomplete="off" inputmode="none">
 
 <header class="topbar">
@@ -648,6 +662,34 @@ body::before {
 
   // PWA: register the service worker for offline resilience
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(function () {}); }
+
+  // Subtle 3D tilt + moving sheen (pointer or device gyroscope), skipped when
+  // the user prefers reduced motion.
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduceMotion) {
+    var rootEl = document.documentElement;
+    var stageEl = document.querySelector('.main');
+    function applyTilt(nx, ny) {
+      rootEl.style.setProperty('--ry', (nx * 7).toFixed(2));
+      rootEl.style.setProperty('--rx', (-ny * 7).toFixed(2));
+      rootEl.style.setProperty('--mx', (50 + nx * 42).toFixed(1) + '%');
+      rootEl.style.setProperty('--my', (44 + ny * 42).toFixed(1) + '%');
+    }
+    if (stageEl) {
+      stageEl.addEventListener('pointermove', function (e) {
+        var r = stageEl.getBoundingClientRect();
+        var nx = ((e.clientX - r.left) / r.width) - 0.5;
+        var ny = ((e.clientY - r.top) / r.height) - 0.5;
+        applyTilt(Math.max(-0.5, Math.min(0.5, nx)), Math.max(-0.5, Math.min(0.5, ny)));
+      });
+      stageEl.addEventListener('pointerleave', function () { applyTilt(0, 0); });
+    }
+    window.addEventListener('deviceorientation', function (e) {
+      var nx = Math.max(-0.5, Math.min(0.5, (e.gamma || 0) / 45));
+      var ny = Math.max(-0.5, Math.min(0.5, ((e.beta || 0) - 40) / 60));
+      applyTilt(nx, ny);
+    });
+  }
 
   applyLang();
 })();
