@@ -31,7 +31,7 @@ for token in [
 
 for token in [
     'label="بحث في الفواتير"',
-    'filters = {"type": "all", "status": "all"}',
+    'filters = {"type": initial_type, "status": "all"}',
     'chip("مبيعات"',
     'chip("مشتريات"',
     'action_label="بيع جديد"',

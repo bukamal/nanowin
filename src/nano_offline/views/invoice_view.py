@@ -610,11 +610,13 @@ class InvoiceCenter:
             body=body,
         )
 
-    def show_center(self) -> None:
+    def show_center(self, initial_type: str | None = None) -> None:
         """Reference-style invoice browser: the same table language as the
         materials screen (round clipped grid, centred cells, tinted pinned
         header, zebra rows), with chip filters, KPI cards and the overdue
         alert kept on top of it."""
+        if initial_type not in ("sale", "purchase"):
+            initial_type = "all"
         if self.on_title_change:
             self.on_title_change("الفواتير", "المبيعات والمشتريات وحالات السداد")
         try:
@@ -627,7 +629,7 @@ class InvoiceCenter:
                 on_focus=lambda e: invoice_grid.disarm(),
             )
             cards = ft.Container(expand=True)
-            filters = {"type": "all", "status": "all"}
+            filters = {"type": initial_type, "status": "all"}
             # Same reasoning as the items screen: build only a page of cards
             # at a time instead of all (up to 250) on every keystroke.
             render_limit = {"n": 60}

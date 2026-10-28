@@ -167,7 +167,9 @@ class CommandBar(ft.Container):
             border=ft.border.all(1, Colors.BORDER),
             ink=True,
         )
-        items: list[ft.Control] = [self._menu_item(menu, "فتح " + menu.label, menu.icon, None)]
+        items: list[ft.Control] = []
+        if not menu.items:
+            items.append(self._menu_item(menu, "فتح " + menu.label, menu.icon, None))
         for label, item_icon, cb in menu.items:
             items.append(self._menu_item(menu, label, item_icon, cb))
         return ft.PopupMenuButton(content=box, tooltip=menu.label, items=items)

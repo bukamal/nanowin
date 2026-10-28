@@ -393,8 +393,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, open_purchase),
             ("المواد", icon_map["items"], lambda: navigate("items")),
             ("نقطة البيع", ft.Icons.POINT_OF_SALE, open_pos),
-            ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices")),
-            ("المشتريات", ft.Icons.LOCAL_SHIPPING_OUTLINED, lambda: navigate("invoices")),
+            ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
+            ("المشتريات", ft.Icons.LOCAL_SHIPPING_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
         ]
         for label, icon, cb in shortcuts:
             tiles.append(_module_tile(icon, label, (lambda _e=None, c=cb: c())))
@@ -527,6 +527,46 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
         currency_toggle.on_change = _currency_change
 
+        rate_field = ft.TextField(
+            value=f"{_currency.get_exchange_rate(ctx.settings):.0f}",
+            dense=True,
+            width=110,
+            text_align=ft.TextAlign.CENTER,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            hint_text="سعر الصرف",
+        )
+
+        def _save_rate(_=None):
+            raw = (rate_field.value or "").replace(",", "").strip()
+            try:
+                value = float(raw)
+            except ValueError:
+                value = 0
+            if value <= 0:
+                notify("سعر الصرف يجب أن يكون رقمًا أكبر من صفر", kind="error")
+                return
+            payload = {_currency.EXCHANGE_RATE_KEY: str(value)}
+            try:
+                ctx.settings.set_many(payload)
+            except Exception:
+                try:
+                    ctx.settings.set(_currency.EXCHANGE_RATE_KEY, str(value))
+                except Exception:
+                    pass
+            notify("تم تحديث سعر الصرف", kind="success")
+            _refresh_metrics()
+            _qi_run()
+
+        rate_row = ft.Row(
+            [
+                ft.Text("سعر الصرف", size=11, color=Colors.TEXT_SECONDARY),
+                rate_field,
+                ft.IconButton(icon=ft.Icons.CHECK, tooltip="تحديث سعر الصرف", on_click=_save_rate),
+            ],
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
         try:
             company_name = str(ctx.settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
         except Exception:
@@ -544,6 +584,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     scope_toggle,
                     ft.Text("العملة المعروضة", size=11, color=Colors.TEXT_SECONDARY),
                     currency_toggle,
+                    rate_row,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     metrics_box,
                     ft.TextButton(
@@ -575,8 +616,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         content.content = ft.Container(
             ft.ResponsiveRow(
                 [
-                    ft.Container(left_col, col={"xs": 12, "md": 8}),
                     ft.Container(right_panel, col={"xs": 12, "md": 4}),
+                    ft.Container(left_col, col={"xs": 12, "md": 8}),
                 ],
                 spacing=14,
                 run_spacing=14,
@@ -771,37 +812,37 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         out: list = []
         if session.can("items"):
             out.append(RibbonMenu("items", "المواد", icon_map["items"],
-                [(label_map["items"], icon_map["items"], lambda: navigate("items"))] + _menu_items_for("items")))
+                [("فتح المواد", icon_map["items"], lambda: navigate("items"))]))
         if session.can("customers"):
             out.append(RibbonMenu("customers", "العملاء", icon_map["customers"],
-                [(label_map["customers"], icon_map["customers"], lambda: navigate("customers"))]))
+                [("فتح العملاء", icon_map["customers"], lambda: navigate("customers"))]))
         if session.can("suppliers"):
             out.append(RibbonMenu("suppliers", "الموردين", icon_map["suppliers"],
-                [(label_map["suppliers"], icon_map["suppliers"], lambda: navigate("suppliers"))]))
+                [("فتح الموردين", icon_map["suppliers"], lambda: navigate("suppliers"))]))
         if session.can("invoices"):
             out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART,
-                [("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase()),
-                 ("دفتر الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices"))]))
+                [("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
+                 ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase())]))
             out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT,
-                [("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
+                [("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
+                 ("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
                  ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
-                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
-                 ("دفتر الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices"))]))
+                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice())]))
         if session.can("finance"):
             out.append(RibbonMenu("vouchers", "السندات", ft.Icons.PAYMENTS_OUTLINED,
                 [("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
                  ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment())]))
             out.append(RibbonMenu("finance", "المالية", icon_map["finance"],
-                [(label_map["finance"], icon_map["finance"], lambda: navigate("finance"))] + _menu_items_for("finance")))
+                [("فتح المالية", icon_map["finance"], lambda: navigate("finance"))]))
         if session.can("reports"):
             out.append(RibbonMenu("reports", "التقارير", icon_map["reports"],
-                [(label_map["reports"], icon_map["reports"], lambda: navigate("reports"))]))
+                [("فتح التقارير", icon_map["reports"], lambda: navigate("reports"))]))
         if session.can("security"):
             out.append(RibbonMenu("security", "الأمان والدخول", icon_map["security"],
-                [(label_map["security"], icon_map["security"], lambda: navigate("security"))]))
+                [("فتح الأمان والدخول", icon_map["security"], lambda: navigate("security"))]))
         if session.can("admin"):
             out.append(RibbonMenu("admin", "الإدارة", icon_map["admin"],
-                [(label_map["admin"], icon_map["admin"], lambda: navigate("admin"))] + _menu_items_for("admin")))
+                [("فتح الإدارة", icon_map["admin"], lambda: navigate("admin"))] + _menu_items_for("admin")))
         return out
 
     titles = {k: (label_map[k], icon_map[k]) for k in allowed_keys if k != "dashboard"}

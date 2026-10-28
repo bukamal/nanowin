@@ -10,7 +10,7 @@ for token in [
     "def _show_center_error",
     "تعذر تحميل شاشة الفواتير",
     "بحث في الفواتير",
-    'filters = {"type": "all", "status": "all"}',
+    'filters = {"type": initial_type, "status": "all"}',
     "def set_filter",
     "def _invoice_more_dialog",
     "فواتير مفتوحة",
