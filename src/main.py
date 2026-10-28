@@ -393,7 +393,13 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         )
 
     def _render_module_board() -> None:
+        from datetime import date as _date
+
+        from nano_offline.components import SegmentOption, SegmentedToggle
+        from nano_offline.core import currency as _currency
+
         set_header("الوحدات", "اختصارات سريعة لكل الأقسام")
+
         tiles: list[ft.Control] = []
         for key in allowed_keys:
             if key == "dashboard":
@@ -406,17 +412,167 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 ("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART),
             ):
                 tiles.append(_module_tile(icon, label, (lambda _e=None, k=key: navigate(k))))
-        content.content = ft.Container(
+
+        def _money(value) -> str:
+            try:
+                return _currency.format_amount(float(value or 0), ctx.settings)
+            except Exception:
+                return "—"
+
+        # ---- quick inquiry (material by barcode or name) ----
+        qi_result = ft.Text("", size=12, color=Colors.TEXT_PRIMARY)
+        qi_field = ft.TextField(hint_text="باركود أو اسم مادة…", dense=True, expand=True)
+
+        def _qi_run(_=None):
+            query = (qi_field.value or "").strip()
+            if not query:
+                qi_result.value = ""
+            else:
+                try:
+                    item = ctx.items.find_by_barcode(query)
+                    if item is None:
+                        found = ctx.items.list(search=query, limit=1)
+                        item = found[0] if found else None
+                    if item is None:
+                        qi_result.value = "لا يوجد منتج مطابق"
+                        qi_result.color = Colors.DANGER_DARK
+                    else:
+                        qi_result.value = f"{item.get('name')} — {_money(item.get('selling_price'))}"
+                        qi_result.color = Colors.TEXT_PRIMARY
+                except Exception as exc:
+                    qi_result.value = str(exc)
+                    qi_result.color = Colors.DANGER_DARK
+            try:
+                qi_result.update()
+            except Exception:
+                try:
+                    page.update()
+                except Exception:
+                    pass
+
+        qi_field.on_submit = _qi_run
+        quick_inquiry = ft.Container(
             ft.Column(
                 [
-                    ft.ResponsiveRow(tiles, spacing=12, run_spacing=12),
-                    ft.Text(
-                        "اختصارات فقط — يمكنك التبديل إلى العرض الكلاسيكي من شريط الحالة بالأسفل.",
-                        size=11,
-                        color=Colors.TEXT_SECONDARY,
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.SEARCH, size=16, color=Colors.TEXT_SECONDARY),
+                            ft.Text("الاستعلام السريع عن مادة", size=12, weight=ft.FontWeight.W_600),
+                        ],
+                        spacing=8,
+                    ),
+                    ft.Row(
+                        [qi_field, ft.FilledButton("استعلام", icon=ft.Icons.SEARCH, on_click=_qi_run)],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    qi_result,
+                ],
+                spacing=8,
+            ),
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=14,
+            padding=14,
+        )
+
+        # ---- right info panel (company + day/overall movement + summary) ----
+        metrics_box = ft.Column(spacing=8)
+        scope = {"v": "today"}
+
+        def _refresh_metrics():
+            try:
+                if scope["v"] == "today":
+                    today = _date.today().isoformat()
+                    stmt = ctx.reports.income_statement(date_from=today, date_to=today)
+                else:
+                    stmt = ctx.dashboard.summary()
+                rows = [
+                    ("المبيعات", stmt.get("sales")),
+                    ("المشتريات", stmt.get("purchases")),
+                    ("الصافي", stmt.get("net_profit")),
+                ]
+            except Exception:
+                rows = [("المبيعات", 0), ("المشتريات", 0), ("الصافي", 0)]
+            metrics_box.controls = [
+                ft.Row(
+                    [
+                        ft.Text(label, size=11, color=Colors.TEXT_SECONDARY),
+                        ft.Container(expand=True),
+                        ft.Text(_money(value), size=12, weight=ft.FontWeight.W_700),
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                for label, value in rows
+            ]
+            try:
+                metrics_box.update()
+            except Exception:
+                pass
+
+        scope_toggle = SegmentedToggle(
+            options=[SegmentOption("today", "حركة اليوم"), SegmentOption("all", "الحركة العامة")],
+            value="today",
+        )
+
+        def _scope_change(_):
+            scope["v"] = scope_toggle.value or "today"
+            _refresh_metrics()
+
+        scope_toggle.on_change = _scope_change
+        _refresh_metrics()
+
+        try:
+            company_name = str(ctx.settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
+        except Exception:
+            company_name = branding.APP_NAME_AR
+        right_panel = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.STOREFRONT_OUTLINED, size=16, color=Colors.PRIMARY),
+                            ft.Text(company_name, size=13, weight=ft.FontWeight.W_700),
+                        ],
+                        spacing=8,
+                    ),
+                    scope_toggle,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    metrics_box,
+                    ft.TextButton(
+                        "استعراض التفاصيل",
+                        icon=ft.Icons.QUERY_STATS_OUTLINED,
+                        on_click=lambda _: navigate("reports"),
                     ),
                 ],
-                spacing=16,
+                spacing=10,
+            ),
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=14,
+            padding=14,
+        )
+
+        left_col = ft.Column(
+            [
+                ft.ResponsiveRow(tiles, spacing=12, run_spacing=12),
+                quick_inquiry,
+                ft.Text(
+                    "اختصارات فقط — يمكنك التبديل إلى العرض الكلاسيكي من شريط الحالة بالأسفل.",
+                    size=11,
+                    color=Colors.TEXT_SECONDARY,
+                ),
+            ],
+            spacing=16,
+        )
+        content.content = ft.Container(
+            ft.ResponsiveRow(
+                [
+                    ft.Container(left_col, col={"xs": 12, "md": 8}),
+                    ft.Container(right_panel, col={"xs": 12, "md": 4}),
+                ],
+                spacing=14,
+                run_spacing=14,
             ),
             padding=ft.padding.only(top=6, bottom=6),
         )

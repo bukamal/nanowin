@@ -128,11 +128,11 @@ class CommandBar(ft.Container):
 
     # ------------------------------------------------------------- tab chrome
     def _tab_box(self, tab: RibbonTab) -> ft.Container:
-        icon = ft.Icon(tab.icon, size=18, color=Colors.TEXT_SECONDARY)
-        text = ft.Text(tab.label, size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
+        icon = ft.Icon(tab.icon, size=20, color=Colors.TEXT_SECONDARY)
+        text = ft.Text(tab.label, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
         return ft.Container(
-            ft.Row([icon, text], spacing=7, tight=True),
-            padding=ft.padding.symmetric(horizontal=12, vertical=8),
+            ft.Column([icon, text], spacing=3, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.symmetric(horizontal=12, vertical=6),
             border_radius=Radius.SM,
             border=ft.border.all(1, Colors.BORDER),
             on_click=lambda _, k=tab.key: self.on_tab and self.on_tab(k),

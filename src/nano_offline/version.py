@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.25"
-BUILD_NUMBER = 70  # FIX_0.17.25: home board used invalid Shadow.sm (error "sm")
+APP_VERSION = "0.17.26"
+BUILD_NUMBER = 71  # FEAT_0.17.26: icon-over-label ribbon + home right panel & quick inquiry
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]
