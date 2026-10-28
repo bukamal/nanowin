@@ -61,6 +61,7 @@ class CommandBar(ft.Container):
         page: ft.Page | None = None,
         menus: list[RibbonMenu] | None = None,
         tabs: list[RibbonTab] | None = None,
+        titles: dict | None = None,
         on_open: Callable | None = None,
         on_close: Callable | None = None,
         brand_title: str = branding.APP_BRAND,
@@ -72,9 +73,10 @@ class CommandBar(ft.Container):
         extra: list[ft.Control] | None = None,
     ):
         # ``tabs`` is kept for backward compatibility (a menu with no items).
-        if menus is None:
-            menus = [RibbonMenu(t.key, t.label, t.icon, []) for t in (tabs or [])]
-        self.menus = list(menus)
+        self.menus = list(menus or [])
+        self._titles: dict[str, tuple[str, str]] = dict(
+            titles or {t.key: (t.label, t.icon) for t in (tabs or [])}
+        )
         self.on_open = on_open
         self.on_close = on_close
         self.brand_title = brand_title
@@ -85,9 +87,7 @@ class CommandBar(ft.Container):
         self.on_search = on_search
         self.extra = list(extra or [])
 
-        self._menu_by_key: dict[str, RibbonMenu] = {m.key: m for m in self.menus}
-        self._active = {"key": self.menus[0].key if self.menus else None}
-        self._menu_boxes: dict[str, ft.Container] = {}
+        self._active = {"key": None}
         self._docs: dict[str, ft.Container] = {}
 
         self._actions_row = ft.Row([], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
@@ -167,7 +167,6 @@ class CommandBar(ft.Container):
             border=ft.border.all(1, Colors.BORDER),
             ink=True,
         )
-        self._menu_boxes[menu.key] = box
         items: list[ft.Control] = [self._menu_item(menu, "فتح " + menu.label, menu.icon, None)]
         for label, item_icon, cb in menu.items:
             items.append(self._menu_item(menu, label, item_icon, cb))
@@ -187,13 +186,13 @@ class CommandBar(ft.Container):
 
     # ------------------------------------------------------- document tabs
     def open_tab(self, key: str) -> None:
-        """Show/activate the tab for a section (no-op for non-section routes)."""
-        if key not in self._menu_by_key:
+        """Show/activate the tab for a route (no-op for unknown routes)."""
+        if key not in self._titles:
             return
         if key not in self._docs:
-            menu = self._menu_by_key[key]
-            icon = ft.Icon(menu.icon, size=15, color=Colors.TEXT_SECONDARY)
-            label = ft.Text(menu.label, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
+            label_text, icon_name = self._titles[key]
+            icon = ft.Icon(icon_name, size=15, color=Colors.TEXT_SECONDARY)
+            label = ft.Text(label_text, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
             close = ft.IconButton(
                 icon=ft.Icons.CLOSE, icon_size=12, tooltip="إغلاق",
                 on_click=lambda _, k=key: self.close_tab(k),
@@ -243,14 +242,6 @@ class CommandBar(ft.Container):
 
     def set_active(self, key: str | None) -> None:
         self._active["key"] = key
-        for k, box in self._menu_boxes.items():
-            active = k == key
-            col = box.content
-            icon, text = col.controls[0], col.controls[1]
-            box.bgcolor = Colors.PRIMARY_BG if active else None
-            box.border = ft.border.all(1, Colors.PRIMARY_BORDER if active else Colors.BORDER)
-            icon.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
-            text.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
         for k, box in self._docs.items():
             active = k == key
             row = box.content

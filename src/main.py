@@ -401,17 +401,16 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         set_header("الوحدات", "اختصارات سريعة لكل الأقسام")
 
         tiles: list[ft.Control] = []
-        for key in allowed_keys:
-            if key == "dashboard":
-                continue
-            tiles.append(_module_tile(icon_map[key], label_map[key], (lambda _e=None, k=key: navigate(k))))
-        if session.can("invoices"):
-            for key, label, icon in (
-                ("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE),
-                ("sale", "فاتورة بيع", ft.Icons.RECEIPT_LONG_OUTLINED),
-                ("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART),
-            ):
-                tiles.append(_module_tile(icon, label, (lambda _e=None, k=key: navigate(k))))
+        shortcuts = [
+            ("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, open_sale),
+            ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, open_purchase),
+            ("المواد", icon_map["items"], lambda: navigate("items")),
+            ("نقطة البيع", ft.Icons.POINT_OF_SALE, open_pos),
+            ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices")),
+            ("المشتريات", ft.Icons.LOCAL_SHIPPING_OUTLINED, lambda: navigate("invoices")),
+        ]
+        for label, icon, cb in shortcuts:
+            tiles.append(_module_tile(icon, label, (lambda _e=None, c=cb: c())))
 
         def _money(value) -> str:
             try:
@@ -522,6 +521,25 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         scope_toggle.on_change = _scope_change
         _refresh_metrics()
 
+        currency_toggle = SegmentedToggle(
+            options=[
+                SegmentOption(_currency.DISPLAY_CURRENCY_SYP, "ل.س"),
+                SegmentOption(_currency.DISPLAY_CURRENCY_USD, "$"),
+            ],
+            value=_currency.get_display_currency(ctx.settings),
+        )
+
+        def _currency_change(_):
+            try:
+                code = currency_toggle.value or _currency.DEFAULT_DISPLAY_CURRENCY
+                ctx.settings.set(_currency.DISPLAY_CURRENCY_KEY, code)
+            except Exception:
+                pass
+            _refresh_metrics()
+            _qi_run()
+
+        currency_toggle.on_change = _currency_change
+
         try:
             company_name = str(ctx.settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
         except Exception:
@@ -537,6 +555,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                         spacing=8,
                     ),
                     scope_toggle,
+                    ft.Text("العملة المعروضة", size=11, color=Colors.TEXT_SECONDARY),
+                    currency_toggle,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     metrics_box,
                     ft.TextButton(
@@ -619,9 +639,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     elif isinstance(ctrl, ft.Text):
                         ctrl.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
         try:
-            command_bar.open_tab(current)
-            command_bar.set_active(current)
-            command_bar.set_actions(_section_actions(current))
+            if current == "dashboard":
+                # The home is the base interface: no tab, no command strip.
+                command_bar.set_active(None)
+                command_bar.set_actions([])
+            else:
+                command_bar.open_tab(current)
+                command_bar.set_active(current)
+                command_bar.set_actions(_section_actions(current))
         except NameError:
             # command_bar / _section_actions are defined later in build_shell;
             # this method is only ever *called* after they exist, but guard the
@@ -755,9 +780,56 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 rows.append((action.label, action.icon, action.on_click))
         return rows
 
+    def _menus() -> list:
+        """Curated top menu bar (the home is not a menu; invoices -> sales/purchases)."""
+        out: list = []
+        if session.can("items"):
+            out.append(RibbonMenu("items", "المواد", icon_map["items"],
+                [(label_map["items"], icon_map["items"], lambda: navigate("items"))] + _menu_items_for("items")))
+        if session.can("customers"):
+            out.append(RibbonMenu("customers", "العملاء", icon_map["customers"],
+                [(label_map["customers"], icon_map["customers"], lambda: navigate("customers"))]))
+        if session.can("suppliers"):
+            out.append(RibbonMenu("suppliers", "الموردين", icon_map["suppliers"],
+                [(label_map["suppliers"], icon_map["suppliers"], lambda: navigate("suppliers"))]))
+        if session.can("invoices"):
+            out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART,
+                [("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase()),
+                 ("دفتر الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices"))]))
+            out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT,
+                [("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
+                 ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
+                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
+                 ("دفتر الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices"))]))
+        if session.can("finance"):
+            out.append(RibbonMenu("vouchers", "السندات", ft.Icons.PAYMENTS_OUTLINED,
+                [("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
+                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment())]))
+            out.append(RibbonMenu("finance", "المالية", icon_map["finance"],
+                [(label_map["finance"], icon_map["finance"], lambda: navigate("finance"))] + _menu_items_for("finance")))
+        if session.can("reports"):
+            out.append(RibbonMenu("reports", "التقارير", icon_map["reports"],
+                [(label_map["reports"], icon_map["reports"], lambda: navigate("reports"))]))
+        if session.can("security"):
+            out.append(RibbonMenu("security", "الأمان والدخول", icon_map["security"],
+                [(label_map["security"], icon_map["security"], lambda: navigate("security"))]))
+        if session.can("admin"):
+            out.append(RibbonMenu("admin", "الإدارة", icon_map["admin"],
+                [(label_map["admin"], icon_map["admin"], lambda: navigate("admin"))] + _menu_items_for("admin")))
+        return out
+
+    titles = {k: (label_map[k], icon_map[k]) for k in allowed_keys if k != "dashboard"}
+    titles.update({
+        "pos": ("نقطة البيع", ft.Icons.POINT_OF_SALE),
+        "sale": ("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT),
+        "purchase": ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART),
+        "stocktake": ("الجرد", ft.Icons.FACT_CHECK_OUTLINED),
+    })
+
     command_bar = CommandBar(
         page=page,
-        menus=[RibbonMenu(k, label_map[k], icon_map[k], _menu_items_for(k)) for k in allowed_keys],
+        menus=_menus(),
+        titles=titles,
         on_open=lambda k: navigate(k),
         on_close=lambda k: navigate("dashboard"),
         user_name=session_for_bar.full_name or session_for_bar.username,
