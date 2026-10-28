@@ -8,6 +8,7 @@ import flet as ft
 from nano_offline.core import branding
 from nano_offline.core.theme import Colors, Radius, SEVERITY_STYLE, Shadow
 from nano_offline.core import currency
+from nano_offline.core import privacy
 from nano_offline.core.expiring import cached_insight
 from nano_offline.core.toast import toast
 from nano_offline.components import SelectAllTextField, new_form_sheet, render_form_sheet, metric_row
@@ -112,7 +113,7 @@ class DashboardCenter:
         return DASHBOARD_KPIS_VISIBLE_KEY
 
     def money(self, value) -> str:
-        return currency.format_amount(value, self.ctx.settings)
+        return privacy.money_ctx(value, self.ctx)
 
     def _greeting_and_date(self) -> tuple[str, str, str]:
         """Return (greeting, subtitle line, icon name) for the header.

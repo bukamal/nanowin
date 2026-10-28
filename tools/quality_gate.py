@@ -84,6 +84,7 @@ SCRIPTS = [
     "tools/quick_auth_saved_login_smoke_test.py",
     "tools/cash_backup_pdf_android_smoke_test.py",
     "tools/qeid_reference_design_phase1_smoke_test.py",
+    "tools/safe_mode_privacy_smoke_test.py",
     "tools/qeid_reference_design_phase2_smoke_test.py",
     "tools/definitions_management_smoke_test.py",
     "tools/item_delete_guard_smoke_test.py",

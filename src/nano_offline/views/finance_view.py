@@ -18,6 +18,7 @@ from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import branding
 from nano_offline.core import currency
+from nano_offline.core import privacy
 from nano_offline.core.platform_capabilities import feature_status
 from nano_offline.core.expiring import invalidate_insights
 from nano_offline.core.home_widget import refresh_home_widget
@@ -82,7 +83,7 @@ class FinanceCenter:
         self.on_context_actions = on_context_actions
 
     def money(self, value) -> str:
-        return currency.format_amount(value, self.ctx.settings)
+        return privacy.money_ctx(value, self.ctx)
 
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)

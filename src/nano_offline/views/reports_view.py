@@ -9,7 +9,7 @@ from nano_offline.core.toast import toast
 from nano_offline.components import SmartDateField, empty_state, metric_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
-from nano_offline.core import currency
+from nano_offline.core import privacy
 from nano_offline.core import reporting_settings
 from nano_offline.services.forecast_service import MONTH_NAMES_AR
 
@@ -81,7 +81,7 @@ class ReportsCenter:
             self.on_title_change(title, subtitle)
 
     def money(self, value) -> str:
-        return currency.format_amount(value, self.ctx.settings)
+        return privacy.money_ctx(value, self.ctx)
 
     @staticmethod
     def number(value) -> str:

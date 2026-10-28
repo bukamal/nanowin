@@ -19,6 +19,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, IconSize, Radius, Shadow
 from nano_offline.core import currency
+from nano_offline.core import privacy
 from nano_offline.core import barcode_quality
 from nano_offline.core import barcode_settings
 from nano_offline.core.platform_capabilities import supports
@@ -232,6 +233,10 @@ class ItemsCenter:
 
     def money(self, value) -> str:
         return currency.format_amount(value, self.ctx.settings)
+
+    def private_money(self, value) -> str:
+        # Cost/profit figures: masked under safe mode (selling prices stay).
+        return privacy.money_ctx(value, self.ctx)
 
     @staticmethod
     def _qty(value) -> str:
@@ -888,7 +893,7 @@ class ItemsCenter:
                 profit = sell - buy
                 if sell > 0:
                     margin_pct = (profit / sell) * 100
-                    margin_text.value = f"هامش الربح: {margin_pct:.1f}٪  •  الربح لكل وحدة: {self.money(profit)}"
+                    margin_text.value = f"هامش الربح: {margin_pct:.1f}٪  •  الربح لكل وحدة: {self.private_money(profit)}"
                     margin_text.color = Colors.SUCCESS_DARK if profit >= 0 else Colors.DANGER
                 else:
                     margin_text.value = ""
@@ -904,7 +909,7 @@ class ItemsCenter:
                 _initial_sell = currency.parse_display_input(selling.value, self.ctx.settings)
                 if _initial_sell > 0:
                     _initial_profit = _initial_sell - _initial_buy
-                    margin_text.value = f"هامش الربح: {(_initial_profit / _initial_sell) * 100:.1f}٪  •  الربح لكل وحدة: {self.money(_initial_profit)}"
+                    margin_text.value = f"هامش الربح: {(_initial_profit / _initial_sell) * 100:.1f}٪  •  الربح لكل وحدة: {self.private_money(_initial_profit)}"
                     margin_text.color = Colors.SUCCESS_DARK if _initial_profit >= 0 else Colors.DANGER
             except Exception:
                 pass
@@ -1674,7 +1679,7 @@ class ItemsCenter:
                         ft.Row(
                             [
                                 ft.Text("سعر الشراء: ", size=11, color=Colors.TEXT_SECONDARY),
-                                ft.Text(self.money(item.get("purchase_price")), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                                ft.Text(self.private_money(item.get("purchase_price")), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                             ],
                             spacing=0, tight=True,
                         )
@@ -1834,7 +1839,7 @@ class ItemsCenter:
                         ft.Row(
                             [
                                 ft.Text("سعر الشراء: ", size=11, color=Colors.TEXT_SECONDARY),
-                                ft.Text(self.money(parsed["purchase_price"]), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                                ft.Text(self.private_money(parsed["purchase_price"]), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                             ],
                             spacing=0, tight=True,
                         )

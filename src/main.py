@@ -384,6 +384,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
         from nano_offline.components import SegmentOption, SegmentedToggle
         from nano_offline.core import currency as _currency
+        from nano_offline.core import privacy as _privacy
 
         set_header("الوحدات", "اختصارات سريعة لكل الأقسام")
 
@@ -402,6 +403,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         def _money(value) -> str:
             try:
                 return _currency.format_amount(float(value or 0), ctx.settings)
+            except Exception:
+                return "—"
+
+        def _private(value) -> str:
+            try:
+                return _privacy.money_ctx(float(value or 0), ctx)
             except Exception:
                 return "—"
 
@@ -485,7 +492,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     [
                         ft.Text(label, size=11, color=Colors.TEXT_SECONDARY),
                         ft.Container(expand=True),
-                        ft.Text(_money(value), size=12, weight=ft.FontWeight.W_700),
+                        ft.Text(_private(value), size=12, weight=ft.FontWeight.W_700),
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 )
@@ -950,11 +957,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         now = datetime.now()
         date_text = f"{weekdays.get(now.weekday(), '')} {now:%Y-%m-%d}"
         try:
-            cash = float(ctx.dashboard.summary().get("cash") or 0)
-            cash_text = _currency.format_amount(cash, ctx.settings)
-        except Exception:
-            cash_text = "—"
-        try:
             rate = _currency.get_effective_rate(ctx.settings)
             symbol = _currency.get_display_symbol(ctx.settings)
             rate_text = f"1$ = {rate:,.0f} {symbol}" if rate else "—"
@@ -968,7 +970,51 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             else:
                 user_text = "—"
         except Exception:
+            sess = None
             user_text = "—"
+
+        from nano_offline.core import privacy as _privacy
+
+        safe_role = getattr(sess, "role", None) if sess is not None else None
+        safe_forced = _privacy.is_forced(safe_role)
+
+        def _safe_on() -> bool:
+            return _privacy.effective_safe_mode(ctx.settings, safe_role)
+
+        safe_icon = ft.Icon(ft.Icons.LOCK_OUTLINED if _safe_on() else ft.Icons.LOCK_OPEN_OUTLINED, size=13, color=Colors.TEXT_SECONDARY)
+        safe_label = ft.Text("الوضع الآمن: مفعّل" if _safe_on() else "الوضع الآمن: متوقف", size=11, color=Colors.TEXT_SECONDARY)
+
+        def _refresh_safe(_=None):
+            on = _safe_on()
+            safe_icon.name = ft.Icons.LOCK_OUTLINED if on else ft.Icons.LOCK_OPEN_OUTLINED
+            safe_icon.color = Colors.SUCCESS_DARK if on else Colors.TEXT_SECONDARY
+            safe_label.value = "الوضع الآمن: مفعّل" if on else "الوضع الآمن: متوقف"
+            safe_label.color = Colors.SUCCESS_DARK if on else Colors.TEXT_SECONDARY
+            try:
+                safe_btn.update()
+            except Exception:
+                pass
+
+        def _toggle_safe(_=None):
+            if safe_forced:
+                notify("الوضع الآمن مفعّل دائمًا لهذا الدور", kind="info")
+                return
+            _privacy.set_safe_mode(ctx.settings, not _privacy.is_safe_mode(ctx.settings))
+            _refresh_safe()
+            try:
+                navigate(selected_key["value"])
+            except Exception:
+                pass
+
+        safe_btn = ft.Container(
+            ft.Row([safe_icon, safe_label], spacing=5, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.symmetric(horizontal=10, vertical=5),
+            border_radius=10,
+            ink=not safe_forced,
+            on_click=_toggle_safe,
+            tooltip="إخفاء/إظهار الأرصدة والأرباح والتكاليف عن أعين الزبائن",
+        )
+        _refresh_safe()
 
         home_label = ft.Text("عرض كلاسيكي" if _home_style() == "board" else "عرض الوحدات", size=11, color=Colors.TEXT_SECONDARY)
 
@@ -999,8 +1045,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ft.Row(
                 [
                     _status_item(ft.Icons.SCHEDULE, date_text),
-                    _status_item(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, cash_text),
                     _status_item(ft.Icons.CURRENCY_EXCHANGE, rate_text),
+                    safe_btn,
                     _status_item(ft.Icons.PERSON_OUTLINE, user_text),
                     _status_item(ft.Icons.INFO_OUTLINE, f"v{_APP_VERSION}"),
                     ft.Container(expand=True),

@@ -14,7 +14,7 @@ from nano_offline.components import SelectAllTextField, empty_state, new_form_sh
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
-from nano_offline.core import currency
+from nano_offline.core import privacy
 
 
 # Desktop grid columns for the customers/suppliers screens. Balance is the
@@ -50,7 +50,7 @@ class PartyCenter:
             self.on_title_change(title, subtitle)
 
     def money(self, value) -> str:
-        return currency.format_amount(value, self.ctx.settings)
+        return privacy.money_ctx(value, self.ctx)
 
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
