@@ -1,15 +1,21 @@
 """Top ribbon: the app's single navigation surface.
 
-Replaces the old 280px desktop sidebar. Row one is the brand + the primary
-section tabs (icon **and** label, so it reads at a glance); row two is the
-*contextual* action strip -- the buttons relevant to whatever section is
-open (e.g. items: "مادة جديدة", "تصنيفات ووحدات ▾"). Groups with children
-render as a popup ("submenu"), matching the familiar ribbon behaviour.
+Layout (top to bottom), mirroring a classic desktop ERP:
+
+* **menu bar** -- one button per section (icon over label). Clicking a button
+  opens a **dropdown** of that section's commands (the section entry itself +
+  its contextual actions) instead of navigating immediately.
+* **document tabs** -- every section you open appears as a tab (with a close
+  button) under the menu bar; clicking a tab re-activates that section.
+* **command strip** -- the contextual command buttons for the active tab.
+
+The standalone "secondary" buttons that used to live in a second ribbon row are
+now folded into each section's dropdown.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import flet as ft
@@ -38,13 +44,25 @@ class RibbonTab:
     icon: str
 
 
+@dataclass
+class RibbonMenu:
+    """A top menu button: its dropdown lists ``items`` = (label, icon, on_click)."""
+
+    key: str
+    label: str
+    icon: str
+    items: list[tuple[str, str, Callable]] = field(default_factory=list)
+
+
 class CommandBar(ft.Container):
     def __init__(
         self,
         *,
         page: ft.Page | None = None,
+        menus: list[RibbonMenu] | None = None,
         tabs: list[RibbonTab] | None = None,
-        on_tab: Callable | None = None,
+        on_open: Callable | None = None,
+        on_close: Callable | None = None,
         brand_title: str = branding.APP_BRAND,
         brand_subtitle: str = branding.APP_TAGLINE,
         user_name: str = "",
@@ -53,8 +71,12 @@ class CommandBar(ft.Container):
         on_search: Callable | None = None,
         extra: list[ft.Control] | None = None,
     ):
-        self.tabs = list(tabs or [])
-        self.on_tab = on_tab
+        # ``tabs`` is kept for backward compatibility (a menu with no items).
+        if menus is None:
+            menus = [RibbonMenu(t.key, t.label, t.icon, []) for t in (tabs or [])]
+        self.menus = list(menus)
+        self.on_open = on_open
+        self.on_close = on_close
         self.brand_title = brand_title
         self.brand_subtitle = brand_subtitle
         self.user_name = user_name
@@ -63,16 +85,24 @@ class CommandBar(ft.Container):
         self.on_search = on_search
         self.extra = list(extra or [])
 
-        self._active = {"key": self.tabs[0].key if self.tabs else None}
-        self._tab_boxes: dict[str, ft.Container] = {}
+        self._menu_by_key: dict[str, RibbonMenu] = {m.key: m for m in self.menus}
+        self._active = {"key": self.menus[0].key if self.menus else None}
+        self._menu_boxes: dict[str, ft.Container] = {}
+        self._docs: dict[str, ft.Container] = {}
+
         self._actions_row = ft.Row([], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self._actions_wrap = ft.Container(self._actions_row, visible=False)
-        self._tabs_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._menus_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._docs_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._docs_wrap = ft.Container(
+            self._docs_row,
+            visible=False,
+            padding=ft.padding.only(top=4, bottom=2),
+            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+        )
 
-        for tab in self.tabs:
-            box = self._tab_box(tab)
-            self._tab_boxes[tab.key] = box
-            self._tabs_row.controls.append(box)
+        for menu in self.menus:
+            self._menus_row.controls.append(self._menu_button(menu))
 
         avatar_text = "".join(p[:1] for p in (self.user_name or "N").split()[:2]).upper() or "N"
         brand = ft.Row(
@@ -94,7 +124,7 @@ class CommandBar(ft.Container):
             [
                 brand,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
-                self._tabs_row,
+                self._menus_row,
                 ft.Container(expand=True),
                 *self.extra,
                 self._search_button(),
@@ -118,7 +148,7 @@ class CommandBar(ft.Container):
         )
 
         super().__init__(
-            content=ft.Column([top, self._actions_wrap], spacing=0),
+            content=ft.Column([top, self._docs_wrap, self._actions_wrap], spacing=0),
             bgcolor=Colors.WHITE,
             padding=ft.padding.symmetric(horizontal=14, vertical=8),
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
@@ -126,29 +156,109 @@ class CommandBar(ft.Container):
         )
         self.set_active(self._active["key"])
 
-    # ------------------------------------------------------------- tab chrome
-    def _tab_box(self, tab: RibbonTab) -> ft.Container:
-        icon = ft.Icon(tab.icon, size=20, color=Colors.TEXT_SECONDARY)
-        text = ft.Text(tab.label, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
-        return ft.Container(
+    # ----------------------------------------------------------- menu buttons
+    def _menu_button(self, menu: RibbonMenu) -> ft.Control:
+        icon = ft.Icon(menu.icon, size=20, color=Colors.TEXT_SECONDARY)
+        text = ft.Text(menu.label, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
+        box = ft.Container(
             ft.Column([icon, text], spacing=3, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.symmetric(horizontal=12, vertical=6),
             border_radius=Radius.SM,
             border=ft.border.all(1, Colors.BORDER),
-            on_click=lambda _, k=tab.key: self.on_tab and self.on_tab(k),
             ink=True,
         )
+        self._menu_boxes[menu.key] = box
+        items: list[ft.Control] = [self._menu_item(menu, "فتح " + menu.label, menu.icon, None)]
+        for label, item_icon, cb in menu.items:
+            items.append(self._menu_item(menu, label, item_icon, cb))
+        return ft.PopupMenuButton(content=box, tooltip=menu.label, items=items)
+
+    def _menu_item(self, menu: RibbonMenu, label: str, icon, cb) -> ft.Control:
+        def _go(_=None):
+            if cb is None:
+                self._activate(menu.key)
+            else:
+                try:
+                    cb()
+                except Exception:
+                    pass
+                # The resulting navigation opens/activates the matching tab.
+        return ft.PopupMenuItem(text=label, icon=icon, on_click=_go)
+
+    # ------------------------------------------------------- document tabs
+    def open_tab(self, key: str) -> None:
+        """Show/activate the tab for a section (no-op for non-section routes)."""
+        if key not in self._menu_by_key:
+            return
+        if key not in self._docs:
+            menu = self._menu_by_key[key]
+            icon = ft.Icon(menu.icon, size=15, color=Colors.TEXT_SECONDARY)
+            label = ft.Text(menu.label, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
+            close = ft.IconButton(
+                icon=ft.Icons.CLOSE, icon_size=12, tooltip="إغلاق",
+                on_click=lambda _, k=key: self.close_tab(k),
+            )
+            box = ft.Container(
+                ft.Row([icon, label, close], spacing=6, tight=True),
+                padding=ft.padding.only(left=12, right=4, top=4, bottom=4),
+                border_radius=Radius.SM,
+                border=ft.border.all(1, Colors.BORDER),
+                on_click=lambda _, k=key: self._activate(k),
+                ink=True,
+            )
+            self._docs[key] = box
+            self._docs_row.controls.append(box)
+            self._docs_wrap.visible = True
+        self.set_active(key)
+
+    def close_tab(self, key: str) -> None:
+        box = self._docs.pop(key, None)
+        if box is None:
+            return
+        try:
+            self._docs_row.controls.remove(box)
+        except Exception:
+            pass
+        self._docs_wrap.visible = bool(self._docs_row.controls)
+        if self._active.get("key") == key and self.on_close:
+            try:
+                self.on_close(key)
+            except Exception:
+                pass
+        self._safe_update(self)
+
+    def close_all_tabs(self) -> None:
+        self._docs.clear()
+        self._docs_row.controls = []
+        self._docs_wrap.visible = False
+        self._safe_update(self)
+
+    def _activate(self, key: str) -> None:
+        self.open_tab(key)
+        if self.on_open:
+            try:
+                self.on_open(key)
+            except Exception:
+                pass
 
     def set_active(self, key: str | None) -> None:
         self._active["key"] = key
-        for tab_key, box in self._tab_boxes.items():
-            active = tab_key == key
-            row = box.content
-            icon, text = row.controls[0], row.controls[1]
+        for k, box in self._menu_boxes.items():
+            active = k == key
+            col = box.content
+            icon, text = col.controls[0], col.controls[1]
             box.bgcolor = Colors.PRIMARY_BG if active else None
             box.border = ft.border.all(1, Colors.PRIMARY_BORDER if active else Colors.BORDER)
             icon.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
             text.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
+        for k, box in self._docs.items():
+            active = k == key
+            row = box.content
+            icon, label = row.controls[0], row.controls[1]
+            box.bgcolor = Colors.WHITE if active else None
+            box.border = ft.border.all(1, Colors.PRIMARY_BORDER if active else Colors.BORDER)
+            icon.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
+            label.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
         self._safe_update(self)
 
     # -------------------------------------------------------- contextual strip
@@ -224,4 +334,4 @@ class CommandBar(ft.Container):
             pass
 
 
-__all__ = ["CommandBar", "RibbonTab", "RibbonAction"]
+__all__ = ["CommandBar", "RibbonTab", "RibbonAction", "RibbonMenu"]

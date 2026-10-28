@@ -28,7 +28,7 @@ from nano_offline.views.reports_view import ReportsCenter
 from nano_offline.views.security_view import SecurityCenter
 from nano_offline.views.splash_view import SplashGate
 from nano_offline.views.stocktake_view import StocktakeCenter
-from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonTab
+from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonMenu, RibbonTab  # noqa: F401
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
@@ -619,6 +619,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     elif isinstance(ctrl, ft.Text):
                         ctrl.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
         try:
+            command_bar.open_tab(current)
             command_bar.set_active(current)
             command_bar.set_actions(_section_actions(current))
         except NameError:
@@ -743,10 +744,22 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         return []
 
     session_for_bar = session
+
+    def _menu_items_for(key: str):
+        """Flatten a section's contextual actions into dropdown entries."""
+        rows: list = []
+        for action in _section_actions(key):
+            if action.items:
+                rows.extend(action.items)
+            else:
+                rows.append((action.label, action.icon, action.on_click))
+        return rows
+
     command_bar = CommandBar(
         page=page,
-        tabs=[RibbonTab(k, label_map[k], icon_map[k]) for k in allowed_keys],
-        on_tab=lambda k: navigate(k),
+        menus=[RibbonMenu(k, label_map[k], icon_map[k], _menu_items_for(k)) for k in allowed_keys],
+        on_open=lambda k: navigate(k),
+        on_close=lambda k: navigate("dashboard"),
         user_name=session_for_bar.full_name or session_for_bar.username,
         user_sub=session_for_bar.username,
         on_logout=lambda: on_logout(),
