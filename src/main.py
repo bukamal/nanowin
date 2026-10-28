@@ -213,7 +213,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_open_statement=open_statement, on_open_invoice=invoice_center.show_invoice_detail,
     )
-    admin_center = AdminCenter(page, ctx, content, on_logout=on_logout, native_files=native_files, on_theme_changed=on_theme_changed)
+    admin_center = AdminCenter(page, ctx, content, on_logout=on_logout, native_files=native_files, on_theme_changed=on_theme_changed, on_context_actions=lambda actions: set_context_actions(actions))
     party_center = PartyCenter(
         page, ctx, content,
         native_files=native_files,

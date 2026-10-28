@@ -13,6 +13,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField
+from nano_offline.components.command_bar import RibbonAction
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -36,12 +37,16 @@ from nano_offline.core.barcode128 import code128b_bars
 
 
 class AdminCenter:
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, on_logout, native_files=None, on_theme_changed=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, on_logout, native_files=None, on_theme_changed=None, on_context_actions=None):
         self.page = page
         self.ctx = ctx
         self.content = content
         self.on_logout = on_logout
         self.native_files = native_files
+        # Lets the admin publish its own section buttons into the shell's
+        # command strip (under the الإدارة tab), the same mechanism the items
+        # screen uses, so its navigation matches the rest of the app.
+        self.on_context_actions = on_context_actions
         # Called after the night-mode preference/schedule is saved so the
         # whole app can be torn down and rebuilt with the new palette right
         # away (see main.py's build_shell/open_shell) -- optional purely so
@@ -120,7 +125,6 @@ class AdminCenter:
     def show_center(self, section: str | None = None):
         self.ctx.auth.require("admin")
         self._pending_section = section
-        session = self.ctx.auth.current()
         backups_dir = self.ctx.backup.default_dir()
         backups_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2670,133 +2674,45 @@ class AdminCenter:
             ("reports", "التقارير", ft.Icons.BAR_CHART_OUTLINED),
             ("audit", "سجل التدقيق", ft.Icons.HISTORY),
         ]
-        ADMIN_GROUPS = [
-            ("setup", "الإعداد والتخصيص", ft.Icons.TUNE_ROUNDED, ("appearance", "branding", "users", "license")),
-            ("operations", "العمليات والمخزون", ft.Icons.STORE_OUTLINED, ("barcode", "invoice", "pos", "lan", "stocktake", "crisis")),
-            ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED, ("backup", "reports", "audit", "server")),
-            ("assistant", "الصوت والمساعد", ft.Icons.RECORD_VOICE_OVER_OUTLINED, ("sound", "voice")),
-        ]
         initial = getattr(self, "_pending_section", None) or "users"
         self._pending_section = None
-        group_for_section = {section_key: group_key for group_key, _, _, section_keys in ADMIN_GROUPS for section_key in section_keys}
-        tab_state = {"active": initial, "group": group_for_section.get(initial, "setup")}
-        group_bar = ft.Row(spacing=8, wrap=True)
-        section_bar = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
+        tab_state = {"active": initial}
 
         for key, panel in section_panels.items():
             panel.visible = key == tab_state["active"]
 
-        def _nav_chip(
-            label: str,
-            icon: str,
-            *,
-            selected: bool,
-            primary: bool,
-            on_click,
-        ) -> ft.Container:
-            active_color = Colors.PRIMARY if primary else Colors.PRIMARY_BG
-            active_text = Colors.WHITE if primary else Colors.PRIMARY
-            return ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Icon(icon, size=15, color=active_text if selected else Colors.TEXT_MUTED),
-                        ft.Text(
-                            label,
-                            size=12.5 if primary else 12,
-                            color=active_text if selected else Colors.TEXT_MUTED,
-                            weight=ft.FontWeight.BOLD if selected else ft.FontWeight.W_500,
-                        ),
-                    ],
-                    spacing=7,
-                    tight=True,
-                ),
-                padding=ft.padding.symmetric(horizontal=14 if primary else 12, vertical=9 if primary else 8),
-                bgcolor=active_color if selected else Colors.WHITE,
-                border=ft.border.all(1, Colors.PRIMARY if selected else Colors.BORDER_ALT),
-                border_radius=13 if primary else 11,
-                ink=True,
-                animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
-                on_click=on_click,
-            )
-
-        def _render_navigation() -> None:
-            group_bar.controls = [
-                _nav_chip(
-                    label,
-                    icon,
-                    selected=group_key == tab_state["group"],
-                    primary=True,
-                    on_click=lambda _, key=group_key: switch_group(key),
-                )
-                for group_key, label, icon, _ in ADMIN_GROUPS
-            ]
-            section_bar.controls = [
-                _nav_chip(
+        def _publish_actions() -> None:
+            # All admin sections become buttons in the shell's command strip
+            # (the active one is accented), so the admin navigation lives under
+            # the الإدارة tab exactly like every other screen's commands.
+            if not self.on_context_actions:
+                return
+            self.on_context_actions([
+                RibbonAction(
+                    section_key,
                     section_label,
                     section_icon,
-                    selected=section_key == tab_state["active"],
-                    primary=False,
-                    on_click=lambda _, key=section_key: switch_section(key),
+                    accent=(section_key == tab_state["active"]),
+                    on_click=lambda _=None, k=section_key: switch_section(k),
                 )
                 for section_key, section_label, section_icon in TABS
-                if group_for_section[section_key] == tab_state["group"]
-            ]
+                if section_key in section_panels
+            ])
 
         def switch_section(key: str):
-            if key == tab_state["active"]:
+            if key == tab_state["active"] or key not in section_panels:
                 return
             tab_state["active"] = key
             for k, panel in section_panels.items():
                 panel.visible = k == key
-            _render_navigation()
+            _publish_actions()
             self.page.update()
 
-        def switch_group(key: str):
-            if key == tab_state["group"]:
-                return
-            tab_state["group"] = key
-            group = next(group for group in ADMIN_GROUPS if group[0] == key)
-            switch_section(group[3][0])
-
-        _render_navigation()
+        _publish_actions()
 
         self.content.content = ft.Column(
             [
-                ft.Container(
-                    ft.Row(
-                        [
-                            ft.Container(
-                                ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED, size=24, color=Colors.PRIMARY),
-                                width=48,
-                                height=48,
-                                alignment=ft.alignment.center,
-                                bgcolor=Colors.PRIMARY_BG,
-                                border_radius=16,
-                            ),
-                            ft.Column(
-                                [
-                                    ft.Text("الإدارة والأمان", size=22, weight=ft.FontWeight.BOLD),
-                                    ft.Text(f"المستخدم الحالي: {session.full_name} ({ROLE_LABELS.get(session.role, session.role)})", size=12, color=Colors.TEXT_SECONDARY),
-                                ],
-                                expand=True,
-                                spacing=3,
-                            ),
-                            ft.OutlinedButton("تسجيل الخروج", icon=ft.Icons.LOGOUT, on_click=lambda _: self.on_logout()),
-                        ],
-                        spacing=12,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    padding=14,
-                    bgcolor=Colors.WHITE,
-                    border=ft.border.all(1, Colors.BORDER_ALT),
-                    border_radius=16,
-                ),
                 status_strip,
-                group_bar,
-                ft.Container(
-                    section_bar,
-                    padding=ft.padding.only(bottom=2),
-                ),
                 ft.Column(list(section_panels.values()), spacing=12),
             ],
             scroll=ft.ScrollMode.AUTO,

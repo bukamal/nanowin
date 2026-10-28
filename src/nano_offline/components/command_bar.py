@@ -90,7 +90,7 @@ class CommandBar(ft.Container):
         self._active = {"key": None}
         self._docs: dict[str, ft.Container] = {}
 
-        self._actions_row = ft.Row([], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
+        self._actions_row = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self._actions_wrap = ft.Container(self._actions_row, visible=False)
         self._menus_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self._docs_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
@@ -195,13 +195,18 @@ class CommandBar(ft.Container):
             label_text, icon_name = self._titles[key]
             icon = ft.Icon(icon_name, size=15, color=Colors.TEXT_SECONDARY)
             label = ft.Text(label_text, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
-            close = ft.IconButton(
-                icon=ft.Icons.CLOSE, icon_size=12, tooltip="إغلاق",
+            close = ft.Container(
+                ft.Icon(ft.Icons.CLOSE, size=13, color=Colors.TEXT_FAINT),
+                width=18,
+                height=18,
+                alignment=ft.alignment.center,
+                border_radius=Radius.SM,
                 on_click=lambda _, k=key: self.close_tab(k),
+                ink=True,
             )
             box = ft.Container(
-                ft.Row([icon, label, close], spacing=6, tight=True),
-                padding=ft.padding.only(left=12, right=4, top=4, bottom=4),
+                ft.Row([icon, label, close], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=12, right=6, top=3, bottom=3),
                 border_radius=Radius.SM,
                 border=ft.border.all(1, Colors.BORDER),
                 on_click=lambda _, k=key: self._activate(k),
@@ -248,10 +253,11 @@ class CommandBar(ft.Container):
             active = k == key
             row = box.content
             icon, label = row.controls[0], row.controls[1]
-            box.bgcolor = Colors.WHITE if active else None
-            box.border = ft.border.all(1, Colors.PRIMARY_BORDER if active else Colors.BORDER)
+            box.bgcolor = Colors.PRIMARY_BG if active else None
+            box.border = ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER)
             icon.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
             label.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
+            label.weight = ft.FontWeight.BOLD if active else ft.FontWeight.W_600
         self._safe_update(self)
 
     # -------------------------------------------------------- contextual strip
