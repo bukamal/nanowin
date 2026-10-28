@@ -92,7 +92,6 @@ class CommandBar(ft.Container):
 
         self._actions_row = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self._actions_wrap = ft.Container(self._actions_row, visible=False)
-        self._menus_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self._docs_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self._docs_wrap = ft.Container(
             self._docs_row,
@@ -101,8 +100,11 @@ class CommandBar(ft.Container):
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
 
-        for menu in self.menus:
-            self._menus_row.controls.append(self._menu_button(menu))
+        self._menu_bar = ft.MenuBar(
+            controls=[self._submenu(menu) for menu in self.menus],
+            expand=True,
+            style=ft.MenuStyle(bgcolor=None, elevation=0, padding=ft.padding.symmetric(horizontal=0, vertical=0)),
+        )
 
         avatar_text = "".join(p[:1] for p in (self.user_name or "N").split()[:2]).upper() or "N"
         brand = ft.Row(
@@ -124,8 +126,7 @@ class CommandBar(ft.Container):
             [
                 brand,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
-                self._menus_row,
-                ft.Container(expand=True),
+                self._menu_bar,
                 self._search_button(),
                 *self.extra,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
@@ -157,34 +158,34 @@ class CommandBar(ft.Container):
         self.set_active(self._active["key"])
 
     # ----------------------------------------------------------- menu buttons
-    def _menu_button(self, menu: RibbonMenu) -> ft.Control:
-        icon = ft.Icon(menu.icon, size=20, color=Colors.TEXT_SECONDARY)
-        text = ft.Text(menu.label, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
-        box = ft.Container(
-            ft.Column([icon, text], spacing=3, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.symmetric(horizontal=12, vertical=6),
-            border_radius=Radius.SM,
-            border=ft.border.all(1, Colors.BORDER),
-            ink=True,
+    def _submenu(self, menu: RibbonMenu) -> ft.SubmenuButton:
+        """One top-level menu: a real cascading menu with icon + name."""
+        controls: list[ft.Control] = []
+        for entry in menu.items:
+            if entry is None:
+                # Group separator marker in the data; skip it here (a Divider
+                # is not a menu child in this Flet version).
+                continue
+            label, item_icon, cb = entry
+            def _go(_=None, c=cb):
+                if c is not None:
+                    try:
+                        c()
+                    except Exception:
+                        pass
+            controls.append(
+                ft.MenuItemButton(
+                    leading=ft.Icon(item_icon) if item_icon else None,
+                    content=ft.Text(label),
+                    height=40,
+                    on_click=_go if cb is not None else None,
+                )
+            )
+        return ft.SubmenuButton(
+            leading=ft.Icon(menu.icon),
+            content=ft.Text(menu.label, weight=ft.FontWeight.W_600),
+            controls=controls,
         )
-        items: list[ft.Control] = []
-        if not menu.items:
-            items.append(self._menu_item(menu, "فتح " + menu.label, menu.icon, None))
-        for label, item_icon, cb in menu.items:
-            items.append(self._menu_item(menu, label, item_icon, cb))
-        return ft.PopupMenuButton(content=box, tooltip=menu.label, items=items)
-
-    def _menu_item(self, menu: RibbonMenu, label: str, icon, cb) -> ft.Control:
-        def _go(_=None):
-            if cb is None:
-                self._activate(menu.key)
-            else:
-                try:
-                    cb()
-                except Exception:
-                    pass
-                # The resulting navigation opens/activates the matching tab.
-        return ft.PopupMenuItem(text=label, icon=icon, on_click=_go)
 
     # ------------------------------------------------------- document tabs
     def open_tab(self, key: str) -> None:
@@ -303,25 +304,14 @@ class CommandBar(ft.Container):
 
     def _search_button(self) -> ft.Control:
         return ft.Container(
-            ft.Row(
-                [
-                    ft.Icon(ft.Icons.SEARCH, size=16, color=Colors.TEXT_SECONDARY),
-                    ft.Text("بحث سريع", size=12, color=Colors.TEXT_SECONDARY),
-                    ft.Container(
-                        ft.Text("Ctrl K", size=9, color=Colors.TEXT_FAINT, weight=ft.FontWeight.BOLD),
-                        padding=ft.padding.symmetric(horizontal=6, vertical=2),
-                        bgcolor=Colors.BACKGROUND_ALT,
-                        border_radius=6,
-                        border=ft.border.all(1, Colors.BORDER),
-                    ),
-                ],
-                spacing=7,
-                tight=True,
-            ),
-            padding=ft.padding.symmetric(horizontal=10, vertical=7),
+            ft.Icon(ft.Icons.SEARCH, size=18, color=Colors.TEXT_SECONDARY),
+            width=38,
+            height=38,
+            alignment=ft.alignment.center,
             border=ft.border.all(1, Colors.BORDER),
             border_radius=Radius.SM,
             ink=True,
+            tooltip="بحث سريع (Ctrl+K)",
             on_click=lambda _: self.on_search and self.on_search(),
         )
 

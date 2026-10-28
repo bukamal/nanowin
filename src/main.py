@@ -583,6 +583,50 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             company_name = str(ctx.settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
         except Exception:
             company_name = branding.APP_NAME_AR
+
+        # ---- hero: company logo (or the app icon) + name, like the reference
+        try:
+            _logo = str(ctx.settings.get("company_logo") or "").strip()
+        except Exception:
+            _logo = ""
+        hero_logo = (
+            ft.Image(src_base64=_logo.split(",", 1)[1], width=72, height=72, fit=ft.ImageFit.CONTAIN)
+            if _logo and "," in _logo
+            else ft.Image(src="icon.png", width=72, height=72, fit=ft.ImageFit.CONTAIN)
+        )
+        hero = ft.Container(
+            ft.Row(
+                [
+                    ft.Container(
+                        hero_logo,
+                        width=88,
+                        height=88,
+                        alignment=ft.alignment.center,
+                        bgcolor=Colors.WHITE,
+                        border_radius=20,
+                        border=ft.border.all(1, Colors.BORDER),
+                        shadow=Shadow.SM,
+                    ),
+                    ft.Column(
+                        [
+                            ft.Text(company_name, size=20, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                            ft.Text(branding.APP_TAGLINE, size=12, color=Colors.TEXT_SECONDARY),
+                        ],
+                        spacing=2,
+                        expand=True,
+                        vertical_alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=14,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=16,
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=16,
+            shadow=Shadow.SM,
+        )
+
         right_panel = ft.Container(
             ft.Column(
                 [
@@ -626,13 +670,19 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             spacing=16,
         )
         content.content = ft.Container(
-            ft.ResponsiveRow(
+            ft.Column(
                 [
-                    ft.Container(right_panel, col={"xs": 12, "md": 4}),
-                    ft.Container(left_col, col={"xs": 12, "md": 8}),
+                    hero,
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(right_panel, col={"xs": 12, "md": 4}),
+                            ft.Container(left_col, col={"xs": 12, "md": 8}),
+                        ],
+                        spacing=14,
+                        run_spacing=14,
+                    ),
                 ],
                 spacing=14,
-                run_spacing=14,
             ),
             padding=ft.padding.only(top=6, bottom=6),
         )
@@ -825,38 +875,64 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         """Curated top menu bar (the home is not a menu; invoices -> sales/purchases)."""
         out: list = []
         if session.can("items"):
-            out.append(RibbonMenu("items", "المواد", icon_map["items"],
-                [("فتح المواد", icon_map["items"], lambda: navigate("items"))]))
+            out.append(RibbonMenu("items", "المواد", icon_map["items"], [
+                ("قائمة المواد", icon_map["items"], lambda: navigate("items")),
+                ("جرد المخزون", ft.Icons.FACT_CHECK_OUTLINED, lambda: navigate("stocktake")),
+            ]))
         if session.can("customers"):
-            out.append(RibbonMenu("customers", "العملاء", icon_map["customers"],
-                [("فتح العملاء", icon_map["customers"], lambda: navigate("customers"))]))
+            out.append(RibbonMenu("customers", "العملاء", icon_map["customers"], [
+                ("قائمة العملاء", icon_map["customers"], lambda: navigate("customers")),
+                None,
+                ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("customer")),
+                ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
+            ]))
         if session.can("suppliers"):
-            out.append(RibbonMenu("suppliers", "الموردين", icon_map["suppliers"],
-                [("فتح الموردين", icon_map["suppliers"], lambda: navigate("suppliers"))]))
+            out.append(RibbonMenu("suppliers", "الموردين", icon_map["suppliers"], [
+                ("قائمة الموردين", icon_map["suppliers"], lambda: navigate("suppliers")),
+                None,
+                ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("supplier")),
+                ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
+            ]))
         if session.can("invoices"):
-            out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART,
-                [("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
-                 ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase())]))
-            out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT,
-                [("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
-                 ("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
-                 ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
-                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice())]))
+            out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART, [
+                ("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
+                ("فاتورة مشتريات جديدة", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase()),
+                None,
+                ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
+            ]))
+            out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, [
+                ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
+                ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
+                ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
+                ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
+                None,
+                ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
+            ]))
         if session.can("finance"):
-            out.append(RibbonMenu("vouchers", "السندات", ft.Icons.PAYMENTS_OUTLINED,
-                [("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
-                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment())]))
-            out.append(RibbonMenu("finance", "المالية", icon_map["finance"],
-                [("فتح المالية", icon_map["finance"], lambda: navigate("finance"))]))
+            out.append(RibbonMenu("vouchers", "السندات", ft.Icons.PAYMENTS_OUTLINED, [
+                ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
+                ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
+            ]))
+            out.append(RibbonMenu("finance", "المالية", icon_map["finance"], [
+                ("فتح المالية", icon_map["finance"], lambda: navigate("finance")),
+                None,
+                ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("customer")),
+                ("دفتر اليومية", ft.Icons.MENU_BOOK_OUTLINED, lambda: navigate("finance")),
+            ]))
         if session.can("reports"):
-            out.append(RibbonMenu("reports", "التقارير", icon_map["reports"],
-                [("فتح التقارير", icon_map["reports"], lambda: navigate("reports"))]))
+            out.append(RibbonMenu("reports", "التقارير", icon_map["reports"], [
+                ("فتح التقارير", icon_map["reports"], lambda: navigate("reports")),
+            ]))
         if session.can("security"):
-            out.append(RibbonMenu("security", "الأمان والدخول", icon_map["security"],
-                [("فتح الأمان والدخول", icon_map["security"], lambda: navigate("security"))]))
+            out.append(RibbonMenu("security", "الأمان والدخول", icon_map["security"], [
+                ("فتح الأمان والدخول", icon_map["security"], lambda: navigate("security")),
+            ]))
         if session.can("admin"):
-            out.append(RibbonMenu("admin", "الإدارة", icon_map["admin"],
-                [("فتح الإدارة", icon_map["admin"], lambda: navigate("admin"))] + _menu_items_for("admin")))
+            out.append(RibbonMenu("admin", "الإدارة", icon_map["admin"], [
+                ("فتح الإدارة", icon_map["admin"], lambda: navigate("admin")),
+                None,
+                ("النسخ الاحتياطي", ft.Icons.BACKUP_OUTLINED, lambda: open_admin_section("backup")),
+            ]))
         return out
 
     titles = {k: (label_map[k], icon_map[k]) for k in allowed_keys if k != "dashboard"}

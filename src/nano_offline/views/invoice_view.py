@@ -1073,19 +1073,25 @@ class InvoiceCenter:
             status_label = ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY)
             type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             status_filter_row = ft.Row([status_label, status_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
-            filters_inline = ft.Row([type_filter_row, status_filter_row], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
+            # Single compact toolbar row: search + filters + actions (matches
+            # every other list screen instead of a wide search bar with a
+            # second filter row under it).
             sticky_header = ft.Container(
-                ft.Column(
+                ft.Row(
                     [
-                        ft.Row(
-                            [ft.Container(search, expand=True), columns_button, export_button, density_button],
-                            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        filters_inline,
+                        ft.Container(search, width=280),
+                        type_filter_row,
+                        status_filter_row,
+                        ft.Container(expand=True),
+                        columns_button,
+                        export_button,
+                        density_button,
                     ],
-                    spacing=10,
+                    spacing=12,
+                    wrap=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
+                padding=ft.padding.only(left=16, right=16, top=12, bottom=10),
                 bgcolor=Colors.WHITE,
                 border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
                 shadow=Shadow.SM,
@@ -1364,8 +1370,12 @@ class InvoiceCenter:
 
         line_columns = [
             GridColumn("item", "المادة", editable=True, kind="picker"),
-            GridColumn("qty", "الكمية", editable=True, kind="number", width=100, align="end"),
-            GridColumn("price", currency.amount_field_label("السعر", settings), editable=True, kind="money", width=150, align="end"),
+            GridColumn("unit", "الوحدة", width=72, align="center", sortable=False),
+            GridColumn("qty", "الكمية", editable=True, kind="number", width=92, align="end"),
+            GridColumn("price", currency.amount_field_label("السعر", settings), editable=True, kind="money", width=130, align="end"),
+            GridColumn("total", "الإجمالي", width=120, align="end", kind="money", sortable=False),
+            GridColumn("available", "المتاح", width=88, align="end", kind="number", sortable=False),
+            GridColumn("barcode", "الباركود", width=140, sortable=False),
         ]
         line_visibility = ColumnVisibility(
             columns=line_columns,
@@ -1379,12 +1389,14 @@ class InvoiceCenter:
         lines_grid = DataGrid(
             columns=line_columns,
             rows=[], page=self.page,
+            row_height=36,
             hidden_keys=line_visibility.hidden_keys,
             picker_options=lambda _col, _row: [
                 (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
                 for item_row in items
             ],
             on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
+            on_enter=lambda: _sheet_enter(),
             formatter=row_formatter,
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
         )
@@ -1401,6 +1413,7 @@ class InvoiceCenter:
                     except (TypeError, ValueError):
                         qty = 1.0
                     lines_grid.set_cell(index, "qty", qty)
+                    _fill_derived(index)
                     refresh_summary()
                     return "bumped"
             item_row = item_map.get(item_id)
@@ -1408,6 +1421,7 @@ class InvoiceCenter:
             lines_grid.set_cell(index, "item", item_id)
             if item_row is not None:
                 lines_grid.set_cell(index, "price", default_display_price(item_row))
+            _fill_derived(index)
             refresh_summary()
             return "added"
 
@@ -1490,6 +1504,28 @@ class InvoiceCenter:
             _safe_update(paid_progress)
             _safe_update(quick_chips)
 
+        def _fill_derived(index: int) -> None:
+            """Refresh the read-only columns (unit/available/barcode/total)."""
+            row = lines_grid.row_at(index) or {}
+            item_id = row.get("item")
+            item_row = item_map.get(int(item_id)) if item_id else None
+            unit = ""
+            available = ""
+            barcode = ""
+            if item_row is not None:
+                unit = str(item_row.get("unit_abbreviation") or item_row.get("unit_name") or "")
+                avail = item_row.get("quantity")
+                available = avail if avail not in (None, "") else ""
+                barcode = str(item_row.get("barcode") or "")
+            try:
+                total = float(row.get("qty") or 0) * float(row.get("price") or 0)
+            except (TypeError, ValueError):
+                total = 0.0
+            lines_grid.set_cell(index, "unit", unit, notify=False)
+            lines_grid.set_cell(index, "available", available, notify=False)
+            lines_grid.set_cell(index, "barcode", barcode, notify=False)
+            lines_grid.set_cell(index, "total", round(total, 2), notify=False)
+
         def commit_sheet_line_cell(index: int, key: str, value) -> None:
             if key == "item" and value:
                 row = lines_grid.row_at(index) or {}
@@ -1497,6 +1533,7 @@ class InvoiceCenter:
                     item_row = item_map.get(int(value))
                     if item_row is not None:
                         lines_grid.set_cell(index, "price", default_display_price(item_row), notify=False)
+            _fill_derived(index)
             refresh_summary()
 
         def quick_pay(ratio: float) -> None:
@@ -1837,6 +1874,15 @@ class InvoiceCenter:
             if step["opened"]:
                 self.page.update()
 
+        def _sheet_enter() -> None:
+            # Enter inside the lines table leaves the table: advance to the
+            # next step (and on the last step, save & close) instead of
+            # opening the active cell for editing (that stays on double-click).
+            if step["idx"] < len(steps) - 1:
+                go(1)
+            else:
+                save()
+
         sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
 
         def close(_=None) -> None:
@@ -1870,10 +1916,11 @@ class InvoiceCenter:
                 lines_grid.set_cell(index, "price", round(currency.to_display(float(price_usd), rate), 2))
             elif item_row is not None:
                 lines_grid.set_cell(index, "price", default_display_price(item_row))
+            _fill_derived(index)
         if not prefill_lines:
-            # Three blank rows, same head start the bulk-entry sheet gives.
-            for _ in range(3):
-                lines_grid.add_row({"qty": 1})
+            # One blank row by default (single-row compact table); the cashier
+            # adds more with «سطر جديد» or the barcode scanner.
+            lines_grid.add_row({"qty": 1})
         update_party_insight()
         refresh_summary()
 
@@ -3773,11 +3820,13 @@ class InvoiceCenter:
                     GridColumn("price", "السعر", editable=True, kind="money", width=150, align="end"),
                 ],
                 rows=[], page=self.page,
+                row_height=36,
                 picker_options=lambda _col, _row: [
                     (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
                     for item_row in items
                 ],
                 on_cell_commit=lambda index, key, value: commit_bulk_cell(index, key, value),
+                on_enter=lambda: apply_lines(),
                 formatter=row_formatter,
                 empty_text="اضغط «سطر جديد» لإضافة بنود",
             )
@@ -3809,8 +3858,8 @@ class InvoiceCenter:
                         bulk_grid.set_cell(index, "price", default_display_price(item_row), notify=False)
                 refresh_footer()
 
-            for _ in range(3):
-                bulk_grid.add_row({"qty": 1})
+            # One blank row by default (add more with «سطر جديد»).
+            bulk_grid.add_row({"qty": 1})
             refresh_footer()
 
             def add_blank(_=None) -> None:

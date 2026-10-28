@@ -112,6 +112,7 @@ class DataGrid(ft.Column):
         on_search_shortcut: Callable[[], None] | None = None,
         on_new_shortcut: Callable[[], None] | None = None,
         on_edit_error: Callable[[str], None] | None = None,
+        on_enter: Callable[[], None] | None = None,
     ):
         self._all_columns = list(columns)
         self._hidden_keys: set[str] = set(hidden_keys or set())
@@ -141,6 +142,7 @@ class DataGrid(ft.Column):
         self._on_row_expand = on_row_expand
         self._on_search_shortcut = on_search_shortcut
         self._on_new_shortcut = on_new_shortcut
+        self._on_enter = on_enter
         self._on_edit_error = on_edit_error
         self._expanded: set[int] = set()
         self._sort_key: str | None = None
@@ -305,6 +307,9 @@ class DataGrid(ft.Column):
         elif key == _PAGE_UP:
             moved = self.nav.page(-1, self._page_rows())
         elif key == "enter":
+            if self._on_enter is not None:
+                self._on_enter()
+                return
             if self.nav.enter() == "edit":
                 self._begin_edit()
             return
