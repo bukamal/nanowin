@@ -100,11 +100,9 @@ class CommandBar(ft.Container):
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
 
-        self._menu_bar = ft.MenuBar(
-            controls=[self._submenu(menu) for menu in self.menus],
-            expand=True,
-            style=ft.MenuStyle(bgcolor=None, elevation=0, padding=ft.padding.symmetric(horizontal=0, vertical=0)),
-        )
+        self._menu_row = ft.Row([], spacing=2, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        for menu in self.menus:
+            self._menu_row.controls.append(self._menu_button(menu))
 
         avatar_text = "".join(p[:1] for p in (self.user_name or "N").split()[:2]).upper() or "N"
         brand = ft.Row(
@@ -126,7 +124,8 @@ class CommandBar(ft.Container):
             [
                 brand,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
-                self._menu_bar,
+                self._menu_row,
+                ft.Container(expand=True),
                 self._search_button(),
                 *self.extra,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
@@ -158,34 +157,37 @@ class CommandBar(ft.Container):
         self.set_active(self._active["key"])
 
     # ----------------------------------------------------------- menu buttons
-    def _submenu(self, menu: RibbonMenu) -> ft.SubmenuButton:
-        """One top-level menu: a real cascading menu with icon + name."""
-        controls: list[ft.Control] = []
+    def _menu_button(self, menu: RibbonMenu) -> ft.Control:
+        """A top menu button (icon + name) opening a real dropdown of its
+        commands. Uses PopupMenuButton (stable across Flet versions)."""
+        box = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(menu.icon, size=18, color=Colors.TEXT_SECONDARY),
+                    ft.Text(menu.label, size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                    ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=Colors.TEXT_FAINT),
+                ],
+                spacing=6,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+            border_radius=Radius.SM,
+            ink=True,
+        )
+        items: list[ft.Control] = []
         for entry in menu.items:
             if entry is None:
-                # Group separator marker in the data; skip it here (a Divider
-                # is not a menu child in this Flet version).
                 continue
             label, item_icon, cb = entry
-            def _go(_=None, c=cb):
-                if c is not None:
-                    try:
-                        c()
-                    except Exception:
-                        pass
-            controls.append(
-                ft.MenuItemButton(
-                    leading=ft.Icon(item_icon) if item_icon else None,
-                    content=ft.Text(label),
-                    height=40,
-                    on_click=_go if cb is not None else None,
+            items.append(
+                ft.PopupMenuItem(
+                    text=label,
+                    icon=item_icon,
+                    on_click=(lambda _, c=cb: c()) if cb is not None else None,
                 )
             )
-        return ft.SubmenuButton(
-            leading=ft.Icon(menu.icon),
-            content=ft.Text(menu.label, weight=ft.FontWeight.W_600),
-            controls=controls,
-        )
+        return ft.PopupMenuButton(content=box, tooltip=menu.label, items=items)
 
     # ------------------------------------------------------- document tabs
     def open_tab(self, key: str) -> None:
