@@ -1073,24 +1073,19 @@ class InvoiceCenter:
             status_label = ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY)
             type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             status_filter_row = ft.Row([status_label, status_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
-            # Single compact toolbar row: search + filters + actions (matches
-            # every other list screen instead of a wide search bar with a
-            # second filter row under it).
+            filters_inline = ft.Row([type_filter_row, status_filter_row], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             sticky_header = ft.Container(
-                ft.Row(
+                ft.Column(
                     [
-                        ft.Container(search, width=280),
-                        type_filter_row,
-                        status_filter_row,
-                        ft.Container(expand=True),
-                        columns_button,
-                        export_button,
-                        density_button,
+                        ft.Row(
+                            [ft.Container(search, expand=True), columns_button, export_button, density_button],
+                            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        filters_inline,
                     ],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=10,
                 ),
-                padding=ft.padding.only(left=16, right=16, top=12, bottom=10),
+                padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
                 bgcolor=Colors.WHITE,
                 border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
                 shadow=Shadow.SM,

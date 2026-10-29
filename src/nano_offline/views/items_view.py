@@ -3189,28 +3189,24 @@ class ItemsCenter:
             filter_box("no_movement", "بلا حركة", ft.Icons.HOURGLASS_EMPTY_ROUNDED),
         ], spacing=6, scroll=ft.ScrollMode.AUTO)
         sort_dd.width = 130
-        # Unified single-row toolbar: compact search + filters + sort + actions
-        # on one line (same shape on every list screen).
+        # Same toolbar shape as parties_view: the search field shares one
+        # row with the column/export/density actions instead of being
+        # mounted on its own line where it stretched edge to edge.
         toolbar_row = ft.Row(
-            [
-                ft.Container(search, width=280),
-                filters,
-                sort_dd,
-                ft.Container(expand=True),
-                columns_button,
-                export_button,
-                density_button,
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
+            [ft.Container(search, expand=True), columns_button, export_button, density_button],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=4,
+        )
+        filters_row = ft.Row(
+            [ft.Container(filters, expand=True), sort_dd],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=4,
         )
 
         # Sticky header: only search + filters, always reachable while
         # scrolling a long item list -- everything else (stats, list) moves
         # to the scrolling body below it.
         sticky_top = ft.Container(
-            toolbar_row,
-            padding=ft.padding.only(left=18, right=18, top=12, bottom=10),
+            ft.Column([toolbar_row, filters_row], spacing=10),
+            padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
             bgcolor=Colors.WHITE,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
