@@ -350,15 +350,9 @@ class DataGrid(ft.Column):
                     handled = self._on_enter()
                 if handled:
                     return
-            col = self.nav.column
-            if col is not None and col.kind == "picker":
-                # Enter opens the picker for the active cell.
-                if self.nav.enter() == "edit":
-                    self._begin_edit()
-                return
-            # Excel-style: Enter advances to the next editable cell, wrapping
-            # to the first cell of the next row (a fresh row is appended at
-            # the very end).
+            # Enter always navigates to the next editable cell, wrapping to the
+            # next row (appending a row at the very end). Pickers open on
+            # click/double-click or F2, never by Enter.
             self._advance_forward()
             return
         elif key == "f2":

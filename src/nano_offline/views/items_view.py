@@ -2511,7 +2511,8 @@ class ItemsCenter:
                 }
 
             def add_blank(_=None) -> None:
-                bulk_grid.add_row(row_defaults())
+                # Blank row: no implicit defaults (the cashier fills it).
+                bulk_grid.add_row()
                 refresh_bulk_footer()
 
             def duplicate_rows(rows: list[dict]) -> None:
@@ -2749,7 +2750,8 @@ class ItemsCenter:
             for _selector in (type_sel, cat_sel, unit_sel):
                 _disarm_on_focus(_selector)
 
-            bulk_grid.add_row(row_defaults())
+            # One blank row by default -- no implicit defaults.
+            bulk_grid.add_row()
             refresh_bulk_footer()
 
             # A wide, tall sheet: the table is the point, so it gets the

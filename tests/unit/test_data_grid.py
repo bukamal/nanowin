@@ -340,7 +340,7 @@ def test_picker_cell_delegates_to_on_pick_without_opening_an_editor():
     g = DataGrid(columns=PICK_COLS, rows=[{"item": None, "qty": 1}], page=None,
                  on_pick=lambda r, col: calls.append((r, col.key)))
     g.arm()
-    g._handle_key(FakeKey("Enter"))
+    g._handle_key(FakeKey("F2"))
     assert calls == [(0, "item")]
     assert g._edit_field is None  # picker never materialises a TextField
 
@@ -356,7 +356,7 @@ def test_picker_options_edit_inside_active_cell_and_commit_original_value():
     )
 
     g.arm()
-    g._handle_key(FakeKey("Enter"))
+    g._handle_key(FakeKey("F2"))
 
     editor = g._cell_boxes[(0, 0)].content
     assert isinstance(editor, ft.Dropdown)
@@ -381,7 +381,7 @@ def test_picker_ignores_unmatched_search_text_and_escape_restores_cell():
     )
 
     g.arm()
-    g._handle_key(FakeKey("Enter"))
+    g._handle_key(FakeKey("F2"))
     editor = g._picker_control
     editor.value = "بحث غير مطابق"
     editor.on_change(SimpleNamespace(control=editor))
@@ -494,3 +494,16 @@ def test_ctrl_home_and_end_jump_to_corners():
     assert g.nav.cell == (len(ROWS) - 1, len(COLS) - 1)
     g._handle_key(FakeKey("Home", ctrl=True))
     assert g.nav.cell == (0, 0)
+
+
+def test_enter_skips_picker_cell_and_moves_on():
+    g = DataGrid(
+        columns=PICK_COLS,
+        rows=[{"item": None, "qty": 1}],
+        page=None,
+        picker_options=lambda col, _row: [(7, "مادة سبعة")] if col.key == "item" else [],
+    )
+    g.arm()  # nav at (0, 0) = the picker column
+    g._handle_key(FakeKey("Enter"))
+    assert g._picker_control is None   # Enter never opens the picker
+    assert g.nav.cell == (0, 1)        # moves on to the next editable cell

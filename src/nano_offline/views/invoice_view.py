@@ -2653,18 +2653,11 @@ class InvoiceCenter:
                         ],
                         spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.ResponsiveRow(
-                        [
-                            ft.Container(party_dd, col={"xs": 12, "sm": 8, "md": 5}),
-                        ],
-                        spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
                     ft.Row(
                         [
                             ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                             ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
-                            ft.Text("Enter للتحرير • Tab للتنقل • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
                             density_button,
                             export_button,
@@ -2672,8 +2665,31 @@ class InvoiceCenter:
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     bulk_bar,
+                    # The table frame: its top row holds the invoice party
+                    # (customer/supplier) so the field lives *inside* the table
+                    # rather than floating above it.
                     ft.Container(
-                        lines_grid,
+                        ft.Column(
+                            [
+                                ft.Container(
+                                    ft.Row(
+                                        [
+                                            ft.Icon(ft.Icons.PERSON_OUTLINE, size=16, color=Colors.TEXT_SECONDARY),
+                                            ft.Container(party_dd, width=340),
+                                            ft.Container(expand=True),
+                                        ],
+                                        spacing=8,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    ),
+                                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                                    bgcolor=Colors.BACKGROUND_ALT,
+                                    border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+                                ),
+                                lines_grid,
+                            ],
+                            spacing=0,
+                            expand=True,
+                        ),
                         expand=True,
                         border=ft.border.all(1, Colors.BORDER),
                         border_radius=Radius.MD,
