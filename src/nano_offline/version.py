@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.41"
-BUILD_NUMBER = 86  # FIX_0.17.41: home 3 columns + sheet footer wrap/expand
+APP_VERSION = "0.17.42"
+BUILD_NUMBER = 87  # FEAT_0.17.42: safe compact single-row search toolbars everywhere
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

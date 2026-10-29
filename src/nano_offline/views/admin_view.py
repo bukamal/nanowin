@@ -2375,8 +2375,9 @@ class AdminCenter:
                     ),
                     ft.Row(
                         [
-                            ft.Container(audit_search, expand=True),
+                            ft.Container(audit_search, width=280),
                             audit_entity_dd,
+                            ft.Container(expand=True),
                             ft.OutlinedButton("تحديث", icon=ft.Icons.REFRESH, on_click=refresh_audit),
                         ],
                         spacing=8,

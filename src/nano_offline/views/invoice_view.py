@@ -1073,19 +1073,24 @@ class InvoiceCenter:
             status_label = ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY)
             type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             status_filter_row = ft.Row([status_label, status_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
-            filters_inline = ft.Row([type_filter_row, status_filter_row], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
+            # Single compact toolbar: fixed-width search, the type/status chip
+            # groups, then an expand spacer and the actions. No outer wrap=True
+            # (that with an expand child is an invalid Wrap+Expanded layout).
             sticky_header = ft.Container(
-                ft.Column(
+                ft.Row(
                     [
-                        ft.Row(
-                            [ft.Container(search, expand=True), columns_button, export_button, density_button],
-                            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        filters_inline,
+                        ft.Container(search, width=280),
+                        type_filter_row,
+                        status_filter_row,
+                        ft.Container(expand=True),
+                        columns_button,
+                        export_button,
+                        density_button,
                     ],
                     spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
+                padding=ft.padding.only(left=16, right=16, top=12, bottom=10),
                 bgcolor=Colors.WHITE,
                 border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
                 shadow=Shadow.SM,

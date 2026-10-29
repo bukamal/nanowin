@@ -548,7 +548,7 @@ class PartyCenter:
                         ),
                         ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
                     ],
-                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 )
                 bulk_bar.visible = True
             try:
@@ -750,10 +750,17 @@ class PartyCenter:
         # the bottom instead of scrolling off with the list.
         sticky_top = ft.Container(
             ft.Row(
-                [ft.Container(search, expand=True), summary_button, columns_button, export_button, density_button],
-                spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                [
+                    ft.Container(search, width=280),
+                    ft.Container(expand=True),
+                    summary_button,
+                    columns_button,
+                    export_button,
+                    density_button,
+                ],
+                spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.only(left=18, right=18, top=14, bottom=10),
+            padding=ft.padding.only(left=18, right=18, top=12, bottom=10),
             bgcolor=Colors.WHITE,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )

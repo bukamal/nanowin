@@ -316,7 +316,7 @@ class FinanceCenter:
                         ),
                         ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
                     ],
-                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 )
                 bulk_bar.visible = True
             try:
@@ -498,14 +498,21 @@ class FinanceCenter:
                 [
                     self._section_nav("vouchers"),
                     ft.Row(
-                        [ft.Container(search, expand=True), type_filter, columns_button, export_button, density_button],
-                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        [
+                            ft.Container(search, width=280),
+                            type_filter,
+                            ft.Container(expand=True),
+                            columns_button,
+                            export_button,
+                            density_button,
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row([summary_toggle], alignment=ft.MainAxisAlignment.END),
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
+            padding=ft.padding.only(left=16, right=16, top=12, bottom=10),
             bgcolor=Colors.WHITE,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
             shadow=Shadow.SM,
@@ -993,7 +1000,7 @@ class FinanceCenter:
                         ),
                         ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
                     ],
-                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 )
                 bulk_bar.visible = True
             try:
@@ -1170,8 +1177,14 @@ class FinanceCenter:
                 [
                     self._section_nav("expenses"),
                     ft.Row(
-                        [ft.Container(search, expand=True), columns_button, export_button, density_button],
-                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        [
+                            ft.Container(search, width=280),
+                            ft.Container(expand=True),
+                            columns_button,
+                            export_button,
+                            density_button,
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row([summary_toggle], alignment=ft.MainAxisAlignment.END),
                 ],
