@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.46"
-BUILD_NUMBER = 91  # FEAT_0.17.46: Enter navigates cells (row wrap + new row) in all editing grids
+APP_VERSION = "0.17.47"
+BUILD_NUMBER = 92  # FIX_0.17.47: Enter-while-editing advances (move=next); tests use F2 to open editor
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

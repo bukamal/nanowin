@@ -243,7 +243,7 @@ class DataGrid(ft.Column):
             # other key is the user typing, so leave it to the TextField.
             key = _norm_key(e.key)
             if key == "enter":
-                self._commit_edit(move="down")
+                self._commit_edit(move="next")
             elif key in ("escape", "esc"):
                 self._cancel_edit()
             return

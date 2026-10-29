@@ -116,7 +116,7 @@ def test_commit_reverts_display_when_callback_raises():
 
     g = make_grid(on_cell_commit=boom)
     g._on_cell_click(0, 0)
-    g._handle_key(FakeKey("Enter"))       # open editor
+    g._handle_key(FakeKey("F2"))          # open editor
     assert g._edit_field is not None
     g._edit_field.value = "قلم جديد"
     g._handle_key(FakeKey("Enter"))       # commit -> callback raises
@@ -131,7 +131,7 @@ def test_edit_formatter_shows_display_value_and_parser_restores_storage():
         parser=lambda col, text: float(text) / 10 if col.kind == "money" else text,
     )
     g._on_cell_click(0, 2)                 # price cell of the first row
-    g._handle_key(FakeKey("Enter"))        # open editor
+    g._handle_key(FakeKey("F2"))           # open editor
     assert g._edit_field is not None
     assert g._edit_field.value == "15"     # 1.5 rendered in the display currency
     g._edit_field.value = "200"
@@ -451,7 +451,7 @@ def test_type_to_edit_starts_editor_with_the_typed_character():
 def test_enter_commits_and_advances_to_next_editable_cell():
     g = make_grid()
     g._on_cell_click(0, 0)           # name (first editable)
-    g._handle_key(FakeKey("Enter"))  # open editor (keeps value)
+    g._handle_key(FakeKey("F2"))     # open editor (keeps value)
     assert g._edit_field is not None
     g._edit_field.value = "دفتر"
     g._handle_key(FakeKey("Enter"))  # commit + advance
