@@ -774,6 +774,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         _pos_fullscreen["value"] = False
         _pos_fullscreen["window_fs"] = False
         _set_os_fullscreen(False)
+        # POS is a transient surface: drop its document tab on the way out.
+        try:
+            command_bar.close_tab("pos", silent=True)
+        except Exception:
+            pass
         try:
             if voice_session is not None:
                 voice_header_slot.visible = True
@@ -1132,7 +1137,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ft.Row(
                 [
                     _status_item(ft.Icons.SCHEDULE, date_text),
-                    _status_item(ft.Icons.CURRENCY_EXCHANGE, rate_text),
+                    ft.Container(
+                        _status_item(ft.Icons.CURRENCY_EXCHANGE, rate_text),
+                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                        border_radius=10,
+                        ink=True,
+                        on_click=lambda _=None: dashboard_center._open_rate_sheet(),
+                        tooltip="تعديل سعر الصرف",
+                    ),
                     safe_btn,
                     _status_item(ft.Icons.PERSON_OUTLINE, user_text),
                     _status_item(ft.Icons.INFO_OUTLINE, f"v{_APP_VERSION}"),

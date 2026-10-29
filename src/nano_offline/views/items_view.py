@@ -2459,6 +2459,7 @@ class ItemsCenter:
                 parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
                 row_bg=bulk_row_bg,
                 on_cell_commit=lambda *_: refresh_bulk_footer(),
+                on_enter=lambda key=None: _bulk_enter(key),
                 picker_options=lambda col, _row: bulk_choices(col.key),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
                 on_row_menu=lambda row: bulk_row_menu(row),
@@ -2668,6 +2669,19 @@ class ItemsCenter:
                     name = str(row.get("name") or "").strip()
                     if not name:
                         continue
+                    barcode = str(row.get("barcode") or "").strip()
+                    if not barcode and barcode_settings.auto_generate_enabled(ctx.settings):
+                        # Auto-generate the internal barcode for rows the
+                        # cashier left blank (kind/prefix from the barcode
+                        # settings screen).
+                        barcode = barcode_quality.generate_barcode_value(
+                            barcode_settings.default_kind(ctx.settings),
+                            prefix=barcode_settings.internal_prefix(ctx.settings),
+                        )
+                        try:
+                            bulk_grid.set_cell(index, "barcode", barcode, notify=False)
+                        except Exception:
+                            pass
                     try:
                         alternate_unit_id = int(row["alternate_unit_id"]) if row.get("alternate_unit_id") else None
                         alternate_units = []
@@ -2687,7 +2701,7 @@ class ItemsCenter:
                             quantity=row.get("quantity") or 0,
                             base_unit_id=int(row["base_unit_id"]) if row.get("base_unit_id") else None,
                             item_units=alternate_units,
-                            barcode=str(row.get("barcode") or "").strip() or None,
+                            barcode=barcode or None,
                         )
                         created_indices.append(index)
                         alternate_barcode = str(row.get("alternate_barcode") or "").strip()
@@ -2718,6 +2732,23 @@ class ItemsCenter:
                     notify(warnings[0] if len(warnings) == 1 else f"تمت الإضافة مع تعذّر حفظ بعض الباركودات: {warnings[0]}", kind="warning")
                 close()
                 refresh()
+
+            def _bulk_enter(key=None) -> bool:
+                # Enter on the barcode cell finishes the entry session once the
+                # cell actually holds a value (so the first Enter still opens
+                # the editor to type the barcode, and the next one saves and
+                # closes the sheet). Enter anywhere else keeps its normal
+                # "open this cell for editing" behavior.
+                if key != "barcode":
+                    return False
+                try:
+                    row = bulk_grid.row_at(bulk_grid.nav.row) or {}
+                except Exception:
+                    return False
+                if str(row.get("barcode") or "").strip():
+                    save_all()
+                    return True
+                return False
 
             # While one of the header selectors has focus, its field eats
             # Backspace/Enter -- the grid must not also act on those keys

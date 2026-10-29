@@ -220,7 +220,7 @@ class CommandBar(ft.Container):
             self._docs_wrap.visible = True
         self.set_active(key)
 
-    def close_tab(self, key: str) -> None:
+    def close_tab(self, key: str, *, silent: bool = False) -> None:
         box = self._docs.pop(key, None)
         if box is None:
             return
@@ -229,7 +229,7 @@ class CommandBar(ft.Container):
         except Exception:
             pass
         self._docs_wrap.visible = bool(self._docs_row.controls)
-        if self._active.get("key") == key and self.on_close:
+        if self._active.get("key") == key and self.on_close and not silent:
             try:
                 self.on_close(key)
             except Exception:

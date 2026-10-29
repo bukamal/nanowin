@@ -308,8 +308,15 @@ class DataGrid(ft.Column):
             moved = self.nav.page(-1, self._page_rows())
         elif key == "enter":
             if self._on_enter is not None:
-                self._on_enter()
-                return
+                # The callback receives the active column key and returns
+                # True to swallow the Enter (e.g. finish/close the sheet);
+                # a falsy return falls through to normal cell editing.
+                try:
+                    handled = self._on_enter(self.nav.key)
+                except TypeError:
+                    handled = self._on_enter()
+                if handled:
+                    return
             if self.nav.enter() == "edit":
                 self._begin_edit()
             return
