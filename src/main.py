@@ -668,23 +668,27 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 ),
             ],
             spacing=16,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         content.content = ft.Container(
             ft.Column(
                 [
                     hero,
-                    ft.ResponsiveRow(
+                    ft.Row(
                         [
-                            ft.Container(right_panel, col={"xs": 12, "md": 4}),
-                            ft.Container(left_col, col={"xs": 12, "md": 8}),
+                            ft.Container(right_panel, width=340),
+                            ft.Container(left_col, expand=True),
                         ],
                         spacing=14,
-                        run_spacing=14,
+                        vertical_alignment=ft.CrossAxisAlignment.START,
                     ),
                 ],
                 spacing=14,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                scroll=ft.ScrollMode.AUTO,
             ),
             padding=ft.padding.only(top=6, bottom=6),
+            expand=True,
         )
 
     def show_home() -> None:
