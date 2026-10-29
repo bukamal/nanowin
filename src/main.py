@@ -876,40 +876,49 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         return rows
 
     def _menus() -> list:
-        """Curated top menu bar (the home is not a menu; invoices -> sales/purchases)."""
+        """Curated top menu bar (the home is not a menu; invoices -> sales/purchases).
+
+        Each menu renders as a large dropdown: a section header per group,
+        dividers (``None``) and tall icon+label rows.
+        """
         out: list = []
         if session.can("items"):
             out.append(RibbonMenu("items", "المواد", icon_map["items"], [
+                "المخزون",
                 ("قائمة المواد", icon_map["items"], lambda: navigate("items")),
                 ("جرد المخزون", ft.Icons.FACT_CHECK_OUTLINED, lambda: navigate("stocktake")),
             ]))
         if session.can("customers"):
             out.append(RibbonMenu("customers", "العملاء", icon_map["customers"], [
+                "السجل",
                 ("قائمة العملاء", icon_map["customers"], lambda: navigate("customers")),
-                None,
+                "الحسابات",
                 ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("customer")),
                 ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
             ]))
         if session.can("suppliers"):
             out.append(RibbonMenu("suppliers", "الموردين", icon_map["suppliers"], [
+                "السجل",
                 ("قائمة الموردين", icon_map["suppliers"], lambda: navigate("suppliers")),
-                None,
+                "الحسابات",
                 ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("supplier")),
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
             ]))
         if session.can("invoices"):
             out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART, [
+                "المشتريات",
                 ("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
                 ("فاتورة مشتريات جديدة", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase()),
-                None,
+                "السداد",
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
             ]))
             out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, [
+                "المبيعات",
                 ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
                 ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
                 ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
-                None,
+                "التحصيل",
                 ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
             ]))
         if session.can("finance"):
@@ -918,10 +927,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
             ]))
             out.append(RibbonMenu("finance", "المالية", icon_map["finance"], [
+                "عام",
                 ("فتح المالية", icon_map["finance"], lambda: navigate("finance")),
-                None,
-                ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("customer")),
                 ("دفتر اليومية", ft.Icons.MENU_BOOK_OUTLINED, lambda: navigate("finance")),
+                "الحسابات",
+                ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("customer")),
             ]))
         if session.can("reports"):
             out.append(RibbonMenu("reports", "التقارير", icon_map["reports"], [
@@ -933,8 +943,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ]))
         if session.can("admin"):
             out.append(RibbonMenu("admin", "الإدارة", icon_map["admin"], [
+                "الإدارة",
                 ("فتح الإدارة", icon_map["admin"], lambda: navigate("admin")),
-                None,
+                "البيانات",
                 ("النسخ الاحتياطي", ft.Icons.BACKUP_OUTLINED, lambda: open_admin_section("backup")),
             ]))
         return out

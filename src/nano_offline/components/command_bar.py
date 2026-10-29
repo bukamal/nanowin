@@ -46,12 +46,19 @@ class RibbonTab:
 
 @dataclass
 class RibbonMenu:
-    """A top menu button: its dropdown lists ``items`` = (label, icon, on_click)."""
+    """A top menu button.
+
+    ``items`` entries are, in order:
+      * ``(label, icon, on_click)``          -- a command row
+      * ``(label, icon, on_click, shortcut)``-- command row with a shortcut hint
+      * ``str``                              -- a section header
+      * ``None``                             -- a divider
+    """
 
     key: str
     label: str
     icon: str
-    items: list[tuple[str, str, Callable]] = field(default_factory=list)
+    items: list = field(default_factory=list)
 
 
 class CommandBar(ft.Container):
@@ -158,36 +165,79 @@ class CommandBar(ft.Container):
 
     # ----------------------------------------------------------- menu buttons
     def _menu_button(self, menu: RibbonMenu) -> ft.Control:
-        """A top menu button (icon + name) opening a real dropdown of its
-        commands. Uses PopupMenuButton (stable across Flet versions)."""
+        """A top menu button (icon + name) opening a large, real-looking
+        dropdown: wide, tall items (icon + label + optional shortcut), section
+        headers and dividers.
+
+        Built on PopupMenuButton (verified against the pinned Flet 0.28.3
+        API) because ft.MenuBar left the shell body unpainted on this build.
+        """
         box = ft.Container(
             ft.Row(
                 [
                     ft.Icon(menu.icon, size=18, color=Colors.TEXT_SECONDARY),
-                    ft.Text(menu.label, size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                    ft.Text(menu.label, size=12.5, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
                     ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=Colors.TEXT_FAINT),
                 ],
                 spacing=6,
                 tight=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+            padding=ft.padding.symmetric(horizontal=12, vertical=9),
             border_radius=Radius.SM,
             ink=True,
         )
         items: list[ft.Control] = []
         for entry in menu.items:
             if entry is None:
+                items.append(
+                    ft.PopupMenuItem(
+                        content=ft.Container(height=1, bgcolor=Colors.BORDER),
+                        height=9,
+                        disabled=True,
+                    )
+                )
                 continue
-            label, item_icon, cb = entry
+            if isinstance(entry, str):
+                # Section header.
+                items.append(
+                    ft.PopupMenuItem(
+                        content=ft.Text(entry, size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_FAINT),
+                        height=32,
+                        disabled=True,
+                    )
+                )
+                continue
+            shortcut = None
+            if len(entry) == 4:
+                label, item_icon, cb, shortcut = entry
+            else:
+                label, item_icon, cb = entry
+            row = ft.Row(
+                [
+                    ft.Icon(item_icon, size=18, color=Colors.TEXT_SECONDARY) if item_icon else ft.Container(width=18),
+                    ft.Text(label, size=13, color=Colors.TEXT_PRIMARY),
+                    ft.Container(expand=True),
+                    ft.Text(shortcut, size=11, color=Colors.TEXT_FAINT) if shortcut else ft.Container(width=0),
+                ],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
             items.append(
                 ft.PopupMenuItem(
-                    text=label,
-                    icon=item_icon,
+                    content=row,
+                    height=44,
                     on_click=(lambda _, c=cb: c()) if cb is not None else None,
                 )
             )
-        return ft.PopupMenuButton(content=box, tooltip=menu.label, items=items)
+        return ft.PopupMenuButton(
+            content=box,
+            tooltip=menu.label,
+            items=items,
+            size_constraints=ft.BoxConstraints(min_width=280),
+            shape=ft.RoundedRectangleBorder(radius=10),
+            menu_padding=ft.padding.symmetric(vertical=4),
+        )
 
     # ------------------------------------------------------- document tabs
     def open_tab(self, key: str) -> None:
