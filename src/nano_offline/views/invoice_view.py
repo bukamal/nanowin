@@ -1978,6 +1978,12 @@ class InvoiceCenter:
             except Exception:
                 pass
 
+        # The party (customer for a sale, supplier for a purchase) is a table
+        # COLUMN, exactly like المادة/الكمية/السعر -- not a separate field.
+        party_label = "العميل" if invoice_type == "sale" else "المورد"
+        parties = customers if invoice_type == "sale" else suppliers
+        party_map = {int(p["id"]): p["name"] for p in parties}
+
         density_state = {"compact": settings.get("ui.table_invoice_density", "comfortable") == "compact"}
 
         # ------------------------------------------------------------- header
@@ -2028,6 +2034,10 @@ class InvoiceCenter:
             return round(base * factor, 2)
 
         def row_formatter(col, value, row):
+            if col.key == "party":
+                if party_dd.value:
+                    return party_map.get(int(party_dd.value), "—")
+                return f"— اختر {party_label} —"
             if col.key == "item":
                 if not value:
                     return "— اختر مادة —"
@@ -2072,6 +2082,7 @@ class InvoiceCenter:
             return None
 
         line_columns = [
+            GridColumn("party", party_label, width=180, editable=True, kind="picker", tooltip="طرف الفاتورة — يُطبّق على كل البنود"),
             GridColumn("item", "المادة", width=220, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للبحث والاختيار داخلها"),
             GridColumn("description", "البيان", width=220, editable=True, tooltip="وصف البند الظاهر في الفاتورة"),
             GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="وحدة البند — تغيّر معامل التحويل والسعر"),
@@ -2101,42 +2112,28 @@ class InvoiceCenter:
         # The sheet now pins its header and footer and lets the grid take the
         # remaining height, so the table (and its totals row) stay put while
         # the rows scroll inside their own viewport.
-        # The party (customer/supplier) lives as the first row *inside* the
-        # table (below the column headers), not as a field above it.
-        party_row = ft.Container(
-            ft.Row(
-                [
-                    ft.Icon(ft.Icons.PERSON_OUTLINE, size=16, color=Colors.TEXT_SECONDARY),
-                    ft.Container(party_dd, width=340),
-                    ft.Container(expand=True),
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.symmetric(horizontal=12, vertical=6),
-            bgcolor=Colors.BACKGROUND_ALT,
-            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
-        )
-
         lines_grid = DataGrid(
             columns=line_columns, rows=[], page=self.page,
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=line_visibility.hidden_keys,
-            top_row=party_row,
             formatter=row_formatter,
             on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
             picker_options=lambda col, row: (
-                [
-                    (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
-                    for item_row in items
-                ]
-                if col.key == "item"
-                else [
-                    (int(unit_row["id"]), _unit_label(unit_row))
-                    for unit_row in _units_of(int(row["item"]))
-                ]
-                if row.get("item")
-                else []
+                [(int(p["id"]), p["name"]) for p in parties]
+                if col.key == "party"
+                else (
+                    [
+                        (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                        for item_row in items
+                    ]
+                    if col.key == "item"
+                    else [
+                        (int(unit_row["id"]), _unit_label(unit_row))
+                        for unit_row in _units_of(int(row["item"]))
+                    ]
+                    if row.get("item")
+                    else []
+                )
             ),
             on_sort=lambda key, direction: apply_lines_sort(key, direction),
             on_row_menu=lambda row: lines_row_menu(row),
@@ -2163,7 +2160,13 @@ class InvoiceCenter:
             lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
 
         def commit_line_cell(index: int, key: str, value) -> None:
-            if key == "item" and value:
+            if key == "party" and value:
+                # The party is one per invoice: reflect the pick on every row
+                # (and on the hidden holder used by save/summary).
+                party_dd.value = str(int(value))
+                for i in range(len(lines_grid.rows)):
+                    lines_grid.set_cell(i, "party", int(value), notify=False)
+            elif key == "item" and value:
                 fill_line_defaults(index, int(value))
             elif key == "unit" and value:
                 row = lines_grid.row_at(index) or {}

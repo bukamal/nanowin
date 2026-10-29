@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.49"
-BUILD_NUMBER = 94  # FEAT_0.17.49: restore row defaults; strip header bars; party as a table row
+APP_VERSION = "0.17.50"
+BUILD_NUMBER = 95  # FEAT_0.17.50: party is a table COLUMN (customer/supplier)
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]
