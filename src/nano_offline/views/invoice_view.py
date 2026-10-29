@@ -2354,15 +2354,15 @@ class InvoiceCenter:
             on_change=lambda e: refresh_summary(),
         )
         lines_summary_text = ft.Text(
-            "لا بنود بعد", size=13, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY,
+            "لا بنود بعد", size=18, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY,
             text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
         total_text = ft.Text(
-            "0", size=18, weight=ft.FontWeight.BOLD,
+            "0", size=26, weight=ft.FontWeight.BOLD,
             text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
         remaining_text = ft.Text(
-            "0", size=16, weight=ft.FontWeight.BOLD,
+            "0", size=22, weight=ft.FontWeight.BOLD,
             text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
 
@@ -2646,14 +2646,14 @@ class InvoiceCenter:
                             ft.Column(
                                 [
                                     ft.Text(
-                                        f"تعديل فاتورة #{self._display_invoice_number(invoice_id)}" if invoice_id else "فاتورة شاملة (جدول)",
+                                        f"تعديل فاتورة #{self._display_invoice_number(invoice_id)}" if invoice_id else ("فاتورة مبيعات" if invoice_type == "sale" else "فاتورة مشتريات"),
                                         size=17,
                                         weight=ft.FontWeight.BOLD,
                                     ),
                                     ft.Text(
                                         "عدّل بيانات الفاتورة وبنودها من الجدول ثم احفظ التغييرات"
                                         if invoice_id
-                                        else "بيع أو شراء: كل البيانات والبنود في جدول واحد، ثم احفظ مباشرة",
+                                        else "أدخل البنود في الجدول ثم احفظ مباشرة",
                                         size=11,
                                         color=Colors.TEXT_SECONDARY,
                                     ),
@@ -2666,18 +2666,7 @@ class InvoiceCenter:
                     ),
                     ft.ResponsiveRow(
                         [
-                            ft.Container(
-                                ft.Column(
-                                    [ft.Text("نوع الفاتورة", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd],
-                                    spacing=4,
-                                    tight=True,
-                                ),
-                                col={"xs": 12, "sm": 6, "md": 2},
-                            ),
-                            ft.Container(party_dd, col={"xs": 12, "sm": 6, "md": 3}),
-                            ft.Container(invoice_date, col={"xs": 6, "md": 2}),
-                            ft.Container(reference, col={"xs": 6, "md": 2}),
-                            ft.Container(notes, col={"xs": 12, "md": 3}),
+                            ft.Container(party_dd, col={"xs": 12, "sm": 8, "md": 5}),
                         ],
                         spacing=8,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -2701,92 +2690,90 @@ class InvoiceCenter:
                         border_radius=Radius.MD,
                         clip_behavior=ft.ClipBehavior.HARD_EDGE,
                     ),
-                    # Pinned action footer: it stays at the bottom of the
-                    # sheet while the rows scroll, and keeps the same two-row
-                    # geometry whether the invoice has a party or not.
+                    # Pinned bottom bar (like the reference app): the date and
+                    # payment on one line, then the big totals, then the quick
+                    # pay chips and the save action.
                     ft.Container(
                         ft.Column(
                             [
+                                ft.Row(
+                                    [
+                                        ft.Container(invoice_date, width=200),
+                                        ft.Container(expand=True),
+                                        ft.Container(paid, width=240),
+                                    ],
+                                    spacing=10,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
                                 ft.ResponsiveRow(
                                     [
                                         ft.Container(
                                             ft.Column(
                                                 [
-                                                    ft.Text("البنود", size=9, color=Colors.TEXT_SECONDARY),
+                                                    ft.Text("البنود", size=10, color=Colors.TEXT_SECONDARY),
                                                     lines_summary_text,
                                                 ],
                                                 spacing=0, tight=True,
                                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                             ),
                                             col={"xs": 4},
-                                            padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=8),
                                             bgcolor=Colors.BACKGROUND,
                                             border_radius=Radius.SM,
                                         ),
                                         ft.Container(
                                             ft.Column(
                                                 [
-                                                    ft.Text("الإجمالي", size=9, color=Colors.TEXT_SECONDARY),
+                                                    ft.Text("الإجمالي", size=10, color=Colors.TEXT_SECONDARY),
                                                     total_text,
                                                 ],
                                                 spacing=0, tight=True,
                                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                             ),
                                             col={"xs": 4},
-                                            padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=8),
                                             bgcolor=Colors.BACKGROUND,
                                             border_radius=Radius.SM,
                                         ),
                                         ft.Container(
                                             ft.Column(
                                                 [
-                                                    ft.Text("المتبقي", size=9, color=Colors.TEXT_SECONDARY),
+                                                    ft.Text("المتبقي", size=10, color=Colors.TEXT_SECONDARY),
                                                     remaining_text,
                                                 ],
                                                 spacing=0, tight=True,
                                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                             ),
                                             col={"xs": 4},
-                                            padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=8),
                                             bgcolor=Colors.BACKGROUND,
                                             border_radius=Radius.SM,
                                         ),
                                     ],
                                     spacing=8, run_spacing=8,
                                 ),
-                                ft.ResponsiveRow(
+                                ft.Row(
                                     [
-                                        ft.Container(
-                                            ft.Row(
-                                                [quick_chips, cash_note],
-                                                spacing=8, wrap=True,
-                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        quick_chips,
+                                        cash_note,
+                                        ft.Container(expand=True),
+                                        ft.FilledButton(
+                                            "حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
+                                            icon=ft.Icons.SAVE_OUTLINED,
+                                            on_click=save,
+                                            style=ft.ButtonStyle(
+                                                padding=ft.padding.symmetric(horizontal=26, vertical=16),
+                                                text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD),
                                             ),
-                                            col={"xs": 12, "md": 7},
-                                        ),
-                                        ft.Container(
-                                            ft.Row(
-                                                [
-                                                    ft.Container(paid, width=220),
-                                                    ft.FilledButton(
-                                                        "حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
-                                                        icon=ft.Icons.SAVE_OUTLINED,
-                                                        on_click=save,
-                                                    ),
-                                                ],
-                                                spacing=8, wrap=True,
-                                                alignment=ft.MainAxisAlignment.END,
-                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                            ),
-                                            col={"xs": 12, "md": 5},
                                         ),
                                     ],
-                                    spacing=8, run_spacing=8,
+                                    spacing=10, wrap=True,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                             ],
-                            spacing=8, tight=True,
+                            spacing=10, tight=True,
                         ),
-                        padding=ft.padding.only(top=10),
+                        padding=ft.padding.only(top=12),
                         border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
                     ),
                 ],

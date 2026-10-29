@@ -391,8 +391,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
         tiles: list[ft.Control] = []
         shortcuts = [
-            ("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, open_sale),
-            ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, open_purchase),
+            ("فاتورة مبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_table_invoice("sale")),
+            ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, lambda: open_table_invoice("purchase")),
             ("المواد", icon_map["items"], lambda: navigate("items")),
             ("نقطة البيع", ft.Icons.POINT_OF_SALE, open_pos),
             ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
@@ -826,6 +826,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
     def open_items_for_new(barcode_code: str) -> None:
         navigate("items", prefill_barcode=barcode_code)
+
+    def open_table_invoice(kind: str) -> None:
+        # Home shortcut: land on the invoices shell, then open the single-table
+        # invoice sheet for the given type (sale/purchase) directly.
+        navigate("invoices")
+        invoice_center.show_table_invoice_sheet(kind)
 
     # ---------------- desktop ribbon (replaces the old sidebar) ----------------
     def _section_actions(key: str) -> list[RibbonAction]:
