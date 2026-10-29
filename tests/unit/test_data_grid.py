@@ -435,3 +435,42 @@ def test_footer_row_is_pinned_outside_the_scrolling_body_and_removed():
     g.set_footer(None)
     assert g._footer_slot.visible is False
     assert g._footer_slot.content is None
+
+
+def test_type_to_edit_starts_editor_with_the_typed_character():
+    g = make_grid()
+    g._on_cell_click(0, 0)           # arm the first editable cell (name)
+    g._handle_key(FakeKey("ق"))      # a printable key starts editing
+    assert g._edit_field is not None
+    assert g._edit_field.value == "ق"
+    g._edit_field.value = "قلم رصاص"
+    g._handle_key(FakeKey("Enter"))  # commit
+    assert g._rows[0]["name"] == "قلم رصاص"
+
+
+def test_enter_commits_and_moves_down():
+    g = make_grid()
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("Enter"))  # open editor (keeps value)
+    assert g._edit_field is not None
+    g._edit_field.value = "دفتر"
+    g._handle_key(FakeKey("Enter"))  # commit + move down
+    assert g._rows[0]["name"] == "دفتر"
+    assert g.nav.cell == (1, 0)
+
+
+def test_ctrl_a_selects_the_whole_grid():
+    g = make_grid()
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("a", ctrl=True))
+    assert g._range_anchor == (0, 0)
+    assert g.nav.cell == (len(ROWS) - 1, len(COLS) - 1)
+
+
+def test_ctrl_home_and_end_jump_to_corners():
+    g = make_grid()
+    g._on_cell_click(1, 1)
+    g._handle_key(FakeKey("End", ctrl=True))
+    assert g.nav.cell == (len(ROWS) - 1, len(COLS) - 1)
+    g._handle_key(FakeKey("Home", ctrl=True))
+    assert g.nav.cell == (0, 0)

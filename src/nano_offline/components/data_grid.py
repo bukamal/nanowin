@@ -243,7 +243,7 @@ class DataGrid(ft.Column):
             # other key is the user typing, so leave it to the TextField.
             key = _norm_key(e.key)
             if key == "enter":
-                self._commit_edit()
+                self._commit_edit(move="down")
             elif key in ("escape", "esc"):
                 self._cancel_edit()
             return
@@ -286,6 +286,39 @@ class DataGrid(ft.Column):
         if getattr(e, "ctrl", False) and key == "v":
             self._paste_from_clipboard()
             return
+        if getattr(e, "ctrl", False) and key == "a":
+            # Select the whole grid, Excel-style.
+            if self._rows and self._columns:
+                self._range_anchor = (0, 0)
+                self.nav.select(len(self._rows) - 1, len(self._columns) - 1)
+                self._paint_selection()
+            return
+        if getattr(e, "ctrl", False) and key == "home":
+            self._range_anchor = None
+            if self._rows:
+                self.nav.select(0, 0)
+                self._paint_selection()
+            return
+        if getattr(e, "ctrl", False) and key == "end":
+            self._range_anchor = None
+            if self._rows and self._columns:
+                self.nav.select(len(self._rows) - 1, len(self._columns) - 1)
+                self._paint_selection()
+            return
+
+        # Excel-style type-to-edit: a printable character starts editing and
+        # replaces the cell (undoable). Pickers still open on click/Enter.
+        raw = e.key or ""
+        if (
+            self.nav.is_editable
+            and len(raw) == 1
+            and raw.isprintable()
+            and not getattr(e, "ctrl", False)
+            and not getattr(e, "alt", False)
+            and not getattr(e, "meta", False)
+        ):
+            self._begin_edit(prefill=raw)
+            return
 
         moved = False
         if key == _UP:
@@ -319,6 +352,10 @@ class DataGrid(ft.Column):
                     return
             if self.nav.enter() == "edit":
                 self._begin_edit()
+            return
+        elif key == "f2":
+            # Edit in place keeping the current value (Excel F2).
+            self._begin_edit()
             return
         elif key in ("delete", "backspace"):
             self._clear_active()
@@ -1207,7 +1244,7 @@ class DataGrid(ft.Column):
         box.border = ft.border.all(2, Colors.PRIMARY) if active else ft.border.all(1, Colors.PRIMARY_BORDER) if selected else None
 
     # ------------------------------------------------------------------ edit
-    def _begin_edit(self) -> None:
+    def _begin_edit(self, prefill: str | None = None) -> None:
         r, c = self.nav.cell
         col = self._columns[c] if 0 <= c < len(self._columns) else None
         box = self._cell_boxes.get((r, c))
@@ -1222,14 +1259,17 @@ class DataGrid(ft.Column):
                 self._on_pick(r, col)
             return
         self.nav.begin_edit()
-        current = self._rows[r].get(col.key)
-        edit_text = None
-        if self._edit_formatter is not None:
-            out = self._edit_formatter(col, current, self._rows[r])
-            if out is not None:
-                edit_text = str(out)
-        if edit_text is None:
-            edit_text = _default_text(col, current)
+        if prefill is not None:
+            edit_text = prefill
+        else:
+            current = self._rows[r].get(col.key)
+            edit_text = None
+            if self._edit_formatter is not None:
+                out = self._edit_formatter(col, current, self._rows[r])
+                if out is not None:
+                    edit_text = str(out)
+            if edit_text is None:
+                edit_text = _default_text(col, current)
         field = ft.TextField(
             value=edit_text,
             dense=True,
@@ -1241,7 +1281,7 @@ class DataGrid(ft.Column):
             content_padding=ft.padding.symmetric(horizontal=8, vertical=6),
             text_align=self._edit_align(col),
             keyboard_type=ft.KeyboardType.NUMBER if col.kind in ("number", "money") else ft.KeyboardType.TEXT,
-            on_submit=lambda _: self._commit_edit(),
+            on_submit=lambda _: self._commit_edit(move="down"),
             on_blur=lambda _: self._commit_edit(),
         )
         box.bgcolor = Colors.WHITE
@@ -1252,7 +1292,10 @@ class DataGrid(ft.Column):
         try:
             v = field.value or ""
             try:
-                field.selection = ft.TextSelection(base_offset=0, extent_offset=len(v))
+                if prefill is not None:
+                    field.selection = ft.TextSelection(base_offset=len(v), extent_offset=len(v))
+                else:
+                    field.selection = ft.TextSelection(base_offset=0, extent_offset=len(v))
             except Exception:
                 pass
             field.focus()
@@ -1327,7 +1370,7 @@ class DataGrid(ft.Column):
         self._render_row(self.nav.row)
         self._safe_update(self._body)
 
-    def _commit_edit(self) -> None:
+    def _commit_edit(self, *, move: str | None = None) -> None:
         field = self._edit_field
         if field is None:
             return
@@ -1351,6 +1394,9 @@ class DataGrid(ft.Column):
                 return
         self._render_row(r)
         self._safe_update(self._body)
+        # Excel-style: Enter commits and moves to the same column below.
+        if move == "down" and self.nav.move_down():
+            self._paint_selection()
 
     def _cancel_edit(self) -> None:
         if self._edit_field is None:
