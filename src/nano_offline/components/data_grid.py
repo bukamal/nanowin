@@ -343,15 +343,23 @@ class DataGrid(ft.Column):
             if self._on_enter is not None:
                 # The callback receives the active column key and returns
                 # True to swallow the Enter (e.g. finish/close the sheet);
-                # a falsy return falls through to normal cell editing.
+                # a falsy return falls through to normal navigation.
                 try:
                     handled = self._on_enter(self.nav.key)
                 except TypeError:
                     handled = self._on_enter()
                 if handled:
                     return
-            if self.nav.enter() == "edit":
-                self._begin_edit()
+            col = self.nav.column
+            if col is not None and col.kind == "picker":
+                # Enter opens the picker for the active cell.
+                if self.nav.enter() == "edit":
+                    self._begin_edit()
+                return
+            # Excel-style: Enter advances to the next editable cell, wrapping
+            # to the first cell of the next row (a fresh row is appended at
+            # the very end).
+            self._advance_forward()
             return
         elif key == "f2":
             # Edit in place keeping the current value (Excel F2).
@@ -1281,7 +1289,7 @@ class DataGrid(ft.Column):
             content_padding=ft.padding.symmetric(horizontal=8, vertical=6),
             text_align=self._edit_align(col),
             keyboard_type=ft.KeyboardType.NUMBER if col.kind in ("number", "money") else ft.KeyboardType.TEXT,
-            on_submit=lambda _: self._commit_edit(move="down"),
+            on_submit=lambda _: self._commit_edit(move="next"),
             on_blur=lambda _: self._commit_edit(),
         )
         box.bgcolor = Colors.WHITE
@@ -1394,9 +1402,22 @@ class DataGrid(ft.Column):
                 return
         self._render_row(r)
         self._safe_update(self._body)
-        # Excel-style: Enter commits and moves to the same column below.
-        if move == "down" and self.nav.move_down():
+        # Enter commits and advances to the next editable cell (wrapping to
+        # the next row, appending a row at the end).
+        if move == "next":
+            self._advance_forward()
+        elif move == "down" and self.nav.move_down():
             self._paint_selection()
+
+    def _advance_forward(self) -> None:
+        """Move to the next editable cell; at the end of a row wrap to the
+        first editable cell of the next row, and at the very end of the grid
+        append a fresh row (editable grids only)."""
+        if self.nav.tab(False):
+            self._paint_selection()
+            return
+        if self.nav.editable_cols:
+            self.add_row()
 
     def _cancel_edit(self) -> None:
         if self._edit_field is None:

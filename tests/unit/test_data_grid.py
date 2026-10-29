@@ -448,15 +448,35 @@ def test_type_to_edit_starts_editor_with_the_typed_character():
     assert g._rows[0]["name"] == "قلم رصاص"
 
 
-def test_enter_commits_and_moves_down():
+def test_enter_commits_and_advances_to_next_editable_cell():
     g = make_grid()
-    g._on_cell_click(0, 0)
+    g._on_cell_click(0, 0)           # name (first editable)
     g._handle_key(FakeKey("Enter"))  # open editor (keeps value)
     assert g._edit_field is not None
     g._edit_field.value = "دفتر"
-    g._handle_key(FakeKey("Enter"))  # commit + move down
+    g._handle_key(FakeKey("Enter"))  # commit + advance
     assert g._rows[0]["name"] == "دفتر"
-    assert g.nav.cell == (1, 0)
+    assert g.nav.cell == (0, 2)      # next editable cell (price)
+
+
+def test_enter_wraps_to_next_row():
+    g = make_grid()
+    g._on_cell_click(0, 2)           # price (last editable of row 0)
+    g._handle_key(FakeKey("F2"))     # open editor keeping value
+    assert g._edit_field is not None
+    g._edit_field.value = "9"
+    g._handle_key(FakeKey("Enter"))
+    assert g.nav.cell == (1, 0)      # wrapped to first editable of row 1
+
+
+def test_enter_at_last_cell_appends_a_row():
+    g = make_grid()
+    last = len(ROWS) - 1
+    g._on_cell_click(last, 2)        # last editable cell of the grid
+    g._handle_key(FakeKey("F2"))
+    g._edit_field.value = "1"
+    g._handle_key(FakeKey("Enter"))
+    assert len(g.rows) == len(ROWS) + 1
 
 
 def test_ctrl_a_selects_the_whole_grid():

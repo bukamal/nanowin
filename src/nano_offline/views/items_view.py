@@ -2459,7 +2459,6 @@ class ItemsCenter:
                 parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
                 row_bg=bulk_row_bg,
                 on_cell_commit=lambda *_: refresh_bulk_footer(),
-                on_enter=lambda key=None: _bulk_enter(key),
                 picker_options=lambda col, _row: bulk_choices(col.key),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
                 on_row_menu=lambda row: bulk_row_menu(row),
@@ -2732,23 +2731,6 @@ class ItemsCenter:
                     notify(warnings[0] if len(warnings) == 1 else f"تمت الإضافة مع تعذّر حفظ بعض الباركودات: {warnings[0]}", kind="warning")
                 close()
                 refresh()
-
-            def _bulk_enter(key=None) -> bool:
-                # Enter on the barcode cell finishes the entry session once the
-                # cell actually holds a value (so the first Enter still opens
-                # the editor to type the barcode, and the next one saves and
-                # closes the sheet). Enter anywhere else keeps its normal
-                # "open this cell for editing" behavior.
-                if key != "barcode":
-                    return False
-                try:
-                    row = bulk_grid.row_at(bulk_grid.nav.row) or {}
-                except Exception:
-                    return False
-                if str(row.get("barcode") or "").strip():
-                    save_all()
-                    return True
-                return False
 
             # While one of the header selectors has focus, its field eats
             # Backspace/Enter -- the grid must not also act on those keys

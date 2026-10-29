@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.45"
-BUILD_NUMBER = 90  # FEAT_0.17.45: grid excel-style editing (type-to-edit, enter-down, ctrl+a/home/end, f2)
+APP_VERSION = "0.17.46"
+BUILD_NUMBER = 91  # FEAT_0.17.46: Enter navigates cells (row wrap + new row) in all editing grids
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

@@ -1395,7 +1395,6 @@ class InvoiceCenter:
                 for item_row in items
             ],
             on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
-            on_enter=lambda key=None: _sheet_enter(),
             formatter=row_formatter,
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
         )
@@ -1872,16 +1871,6 @@ class InvoiceCenter:
             render_step()
             if step["opened"]:
                 self.page.update()
-
-        def _sheet_enter() -> bool:
-            # Enter inside the lines table leaves the table: advance to the
-            # next step (and on the last step, save & close) instead of
-            # opening the active cell for editing (that stays on double-click).
-            if step["idx"] < len(steps) - 1:
-                go(1)
-            else:
-                save()
-            return True
 
         sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
 
