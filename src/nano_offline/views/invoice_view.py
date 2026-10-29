@@ -2101,10 +2101,28 @@ class InvoiceCenter:
         # The sheet now pins its header and footer and lets the grid take the
         # remaining height, so the table (and its totals row) stay put while
         # the rows scroll inside their own viewport.
+        # The party (customer/supplier) lives as the first row *inside* the
+        # table (below the column headers), not as a field above it.
+        party_row = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.PERSON_OUTLINE, size=16, color=Colors.TEXT_SECONDARY),
+                    ft.Container(party_dd, width=340),
+                    ft.Container(expand=True),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=12, vertical=6),
+            bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+        )
+
         lines_grid = DataGrid(
             columns=line_columns, rows=[], page=self.page,
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=line_visibility.hidden_keys,
+            top_row=party_row,
             formatter=row_formatter,
             on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
             picker_options=lambda col, row: (
@@ -2124,7 +2142,7 @@ class InvoiceCenter:
             on_row_menu=lambda row: lines_row_menu(row),
             selectable=True,
             on_selection_change=lambda rows: render_lines_selection(rows),
-            empty_text="اضغط «سطر جديد» أو «مسح باركود»",
+            empty_text="أدخل مادة للبدء أو امسح باركود",
         )
 
         def fill_line_defaults(index: int, item_id: int) -> None:
@@ -2655,7 +2673,6 @@ class InvoiceCenter:
                     ),
                     ft.Row(
                         [
-                            ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                             ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
                             ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
@@ -2665,31 +2682,8 @@ class InvoiceCenter:
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     bulk_bar,
-                    # The table frame: its top row holds the invoice party
-                    # (customer/supplier) so the field lives *inside* the table
-                    # rather than floating above it.
                     ft.Container(
-                        ft.Column(
-                            [
-                                ft.Container(
-                                    ft.Row(
-                                        [
-                                            ft.Icon(ft.Icons.PERSON_OUTLINE, size=16, color=Colors.TEXT_SECONDARY),
-                                            ft.Container(party_dd, width=340),
-                                            ft.Container(expand=True),
-                                        ],
-                                        spacing=8,
-                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    ),
-                                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                                    bgcolor=Colors.BACKGROUND_ALT,
-                                    border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
-                                ),
-                                lines_grid,
-                            ],
-                            spacing=0,
-                            expand=True,
-                        ),
+                        lines_grid,
                         expand=True,
                         border=ft.border.all(1, Colors.BORDER),
                         border_radius=Radius.MD,

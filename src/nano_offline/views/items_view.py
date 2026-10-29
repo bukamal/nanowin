@@ -2511,8 +2511,7 @@ class ItemsCenter:
                 }
 
             def add_blank(_=None) -> None:
-                # Blank row: no implicit defaults (the cashier fills it).
-                bulk_grid.add_row()
+                bulk_grid.add_row(row_defaults())
                 refresh_bulk_footer()
 
             def duplicate_rows(rows: list[dict]) -> None:
@@ -2750,8 +2749,8 @@ class ItemsCenter:
             for _selector in (type_sel, cat_sel, unit_sel):
                 _disarm_on_focus(_selector)
 
-            # One blank row by default -- no implicit defaults.
-            bulk_grid.add_row()
+            # One row with the current defaults, ready to type (as before).
+            bulk_grid.add_row(row_defaults())
             refresh_bulk_footer()
 
             # A wide, tall sheet: the table is the point, so it gets the
@@ -2809,19 +2808,8 @@ class ItemsCenter:
                         ),
                         ft.Row(
                             [
-                                ft.Text("افتراضيات الصف الجديد", size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
-                                ft.Container(type_sel, width=150),
-                                ft.Container(cat_sel, width=210),
-                                ft.Container(unit_sel, width=190),
-                                ft.OutlinedButton("تطبيق على الكل", icon=ft.Icons.DONE_ALL_ROUNDED, on_click=apply_defaults_to_all),
-                            ],
-                            spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        ft.Row(
-                            [
-                                ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
                                 ft.OutlinedButton("تكرار الأخير", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(bulk_grid.rows[-1:] if bulk_grid.rows else [])),
-                                ft.Text("Enter للتحرير • Tab للتنقل • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
+                                ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                                 bulk_columns_button,
                                 bulk_density_button,
                                 bulk_export_button,

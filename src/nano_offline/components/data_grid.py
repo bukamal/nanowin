@@ -113,6 +113,7 @@ class DataGrid(ft.Column):
         on_new_shortcut: Callable[[], None] | None = None,
         on_edit_error: Callable[[str], None] | None = None,
         on_enter: Callable[[], None] | None = None,
+        top_row: ft.Control | None = None,
     ):
         self._all_columns = list(columns)
         self._hidden_keys: set[str] = set(hidden_keys or set())
@@ -143,6 +144,10 @@ class DataGrid(ft.Column):
         self._on_search_shortcut = on_search_shortcut
         self._on_new_shortcut = on_new_shortcut
         self._on_enter = on_enter
+        # An optional control pinned as the very first row *inside* the body
+        # (below the column headers) -- e.g. an invoice's party selector, so
+        # it reads as a row of the table rather than a field above it.
+        self._top_row = top_row
         self._on_edit_error = on_edit_error
         self._expanded: set[int] = set()
         self._sort_key: str | None = None
@@ -954,6 +959,8 @@ class DataGrid(ft.Column):
         # active-column highlight lands on a real cell.
         self.nav.set_rows(len(self._rows))
         controls: list[ft.Control] = []
+        if self._top_row is not None:
+            controls.append(self._top_row)
         if not self._rows:
             controls.append(
                 ft.Container(
