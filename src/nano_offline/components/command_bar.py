@@ -107,9 +107,9 @@ class CommandBar(ft.Container):
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
 
-        self._menu_row = ft.Row([], spacing=2, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        for menu in self.menus:
-            self._menu_row.controls.append(self._menu_button(menu))
+        # A real MenuBar when it builds, otherwise the PopupMenuButton row.
+        # Wrapped in a bounded container so it can never collapse the top row.
+        self._menu_row = self._build_menus()
 
         avatar_text = "".join(p[:1] for p in (self.user_name or "N").split()[:2]).upper() or "N"
         brand = ft.Row(
@@ -132,7 +132,6 @@ class CommandBar(ft.Container):
                 brand,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
                 self._menu_row,
-                ft.Container(expand=True),
                 self._search_button(),
                 *self.extra,
                 ft.VerticalDivider(width=1, thickness=1, color=Colors.BORDER),
@@ -164,6 +163,73 @@ class CommandBar(ft.Container):
         self.set_active(self._active["key"])
 
     # ----------------------------------------------------------- menu buttons
+    def _build_menus(self) -> ft.Control:
+        """Prefer a real ft.MenuBar; fall back to the PopupMenuButton row.
+
+        The MenuBar is intentionally minimal (no MenuStyle on the bar) to
+        avoid the layout that left the shell body unpainted; the fallback keeps
+        the app usable if the menu bar cannot be constructed. Set the
+        ``CASHIR_MENUBAR=0`` environment variable to force the PopupMenuButton
+        fallback without touching the UI.
+        """
+        import os
+
+        use_menu_bar = str(os.environ.get("CASHIR_MENUBAR", "1")).strip().lower() not in ("0", "false", "off", "no")
+        try:
+            bar = ft.MenuBar(controls=[self._submenu(m) for m in self.menus], expand=True) if (self.menus and use_menu_bar) else None
+        except Exception:
+            bar = None
+        if bar is None:
+            row = ft.Row(
+                [self._menu_button(m) for m in self.menus],
+                spacing=2,
+                scroll=ft.ScrollMode.AUTO,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            return ft.Container(row, expand=True)
+        return ft.Container(bar, expand=True)
+
+    def _submenu(self, menu: RibbonMenu) -> ft.SubmenuButton:
+        """One top-level menu: a real cascading menu (icon + name)."""
+        controls: list[ft.Control] = []
+        for entry in menu.items:
+            if entry is None:
+                controls.append(
+                    ft.MenuItemButton(
+                        content=ft.Container(height=1, bgcolor=Colors.BORDER),
+                        height=9,
+                        disabled=True,
+                    )
+                )
+                continue
+            if isinstance(entry, str):
+                controls.append(
+                    ft.MenuItemButton(
+                        content=ft.Text(entry, size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_FAINT),
+                        disabled=True,
+                    )
+                )
+                continue
+            shortcut = None
+            if len(entry) == 4:
+                label, item_icon, cb, shortcut = entry
+            else:
+                label, item_icon, cb = entry
+            controls.append(
+                ft.MenuItemButton(
+                    leading=ft.Icon(item_icon, size=18) if item_icon else None,
+                    content=ft.Text(label, size=13),
+                    trailing=ft.Text(shortcut, size=11, color=Colors.TEXT_FAINT) if shortcut else None,
+                    height=44,
+                    on_click=(lambda _, c=cb: c()) if cb is not None else None,
+                )
+            )
+        return ft.SubmenuButton(
+            leading=ft.Icon(menu.icon, size=17),
+            content=ft.Text(menu.label, size=12.5, weight=ft.FontWeight.W_600),
+            controls=controls,
+        )
+
     def _menu_button(self, menu: RibbonMenu) -> ft.Control:
         """A top menu button (icon + name) opening a large, real-looking
         dropdown: wide, tall items (icon + label + optional shortcut), section
