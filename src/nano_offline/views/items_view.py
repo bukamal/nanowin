@@ -3172,7 +3172,6 @@ class ItemsCenter:
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=10,
-            wrap=True,
         )
 
         # Sticky header: only search + filters, always reachable while

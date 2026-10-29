@@ -1088,7 +1088,6 @@ class InvoiceCenter:
                         density_button,
                     ],
                     spacing=12,
-                    wrap=True,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.padding.only(left=16, right=16, top=12, bottom=10),

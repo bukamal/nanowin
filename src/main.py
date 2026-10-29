@@ -614,7 +614,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                         ],
                         spacing=2,
                         expand=True,
-                        vertical_alignment=ft.MainAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=14,
