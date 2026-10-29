@@ -584,7 +584,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         except Exception:
             company_name = branding.APP_NAME_AR
 
-        # ---- company card (middle): logo + name + scope/currency/rate + movement
+        # ---- "الشركة" card (middle): logo + name
         try:
             _logo = str(ctx.settings.get("company_logo") or "").strip()
         except Exception:
@@ -597,50 +597,21 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         company_card = ft.Container(
             ft.Column(
                 [
-                    ft.Row(
-                        [
-                            ft.Container(
-                                hero_logo,
-                                width=88,
-                                height=88,
-                                alignment=ft.alignment.center,
-                                bgcolor=Colors.WHITE,
-                                border_radius=20,
-                                border=ft.border.all(1, Colors.BORDER),
-                                shadow=Shadow.SM,
-                            ),
-                            ft.Column(
-                                [
-                                    ft.Text(company_name, size=20, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
-                                    ft.Text(branding.APP_TAGLINE, size=12, color=Colors.TEXT_SECONDARY),
-                                ],
-                                spacing=2,
-                                expand=True,
-                                alignment=ft.MainAxisAlignment.CENTER,
-                            ),
-                        ],
-                        spacing=14,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ft.Container(
+                        hero_logo,
+                        width=96,
+                        height=96,
+                        alignment=ft.alignment.center,
+                        bgcolor=Colors.WHITE,
+                        border_radius=22,
+                        border=ft.border.all(1, Colors.BORDER),
+                        shadow=Shadow.SM,
                     ),
-                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                    ft.Row(
-                        [
-                            scope_toggle,
-                            ft.Container(currency_toggle, width=220),
-                            rate_row,
-                        ],
-                        spacing=16,
-                        wrap=True,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    metrics_box,
-                    ft.TextButton(
-                        "استعراض التفاصيل",
-                        icon=ft.Icons.QUERY_STATS_OUTLINED,
-                        on_click=lambda _: navigate("reports"),
-                    ),
+                    ft.Text(company_name, size=18, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY, text_align=ft.TextAlign.CENTER),
+                    ft.Text(branding.APP_TAGLINE, size=11, color=Colors.TEXT_SECONDARY, text_align=ft.TextAlign.CENTER),
                 ],
-                spacing=12,
+                spacing=8,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=Colors.WHITE,
             border=ft.border.all(1, Colors.BORDER),
@@ -649,21 +620,61 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             shadow=Shadow.SM,
         )
 
-        content.content = ft.Container(
+        # ---- "صندوق الحركات" (right): scope + currency + rate + movement
+        movements_panel = ft.Container(
             ft.Column(
                 [
-                    ft.ResponsiveRow(tiles, spacing=12, run_spacing=12),
-                    company_card,
-                    quick_inquiry,
-                    ft.Text(
-                        "اختصارات فقط — يمكنك التبديل إلى العرض الكلاسيكي من شريط الحالة بالأسفل.",
-                        size=11,
-                        color=Colors.TEXT_SECONDARY,
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, size=16, color=Colors.PRIMARY),
+                            ft.Text(company_name, size=13, weight=ft.FontWeight.W_700),
+                        ],
+                        spacing=8,
+                    ),
+                    scope_toggle,
+                    ft.Text("العملة المعروضة", size=11, color=Colors.TEXT_SECONDARY),
+                    currency_toggle,
+                    rate_row,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    metrics_box,
+                    ft.TextButton(
+                        "استعراض التفاصيل",
+                        icon=ft.Icons.QUERY_STATS_OUTLINED,
+                        on_click=lambda _: navigate("reports"),
                     ),
                 ],
-                spacing=16,
-                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                scroll=ft.ScrollMode.AUTO,
+                spacing=10,
+            ),
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=14,
+            padding=14,
+        )
+
+        # ---- "الاختصارات" (left): 6 shortcut cards (3x2) + quick inquiry
+        shortcuts_col = ft.Column(
+            [
+                ft.ResponsiveRow(tiles, spacing=12, run_spacing=12),
+                quick_inquiry,
+                ft.Text(
+                    "اختصارات فقط — يمكنك التبديل إلى العرض الكلاسيكي من شريط الحالة بالأسفل.",
+                    size=11,
+                    color=Colors.TEXT_SECONDARY,
+                ),
+            ],
+            spacing=16,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        )
+
+        content.content = ft.Container(
+            ft.Row(
+                [
+                    ft.Container(movements_panel, width=300),
+                    ft.Container(company_card, width=340),
+                    ft.Container(shortcuts_col, expand=True),
+                ],
+                spacing=14,
+                vertical_alignment=ft.CrossAxisAlignment.START,
             ),
             padding=ft.padding.only(top=6, bottom=6),
             expand=True,

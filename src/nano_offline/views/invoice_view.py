@@ -2762,7 +2762,7 @@ class InvoiceCenter:
                                             ),
                                         ),
                                     ],
-                                    spacing=10, wrap=True,
+                                    spacing=10,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                             ],
