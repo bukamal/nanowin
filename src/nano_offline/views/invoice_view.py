@@ -2633,6 +2633,14 @@ class InvoiceCenter:
             for line in existing.get("lines") or []:
                 item_id = int(line["item_id"]) if line.get("item_id") else None
                 unit_id = int(line["unit_id"]) if line.get("unit_id") else None
+                # Legacy invoices may have no (or a stale) unit_id; fall back
+                # to the item's default unit so the unit column is never blank.
+                if item_id is not None:
+                    avail = _units_of(item_id)
+                    if unit_id is None or not any(int(u["id"]) == unit_id for u in avail):
+                        fallback = _default_invoice_unit(avail)
+                        if fallback is not None:
+                            unit_id = int(fallback["id"])
                 initial_rows.append({
                     "item": item_id,
                     "description": line.get("description") or "",
