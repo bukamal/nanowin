@@ -1356,12 +1356,12 @@ class DataGrid(ft.Column):
         dropdown = ft.Dropdown(
             value=selected_key,
             options=dropdown_options,
-            editable=self._picker_searchable,
-            enable_filter=self._picker_searchable,
-            # A single search mechanism (the editable text) -- combining
-            # enable_search with editable+enable_filter made the highlight /
-            # filtered list reset while navigating with the arrow keys.
-            enable_search=False,
+            # Non-editable dropdown with the built-in search box in the menu
+            # (DropdownM2 in this Flet has no search; editable+enable_filter
+            # reset the filtered list while arrowing through it).
+            editable=False,
+            enable_filter=False,
+            enable_search=self._picker_searchable,
             autofocus=True,
             menu_height=280,
             dense=True,
