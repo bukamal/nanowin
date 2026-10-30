@@ -47,6 +47,19 @@ _UP, _DOWN, _LEFT, _RIGHT = "arrowup", "arrowdown", "arrowleft", "arrowright"
 _PAGE_UP, _PAGE_DOWN = "pageup", "pagedown"
 _HISTORY_LIMIT = 100
 
+# Standard Arabic (Windows 101) keyboard: physical latin key -> Arabic letter.
+# Used ONLY to seed the first character of a type-to-edit when the runtime
+# reports the raw latin key (an Arabic IME delivers the latin key for the
+# very first keystroke, so the composed letter would otherwise be wrong).
+_AR_KEY_MAP = {
+    "q": "ض", "w": "ص", "e": "ث", "r": "ق", "t": "ف", "y": "غ", "u": "ع",
+    "i": "ه", "o": "خ", "p": "ح", "[": "ج", "]": "د",
+    "a": "ش", "s": "س", "d": "ي", "f": "ب", "g": "ل", "h": "ا", "j": "ت",
+    "k": "ن", "l": "م", ";": "ك", "'": "ط",
+    "z": "ئ", "x": "ء", "c": "ؤ", "v": "ر", "b": "لا", "n": "ى", "m": "ة",
+    ",": "و", ".": "ز", "/": "ظ", "`": "ذ",
+}
+
 
 def _default_text(col: GridColumn, value) -> str:
     if value is None:
@@ -313,11 +326,12 @@ class DataGrid(ft.Column):
 
         # Excel-style type-to-edit: a printable character starts editing and
         # replaces the cell (undoable). Pickers still open on click/Enter.
-        # Prefer the keyboard event's composed character when the runtime
-        # provides it (some Flet builds expose "character"), else fall back to
-        # the key label -- getattr keeps this safe where "character" is absent.
+        # Prefer a composed "character" when the runtime provides it; otherwise
+        # the raw latin key is mapped to its standard-Arabic letter for the
+        # first character only (an Arabic IME returns the latin key first).
         ch = getattr(e, "character", None)
-        raw = ch if (isinstance(ch, str) and len(ch) == 1) else (e.key or "")
+        used_character = isinstance(ch, str) and len(ch) == 1
+        raw = ch if used_character else (e.key or "")
         if (
             self.nav.is_editable
             and len(raw) == 1
@@ -326,7 +340,13 @@ class DataGrid(ft.Column):
             and not getattr(e, "alt", False)
             and not getattr(e, "meta", False)
         ):
-            self._begin_edit(prefill=raw)
+            if used_character:
+                prefill = raw
+            elif raw.isascii():
+                prefill = _AR_KEY_MAP.get(raw.lower(), raw)
+            else:
+                prefill = raw
+            self._begin_edit(prefill=prefill)
             return
 
         moved = False

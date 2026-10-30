@@ -507,3 +507,11 @@ def test_enter_skips_picker_cell_and_moves_on():
     g._handle_key(FakeKey("Enter"))
     assert g._picker_control is None   # Enter never opens the picker
     assert g.nav.cell == (0, 1)        # moves on to the next editable cell
+
+
+def test_type_to_edit_maps_latin_first_key_to_arabic():
+    g = make_grid()
+    g._on_cell_click(0, 0)           # name (text)
+    g._handle_key(FakeKey("a"))      # latin 'a' -> standard Arabic 'ش'
+    assert g._edit_field is not None
+    assert g._edit_field.value == "ش"
