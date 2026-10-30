@@ -1334,7 +1334,11 @@ class DataGrid(ft.Column):
             options=dropdown_options,
             editable=self._picker_searchable,
             enable_filter=self._picker_searchable,
-            enable_search=self._picker_searchable,
+            # A single search mechanism (the editable text) -- combining
+            # enable_search with editable+enable_filter made the highlight /
+            # filtered list reset while navigating with the arrow keys.
+            enable_search=False,
+            autofocus=True,
             menu_height=280,
             dense=True,
             text_size=12,

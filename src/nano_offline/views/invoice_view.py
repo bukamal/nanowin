@@ -1391,7 +1391,7 @@ class InvoiceCenter:
             row_height=36,
             hidden_keys=line_visibility.hidden_keys,
             picker_options=lambda _col, _row: [
-                (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                (int(item_row["id"]), item_row["name"])
                 for item_row in items
             ],
             on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
@@ -2123,7 +2123,7 @@ class InvoiceCenter:
                 if col.key == "party"
                 else (
                     [
-                        (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                        (int(item_row["id"]), item_row["name"])
                         for item_row in items
                     ]
                     if col.key == "item"
@@ -3121,7 +3121,7 @@ class InvoiceCenter:
             formatter=row_formatter,
             picker_options=lambda col, row: (
                 [
-                    (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                    (int(item_row["id"]), item_row["name"])
                     for item_row in items
                 ]
                 if col.key == "item"
@@ -3811,7 +3811,7 @@ class InvoiceCenter:
                 rows=[], page=self.page,
                 row_height=36,
                 picker_options=lambda _col, _row: [
-                    (int(item_row["id"]), f"{item_row['name']} · {item_row.get('barcode') or 'بلا باركود'}")
+                    (int(item_row["id"]), item_row["name"])
                     for item_row in items
                 ],
                 on_cell_commit=lambda index, key, value: commit_bulk_cell(index, key, value),
