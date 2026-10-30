@@ -313,16 +313,9 @@ class DataGrid(ft.Column):
 
         # Excel-style type-to-edit: a printable character starts editing and
         # replaces the cell (undoable). Pickers still open on click/Enter.
-        # Excel-style type-to-edit for numeric cells only. Text cells are left
-        # alone: with an IME (Arabic) the first KeyboardEvent.key is the raw
-        # latin key, so pre-filling it produced an English first character.
-        # Text cells are edited with F2 / double-click instead.
-        col = self.nav.column
         raw = e.key or ""
         if (
             self.nav.is_editable
-            and col is not None
-            and col.kind in ("number", "money")
             and len(raw) == 1
             and raw.isprintable()
             and not getattr(e, "ctrl", False)
@@ -1339,12 +1332,12 @@ class DataGrid(ft.Column):
         dropdown = ft.Dropdown(
             value=selected_key,
             options=dropdown_options,
-            # Stable search: a non-editable dropdown with the built-in search
-            # box in the menu. (editable+enable_filter reset the filtered
-            # list/highlight while the arrow keys moved through it.)
-            editable=False,
-            enable_filter=False,
-            enable_search=self._picker_searchable,
+            editable=self._picker_searchable,
+            enable_filter=self._picker_searchable,
+            # A single search mechanism (the editable text) -- combining
+            # enable_search with editable+enable_filter made the highlight /
+            # filtered list reset while navigating with the arrow keys.
+            enable_search=False,
             autofocus=True,
             menu_height=280,
             dense=True,
