@@ -313,7 +313,11 @@ class DataGrid(ft.Column):
 
         # Excel-style type-to-edit: a printable character starts editing and
         # replaces the cell (undoable). Pickers still open on click/Enter.
-        raw = e.key or ""
+        # Prefer the keyboard event's composed character when the runtime
+        # provides it (some Flet builds expose "character"), else fall back to
+        # the key label -- getattr keeps this safe where "character" is absent.
+        ch = getattr(e, "character", None)
+        raw = ch if (isinstance(ch, str) and len(ch) == 1) else (e.key or "")
         if (
             self.nav.is_editable
             and len(raw) == 1

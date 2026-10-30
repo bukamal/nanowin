@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.53"
-BUILD_NUMBER = 98  # FIX_0.17.53: keep unit fallback on old invoices only (rest reverted)
+APP_VERSION = "0.17.54"
+BUILD_NUMBER = 99  # EXPERIMENT_0.17.54: type-to-edit prefers e.character when present (safe getattr)
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]
