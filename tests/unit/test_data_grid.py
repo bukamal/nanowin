@@ -439,13 +439,22 @@ def test_footer_row_is_pinned_outside_the_scrolling_body_and_removed():
 
 def test_type_to_edit_starts_editor_with_the_typed_character():
     g = make_grid()
-    g._on_cell_click(0, 0)           # arm the first editable cell (name)
-    g._handle_key(FakeKey("ق"))      # a printable key starts editing
+    g._on_cell_click(0, 2)           # price (money, editable)
+    g._handle_key(FakeKey("9"))      # a printable digit starts editing
     assert g._edit_field is not None
-    assert g._edit_field.value == "ق"
-    g._edit_field.value = "قلم رصاص"
+    assert g._edit_field.value == "9"
+    g._edit_field.value = "12"
     g._handle_key(FakeKey("Enter"))  # commit
-    assert g._rows[0]["name"] == "قلم رصاص"
+    assert g._rows[0]["price"] == 12.0
+
+
+def test_text_cell_does_not_type_to_edit():
+    # Text cells avoid type-to-edit so an Arabic IME's first (latin) key
+    # never leaks an English first character into the value.
+    g = make_grid()
+    g._on_cell_click(0, 0)           # name (text)
+    g._handle_key(FakeKey("م"))
+    assert g._edit_field is None
 
 
 def test_enter_commits_and_advances_to_next_editable_cell():
