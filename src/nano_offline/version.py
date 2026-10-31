@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.60"
-BUILD_NUMBER = 105  # FEAT_0.17.60: sheet shortcuts/openers open the sheet only (no invoices screen/tab)
+APP_VERSION = "0.17.61"
+BUILD_NUMBER = 106  # FEAT_0.17.61: de-duplicate table-invoice commands (menus + ribbon)
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

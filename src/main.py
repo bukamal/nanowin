@@ -835,10 +835,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_table_invoice("purchase")),
             RibbonAction("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: open_verify_invoice()),
         ]
-        table_invoice_action = RibbonAction(
-            "table_invoice", "فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED,
-            on_click=lambda _=None: invoice_center.show_table_invoice_sheet(),
-        )
         if key == "dashboard":
             # POS is a dashboard-first surface: keep its ribbon entry only
             # here, not on the invoices screen where it duplicated the
@@ -846,13 +842,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             return [
                 RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
             ] + invoice_actions
-        if key in ("invoices", "sale", "purchase"):
-            # The comprehensive table entry must survive the jump from the
-            # invoices screen into the sale/purchase editors -- otherwise it
-            # vanishes exactly when the user is mid-invoice and most likely
-            # to want it.
-            return invoice_actions + [table_invoice_action]
-        if key in ("items", "pos"):
+        # "فاتورة بيع/شراء" already open the single-table sheet, so there is no
+        # separate "شاملة (جدول)" entry (it was a duplicate of فاتورة بيع).
+        if key in ("invoices", "sale", "purchase", "items", "pos"):
             return invoice_actions
         if key == "finance":
             return [
@@ -916,7 +908,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 "المبيعات",
                 ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
                 ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_table_invoice("sale")),
-                ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
                 "التحصيل",
                 ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
