@@ -298,8 +298,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         page, ctx, content,
         on_title_change=set_header,
         on_navigate=lambda key: navigate(key),
-        on_open_sale=lambda: open_sale(),
-        on_open_purchase=lambda: open_purchase(),
+        on_open_sale=lambda: open_table_invoice("sale"),
+        on_open_purchase=lambda: open_table_invoice("purchase"),
         on_open_notifications=notification_center.open_panel,
         on_open_purchase_draft=lambda lines, supplier_id=None: open_purchase_draft(lines, supplier_id),
         on_open_receipt=lambda customer_id=None, amount=None: open_receipt(customer_id, amount),
@@ -817,9 +817,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         navigate("items", prefill_barcode=barcode_code)
 
     def open_table_invoice(kind: str) -> None:
-        # Home shortcut: land on the invoices shell, then open the single-table
-        # invoice sheet for the given type (sale/purchase) directly.
-        navigate("invoices")
+        # Open the single-table invoice sheet directly, WITHOUT navigating to
+        # the invoices screen -- so no document tab is created and the user
+        # stays on the current screen (e.g. home) after closing the sheet.
         invoice_center.show_table_invoice_sheet(kind)
 
     # ---------------- desktop ribbon (replaces the old sidebar) ----------------
@@ -831,8 +831,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         the shell-level fallbacks for every other section.
         """
         invoice_actions = [
-            RibbonAction("sale", "فاتورة بيع", ft.Icons.SHOPPING_CART_CHECKOUT, on_click=lambda _=None: open_sale()),
-            RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_purchase()),
+            RibbonAction("sale", "فاتورة بيع", ft.Icons.SHOPPING_CART_CHECKOUT, on_click=lambda _=None: open_table_invoice("sale")),
+            RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_table_invoice("purchase")),
             RibbonAction("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: open_verify_invoice()),
         ]
         table_invoice_action = RibbonAction(
@@ -908,14 +908,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART, [
                 "المشتريات",
                 ("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
-                ("فاتورة مشتريات جديدة", ft.Icons.ADD_SHOPPING_CART, lambda: open_purchase()),
+                ("فاتورة مشتريات جديدة", ft.Icons.ADD_SHOPPING_CART, lambda: open_table_invoice("purchase")),
                 "السداد",
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
             ]))
             out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, [
                 "المبيعات",
                 ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
-                ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_sale()),
+                ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_table_invoice("sale")),
                 ("فاتورة شاملة (جدول)", ft.Icons.TABLE_VIEW_ROUNDED, lambda: invoice_center.show_table_invoice_sheet()),
                 ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
                 "التحصيل",
