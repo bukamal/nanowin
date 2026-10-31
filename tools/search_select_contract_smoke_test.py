@@ -15,11 +15,10 @@ invoice_text = INVOICE_VIEW.read_text(encoding="utf-8")
 assert invoice_text.count("ft.Dropdown(") == 1, invoice_text.count("ft.Dropdown(")
 dropdown_start = invoice_text.find("ft.Dropdown(")
 assert "الوحدة" in invoice_text[dropdown_start : dropdown_start + 120], "sanctioned dropdown must be the unit picker"
-# DataGrid now uses a custom search dialog for picker cells (no raw
-# Dropdown); other components should continue to use the shared SearchSelect.
+# DataGrid owns exactly one Dropdown for searchable editing inside an active
+# picker cell; other components should continue to use the shared SearchSelect.
 grid_text = DATA_GRID.read_text(encoding="utf-8")
-assert grid_text.count("ft.Dropdown(") == 0, grid_text.count("ft.Dropdown(")
-assert "ft.AlertDialog(" in grid_text, "picker must use the custom search dialog"
+assert grid_text.count("ft.Dropdown(") == 1, grid_text.count("ft.Dropdown(")
 
 joined = ""
 for p in (ROOT / "src").rglob("*.py"):
