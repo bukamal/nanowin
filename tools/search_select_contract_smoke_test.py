@@ -15,10 +15,11 @@ invoice_text = INVOICE_VIEW.read_text(encoding="utf-8")
 assert invoice_text.count("ft.Dropdown(") == 1, invoice_text.count("ft.Dropdown(")
 dropdown_start = invoice_text.find("ft.Dropdown(")
 assert "الوحدة" in invoice_text[dropdown_start : dropdown_start + 120], "sanctioned dropdown must be the unit picker"
-# DataGrid owns exactly one Dropdown for searchable editing inside an active
-# picker cell; other components should continue to use the shared SearchSelect.
+# DataGrid no longer uses a raw Dropdown: picker cells render an inline
+# search panel inside the grid body; other components keep using SearchSelect.
 grid_text = DATA_GRID.read_text(encoding="utf-8")
-assert grid_text.count("ft.Dropdown(") == 1, grid_text.count("ft.Dropdown(")
+assert grid_text.count("ft.Dropdown(") == 0, grid_text.count("ft.Dropdown(")
+assert "_picker_panel" in grid_text, "picker must render an inline panel"
 
 joined = ""
 for p in (ROOT / "src").rglob("*.py"):

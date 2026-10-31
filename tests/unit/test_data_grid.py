@@ -358,12 +358,10 @@ def test_picker_options_edit_inside_active_cell_and_commit_original_value():
     g.arm()
     g._handle_key(FakeKey("F2"))
 
-    editor = g._cell_boxes[(0, 0)].content
-    assert isinstance(editor, ft.Dropdown)
-    assert g._picker_control is editor
+    assert g._picker_control is not None      # inline picker panel is open
+    assert [v for v, _ in g._picker_visible] == [7, 9]
 
-    editor.value = "1"
-    editor.on_change(SimpleNamespace(control=editor))
+    g._picker_choose(1)                        # choose the second option (9)
 
     assert g._picker_control is None
     assert g.row_at(0)["item"] == 9
@@ -372,7 +370,22 @@ def test_picker_options_edit_inside_active_cell_and_commit_original_value():
     assert g._cell_boxes[(0, 0)].content.value == "9"
 
 
-def test_picker_ignores_unmatched_search_text_and_escape_restores_cell():
+def test_picker_arrow_navigation_keeps_the_filtered_list():
+    g = DataGrid(
+        columns=PICK_COLS,
+        rows=[{"item": None, "qty": 1}],
+        page=None,
+        picker_options=lambda col, _row: [(7, "مادة سبعة"), (9, "مادة تسعة")] if col.key == "item" else [],
+    )
+    g.arm()
+    g._handle_key(FakeKey("F2"))
+    before = list(g._picker_visible)
+    g._handle_key(FakeKey("Arrow Down"))
+    assert g._picker_visible == before        # list is NOT reset
+    assert g._picker_highlight == 1
+
+
+def test_picker_escape_closes_without_changing_the_value():
     g = DataGrid(
         columns=PICK_COLS,
         rows=[{"item": 7, "qty": 1}],
@@ -382,12 +395,7 @@ def test_picker_ignores_unmatched_search_text_and_escape_restores_cell():
 
     g.arm()
     g._handle_key(FakeKey("F2"))
-    editor = g._picker_control
-    editor.value = "بحث غير مطابق"
-    editor.on_change(SimpleNamespace(control=editor))
-
-    assert g._picker_control is editor
-    assert g.row_at(0)["item"] == 7
+    assert g._picker_control is not None
 
     g._handle_key(FakeKey("Escape"))
 

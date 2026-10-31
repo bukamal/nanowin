@@ -185,8 +185,17 @@ class DataGrid(ft.Column):
         self._cell_boxes: dict[tuple[int, int], ft.Container] = {}
         self._row_boxes: list[ft.Container] = []
         self._edit_field: ft.TextField | None = None
-        self._picker_control: ft.Dropdown | None = None
+        self._picker_control = None
         self._picker_values: dict[str, object] = {}
+        # Inline picker state (search box + list rendered inside the grid body).
+        self._picker_panel = None
+        self._picker_search = None
+        self._picker_list = None
+        self._picker_items: list[tuple[object, str]] = []
+        self._picker_visible: list[tuple[object, str]] = []
+        self._picker_highlight = 0
+        self._picker_row: int | None = None
+        self._picker_key: str | None = None
         self._prev_cell: tuple[int, int] | None = None
         self._range_anchor: tuple[int, int] | None = None
         self._painted_selection: set[tuple[int, int]] = set()
@@ -254,7 +263,11 @@ class DataGrid(ft.Column):
             if key in ("escape", "esc"):
                 self._cancel_picker()
             elif key == "enter":
-                self._commit_picker(self._picker_control.value)
+                self._picker_commit()
+            elif key in ("arrowdown", "pagedown"):
+                self._picker_move(1)
+            elif key in ("arrowup", "pageup"):
+                self._picker_move(-1)
             return
         if self._edit_field is not None:
             # While a cell editor is open, Enter/Escape resolve it; every
@@ -1019,6 +1032,8 @@ class DataGrid(ft.Column):
                         controls.append(self._group_banner(str(group)))
                         last_group = str(group)
                 controls.append(self._make_row(r, row))
+                if self._picker_panel is not None and r == self._picker_row:
+                    controls.append(self._picker_panel)
                 if r in self._expanded and self._on_row_expand is not None:
                     try:
                         panel = self._on_row_expand(row)
@@ -1337,75 +1352,134 @@ class DataGrid(ft.Column):
 
     def _begin_picker(self, row_index: int, col: GridColumn, box: ft.Container) -> None:
         options = self._picker_options(col, self._rows[row_index]) if self._picker_options else []
-        values: dict[str, object] = {}
-        dropdown_options: list[ft.dropdown.Option] = []
-        selected_key = None
-        for index, (value, label) in enumerate(options):
-            key = str(index)
-            values[key] = value
-            dropdown_options.append(ft.dropdown.Option(key=key, text=str(label)))
-            if value == self._rows[row_index].get(col.key):
-                selected_key = key
-
-        if not dropdown_options:
-            self._on_pick(row_index, col) if self._on_pick is not None else None
+        if not options:
+            if self._on_pick is not None:
+                self._on_pick(row_index, col)
             return
-
+        # Inline picker: an in-grid panel under the active row (search box +
+        # our own results list). No dialog/overlay -> can't close the sheet,
+        # and WE own filtering + the highlight, so arrow navigation never
+        # resets the list (the built-in Dropdown did).
+        self._picker_row = row_index
+        self._picker_key = col.key
+        self._picker_items = [(value, str(label)) for value, label in options]
+        self._picker_highlight = 0
         self.nav.begin_edit()
-        self._picker_values = values
-        dropdown = ft.Dropdown(
-            value=selected_key,
-            options=dropdown_options,
-            editable=self._picker_searchable,
-            enable_filter=self._picker_searchable,
-            # A single search mechanism (the editable text) -- combining
-            # enable_search with editable+enable_filter made the highlight /
-            # filtered list reset while navigating with the arrow keys.
-            enable_search=False,
+
+        self._picker_search = ft.TextField(
+            hint_text="اكتب للبحث…",
             autofocus=True,
-            menu_height=280,
             dense=True,
-            text_size=12,
             border_radius=Radius.SM,
-            border=ft.border.all(2, Colors.PRIMARY),
-            bgcolor=Colors.WHITE,
-            content_padding=ft.padding.symmetric(horizontal=6, vertical=2),
-            on_change=lambda e: self._commit_picker(e.control.value),
+            prefix_icon=ft.Icons.SEARCH,
+            on_change=lambda e: self._picker_filter(e.control.value),
+            on_submit=lambda _: self._picker_commit(),
         )
-        box.bgcolor = Colors.WHITE
-        box.border = ft.border.all(2, Colors.PRIMARY)
-        box.padding = ft.padding.symmetric(horizontal=2, vertical=2)
-        box.content = dropdown
-        self._picker_control = dropdown
-        self._safe_update(box)
+        self._picker_list = ft.Column(
+            [],
+            spacing=0,
+            scroll=ft.ScrollMode.AUTO,
+            height=self._picker_list_height(),
+        )
+        self._picker_panel = ft.Container(
+            ft.Column([self._picker_search, self._picker_list], spacing=6, tight=True),
+            padding=ft.padding.only(left=52, right=14, top=6, bottom=8),
+            bgcolor=Colors.PRIMARY_BG,
+            border=ft.border.only(bottom=ft.BorderSide(1, Colors.PRIMARY_BORDER)),
+        )
+        self._picker_control = self._picker_panel  # truthy flag while open
+        self._picker_filter("")
+        self._render_body()
+        self._safe_update(self._body)
         try:
-            dropdown.focus()
+            self._picker_search.focus()
         except Exception:
             pass
 
-    def _commit_picker(self, key: str | None) -> None:
-        if self._picker_control is None or key not in self._picker_values:
+    def _picker_list_height(self) -> int:
+        return max(120, min(240, len(self._picker_items) * 38 + 8))
+
+    def _picker_filter(self, query: str) -> None:
+        q = (query or "").strip().casefold()
+        self._picker_visible = [
+            (value, label) for (value, label) in self._picker_items if not q or q in label.casefold()
+        ]
+        self._picker_highlight = 0
+        self._picker_paint()
+
+    def _picker_paint(self) -> None:
+        if self._picker_list is None:
             return
-        row, col_index = self.nav.cell
-        col = self._columns[col_index]
-        value = self._picker_values[key]
-        self._picker_control = None
-        self._picker_values = {}
-        self.nav.editing = False
-        if self._rows[row].get(col.key) == value:
+        controls: list[ft.Control] = []
+        for i, (_value, label) in enumerate(self._picker_visible):
+            selected = i == self._picker_highlight
+            controls.append(
+                ft.Container(
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.CHECK, size=15, color=Colors.PRIMARY) if selected else ft.Container(width=15),
+                            ft.Text(label, size=13, color=Colors.PRIMARY if selected else Colors.TEXT_PRIMARY, expand=True),
+                        ],
+                        spacing=6,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                    bgcolor=Colors.WHITE if selected else None,
+                    border_radius=Radius.SM,
+                    ink=True,
+                    on_click=lambda _, k=i: self._picker_choose(k),
+                )
+            )
+        if not controls:
+            controls.append(ft.Container(ft.Text("لا نتائج مطابقة", size=12, color=Colors.TEXT_FAINT), padding=10))
+        self._picker_list.controls = controls
+        try:
+            self._picker_list.update()
+        except Exception:
+            pass
+
+    def _picker_move(self, delta: int) -> None:
+        total = len(self._picker_visible)
+        if total:
+            self._picker_highlight = (self._picker_highlight + delta) % total
+            self._picker_paint()
+
+    def _picker_choose(self, index: int) -> None:
+        if 0 <= index < len(self._picker_visible):
+            self._picker_highlight = index
+            self._picker_commit()
+
+    def _picker_commit(self) -> None:
+        if self._picker_control is None:
+            return
+        value = self._picker_visible[self._picker_highlight][0] if self._picker_visible else None
+        row, key = self._picker_row, self._picker_key
+        self._picker_clear()
+        if row is None or key is None or value is None:
+            return
+        if self._rows[row].get(key) == value:
             self._render_row(row)
             self._safe_update(self._body)
         else:
-            self._apply_user_changes([(row, col.key, value)], record_history=True)
+            self._apply_user_changes([(row, key, value)], record_history=True)
+
+    def _picker_clear(self) -> None:
+        self._picker_control = None
+        self._picker_panel = None
+        self._picker_search = None
+        self._picker_list = None
+        self._picker_items = []
+        self._picker_visible = []
+        self._picker_row = None
+        self._picker_key = None
+        self._picker_values = {}
+        self.nav.editing = False
+        self._render_body()
+        self._safe_update(self._body)
 
     def _cancel_picker(self) -> None:
         if self._picker_control is None:
             return
-        self._picker_control = None
-        self._picker_values = {}
-        self.nav.editing = False
-        self._render_row(self.nav.row)
-        self._safe_update(self._body)
+        self._picker_clear()
 
     def _commit_edit(self, *, move: str | None = None) -> None:
         field = self._edit_field

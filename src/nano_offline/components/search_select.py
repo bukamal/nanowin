@@ -55,6 +55,9 @@ class SearchSelect(ft.Column):
             border_radius=10,
             bgcolor="#FFFFFF",
         )
+        # Cache the last rendered query so we skip redundant rebuilds.
+        self._last_render_query: str = ""
+        self._last_render_controls: list[ft.Control] = []
         super().__init__([self.field, self.results_box], spacing=3, tight=True)
         self.set_choices(choices, preserve_value=False)
         self.value = value
@@ -160,7 +163,11 @@ class SearchSelect(ft.Column):
             )
         if q and not matches:
             controls.append(ft.Container(ft.Text("لا توجد نتائج", size=12, color="#64748B"), padding=8))
+        # Skip rebuild when nothing changed (avoids focus loss on arrow‑key nav).
+        if controls == self._last_render_controls:
+            return
         self.results.controls = controls
+        self._last_render_controls = controls
 
     def _choose(self, choice: SearchChoice | None) -> None:
         self._value = choice.key if choice else None
