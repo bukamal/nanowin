@@ -645,6 +645,7 @@ class AdminCenter:
         # reveal toggle is the only way to see the real values here.
         license_key = SelectAllTextField(label="مفتاح الترخيص", password=True, can_reveal_password=True)
         license_state = ft.Text("", size=12)
+        license_days = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
         license_server = ft.Text("", size=10, color=Colors.TEXT_SECONDARY, selectable=False)
         license_device = ft.Text("", size=11, color=Colors.TEXT_SECONDARY, selectable=False)
         activation_progress = ft.ProgressBar(visible=False)
@@ -694,6 +695,23 @@ class AdminCenter:
             else:
                 license_state.value = f"غير صالح/غير مفعل • {status.reason or ''}"
                 license_state.color = Colors.DANGER_DARKER
+            try:
+                exp = (status.expires_at or "")[:10]
+                if status.valid and exp:
+                    days = (datetime.fromisoformat(exp).date() - datetime.now().date()).days
+                    if days < 0:
+                        license_days.value = "انتهى الترخيص"
+                        license_days.color = Colors.DANGER_DARKER
+                    else:
+                        license_days.value = f"متبقٍ {days} يومًا على انتهاء الترخيص"
+                        license_days.color = Colors.WARNING_DARKER if days <= 30 else Colors.TEXT_SECONDARY
+                elif status.valid:
+                    license_days.value = "ترخيص دائم/غير محدد"
+                    license_days.color = Colors.TEXT_SECONDARY
+                else:
+                    license_days.value = ""
+            except Exception:
+                license_days.value = ""
             _apply_license_visibility()
 
         async def activate(_):
@@ -1436,6 +1454,69 @@ class AdminCenter:
                 self.page.update()
             except Exception as exc:
                 self._notify(str(exc), kind="error")
+
+        def prune_backups_now(_):
+            try:
+                keep = backup_settings.retention_count(self.ctx.settings)
+                removed = self.ctx.backup.prune_backups(self.ctx.backup.default_dir(), keep)
+                refresh_backups()
+                self._notify(f"تم حذف {len(removed)} نسخة قديمة" if removed else "لا توجد نسخ قديمة للحذف")
+                self.page.update()
+            except Exception as exc:
+                self._notify(str(exc), kind="error")
+
+        def reset_settings_guarded(_):
+            """Danger zone: reset every setting to its default.
+
+            Business data is untouched; requires the admin password and takes a
+            safety backup first, so a mis-tap can always be undone."""
+            password_field = SelectAllTextField(
+                label="كلمة مرور المدير", password=True, can_reveal_password=True, autofocus=True
+            )
+            status_line = ft.Text("", size=11, color=Colors.DANGER_DARKER)
+            confirm = ft.AlertDialog(modal=True)
+
+            def do_confirm(_ev=None):
+                try:
+                    self.ctx.auth.verify_current_password(password_field.value or "")
+                except Exception as exc:
+                    status_line.value = str(exc)
+                    self.page.update()
+                    return
+                try:
+                    self.ctx.backup.create_backup(self.ctx.backup.default_dir())
+                    removed = self.ctx.settings.clear()
+                    self.page.close(confirm)
+                    self._notify(f"تم تصفير الإعدادات ({removed} مفتاحًا) مع الاحتفاظ بالبيانات")
+                    self.show_center()
+                except Exception as exc:
+                    status_line.value = str(exc)
+                    self.page.update()
+
+            confirm.title = ft.Text("تصفير الإعدادات")
+            confirm.content = ft.Column(
+                [
+                    ft.Text(
+                        "سيتم حذف كل الإعدادات وإرجاعها للافتراضي، مع الاحتفاظ بالبيانات "
+                        "(الفواتير/المواد/العملاء/الموردين). تُنشأ نسخة احتياطية تلقائيًا قبل التنفيذ.",
+                        size=12,
+                    ),
+                    password_field,
+                    status_line,
+                ],
+                tight=True,
+                width=360,
+            )
+            confirm.actions = [
+                ft.TextButton("إلغاء", on_click=lambda _: self.page.close(confirm)),
+                ft.FilledButton(
+                    "تصفير الإعدادات",
+                    icon=ft.Icons.RESTART_ALT,
+                    style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+                    on_click=do_confirm,
+                ),
+            ]
+            self.page.open(confirm)
 
         # --- Reports center: which report and date range are pre-selected
         # the moment it opens -- admin-tunable and read via
@@ -2288,6 +2369,23 @@ class AdminCenter:
                     ft.Text("الاحتفاظ بآخر عدد من النسخ محليًا (يُحذف الأقدم تلقائيًا)", size=12, color=Colors.TEXT_SECONDARY),
                     backup_retention_field,
                     ft.FilledButton("حفظ إعدادات النسخ الاحتياطي", icon=ft.Icons.SAVE_OUTLINED, on_click=save_backup_settings),
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("منطقة الخطر", size=13, weight=ft.FontWeight.BOLD, color=Colors.DANGER_DARKER),
+                    ft.Text(
+                        "عمليات حساسة: تُطلب كلمة مرور المدير وتُنشأ نسخة احتياطية تلقائيًا قبل أي إجراء.",
+                        size=11, color=Colors.TEXT_SECONDARY,
+                    ),
+                    ft.OutlinedButton(
+                        "تنظيف النسخ القديمة الآن",
+                        icon=ft.Icons.DELETE_SWEEP,
+                        on_click=prune_backups_now,
+                    ),
+                    ft.OutlinedButton(
+                        "تصفير الإعدادات (يُبقي البيانات)",
+                        icon=ft.Icons.RESTART_ALT,
+                        style=ft.ButtonStyle(color=Colors.DANGER),
+                        on_click=reset_settings_guarded,
+                    ),
                 ],
             ),
             "license": self._section(
@@ -2312,6 +2410,19 @@ class AdminCenter:
                     ),
                     activation_progress,
                     license_state,
+                    ft.Row(
+                        [
+                            license_days,
+                            ft.Container(expand=True),
+                            ft.OutlinedButton(
+                                "تحديث الحالة",
+                                icon=ft.Icons.REFRESH,
+                                on_click=lambda _: (refresh_license(), self.page.update()),
+                            ),
+                        ],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                 ],
             ),
             "branding": self._section(

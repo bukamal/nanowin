@@ -49,5 +49,12 @@ class SettingsRepository(Offloadable):
                         (key, str(value)),
                     )
 
+    @blocking
+    def clear(self) -> int:
+        """Delete every settings row (factory defaults; business data untouched)."""
+        with self.db.transaction() as conn:
+            cur = conn.execute("DELETE FROM settings")
+            return int(cur.rowcount or 0)
+
 
 __all__ = ["SettingsRepository"]
