@@ -1,4 +1,4 @@
-APP_VERSION = "0.17.63"
-BUILD_NUMBER = 108  # FEAT_0.17.63: unify screen actions in the command strip (parties, reports)
+APP_VERSION = "0.17.64"
+BUILD_NUMBER = 109  # FEAT_0.17.64: admin nav grouped into 4 groups + denser panels
 
 __all__ = ["APP_VERSION", "BUILD_NUMBER"]

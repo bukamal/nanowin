@@ -113,9 +113,9 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BORDER_ALT),
                     *controls,
                 ],
-                spacing=12,
+                spacing=10,
             ),
-            padding=16,
+            padding=12,
             border=ft.border.all(1, Colors.BORDER_ALT),
             border_radius=16,
             bgcolor=Colors.WHITE,
@@ -2675,6 +2675,18 @@ class AdminCenter:
             ("reports", "التقارير", ft.Icons.BAR_CHART_OUTLINED),
             ("audit", "سجل التدقيق", ft.Icons.HISTORY),
         ]
+        # Group the sections so the command strip stays compact (4 group
+        # buttons with submenus) instead of 16 flat buttons.
+        ADMIN_GROUPS = [
+            ("setup", "الإعداد والتخصيص", ft.Icons.TUNE_ROUNDED,
+             ("appearance", "branding", "users", "license")),
+            ("ops", "العمليات والمخزون", ft.Icons.STORE_OUTLINED,
+             ("barcode", "invoice", "pos", "lan", "stocktake", "crisis")),
+            ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED,
+             ("backup", "reports", "audit", "server")),
+            ("assist", "الصوت والمساعد", ft.Icons.RECORD_VOICE_OVER_OUTLINED,
+             ("sound", "voice")),
+        ]
         initial = getattr(self, "_pending_section", None) or "users"
         self._pending_section = None
         tab_state = {"active": initial}
@@ -2683,22 +2695,33 @@ class AdminCenter:
             panel.visible = key == tab_state["active"]
 
         def _publish_actions() -> None:
-            # All admin sections become buttons in the shell's command strip
-            # (the active one is accented), so the admin navigation lives under
-            # the الإدارة tab exactly like every other screen's commands.
+            # Compact, grouped navigation in the shell's command strip: four
+            # group buttons, each opening a submenu of its sections (the
+            # active group is accented and its active section is ticked).
             if not self.on_context_actions:
                 return
-            self.on_context_actions([
-                RibbonAction(
-                    section_key,
-                    section_label,
-                    section_icon,
-                    accent=(section_key == tab_state["active"]),
-                    on_click=lambda _=None, k=section_key: switch_section(k),
+            tabs_map = {key: (label, icon) for key, label, icon in TABS}
+            group_for = {sec: g for g, _l, _i, secs in ADMIN_GROUPS for sec in secs}
+            active_group = group_for.get(tab_state["active"])
+            actions = []
+            for group_key, group_label, group_icon, sections in ADMIN_GROUPS:
+                items = []
+                for section_key in sections:
+                    if section_key not in section_panels or section_key not in tabs_map:
+                        continue
+                    section_label, section_icon = tabs_map[section_key]
+                    prefix = "✓ " if section_key == tab_state["active"] else ""
+                    items.append(
+                        (prefix + section_label, section_icon,
+                         (lambda k=section_key: switch_section(k)))
+                    )
+                actions.append(
+                    RibbonAction(
+                        group_key, group_label, group_icon,
+                        items=items, accent=(group_key == active_group),
+                    )
                 )
-                for section_key, section_label, section_icon in TABS
-                if section_key in section_panels
-            ])
+            self.on_context_actions(actions)
 
         def switch_section(key: str):
             if key == tab_state["active"] or key not in section_panels:
