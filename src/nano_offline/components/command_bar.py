@@ -99,11 +99,11 @@ class CommandBar(ft.Container):
 
         self._actions_row = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self._actions_wrap = ft.Container(self._actions_row, visible=False)
-        self._docs_row = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._docs_row = ft.Row([], spacing=2, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END)
         self._docs_wrap = ft.Container(
             self._docs_row,
             visible=False,
-            padding=ft.padding.only(top=4, bottom=2),
+            padding=ft.padding.only(top=5),
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
 
@@ -325,9 +325,8 @@ class CommandBar(ft.Container):
             )
             box = ft.Container(
                 ft.Row([icon, label, close], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.padding.only(left=12, right=6, top=3, bottom=3),
-                border_radius=Radius.SM,
-                border=ft.border.all(1, Colors.BORDER),
+                padding=ft.padding.only(left=12, right=6, top=6, bottom=5),
+                border_radius=ft.border_radius.only(top_left=7, top_right=7),
                 on_click=lambda _, k=key: self._activate(k),
                 ink=True,
             )
@@ -372,8 +371,17 @@ class CommandBar(ft.Container):
             active = k == key
             row = box.content
             icon, label = row.controls[0], row.controls[1]
-            box.bgcolor = Colors.PRIMARY_BG if active else None
-            box.border = ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER)
+            box.bgcolor = Colors.WHITE if active else None
+            box.border = (
+                ft.border.only(
+                    left=ft.BorderSide(1, Colors.BORDER),
+                    top=ft.BorderSide(1, Colors.BORDER),
+                    right=ft.BorderSide(1, Colors.BORDER),
+                    bottom=ft.BorderSide(1, Colors.WHITE),
+                )
+                if active
+                else None
+            )
             icon.color = Colors.PRIMARY if active else Colors.TEXT_SECONDARY
             label.color = Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK
             label.weight = ft.FontWeight.BOLD if active else ft.FontWeight.W_600
