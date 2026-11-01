@@ -841,6 +841,14 @@ class InvoiceCenter:
             def row_menu(row: dict) -> list:
                 invoice_id = int(row.get("id") or 0)
                 remaining = max(0.0, float(row.get("remaining_amount") or 0))
+
+                def after_menu_closes(callback):
+                    async def open_action():
+                        await asyncio.sleep(0.12)
+                        callback(None)
+
+                    self.page.run_task(open_action)
+
                 items: list = [
                     ("فتح", ft.Icons.OPEN_IN_NEW_ROUNDED, lambda i=invoice_id: self.show_invoice_detail(i)),
                     ("تعديل", ft.Icons.EDIT_OUTLINED, lambda i=invoice_id: self.show_editor(i)),
@@ -849,8 +857,8 @@ class InvoiceCenter:
                 if remaining > 1e-9:
                     items.append(("تسجيل دفعة", ft.Icons.PAYMENTS_OUTLINED, lambda i=invoice_id: self.show_payment_dialog(i)))
                 items.extend([
-                    ("طباعة", ft.Icons.PRINT_OUTLINED, self._print_handler(invoice_id)),
-                    ("مشاركة PDF", ft.Icons.PICTURE_AS_PDF, self._pdf_handler(invoice_id)),
+                    ("طباعة", ft.Icons.PRINT_OUTLINED, lambda i=invoice_id: after_menu_closes(self._print_handler(i))),
+                    ("مشاركة PDF", ft.Icons.PICTURE_AS_PDF, lambda i=invoice_id: after_menu_closes(self._pdf_handler(i))),
                     None,
                     ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),
                 ])

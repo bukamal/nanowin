@@ -156,7 +156,7 @@ class LicenseService:
         value = (url or "").strip().rstrip("/")
         expected = HAWAA_ACTIVATION_URL.rstrip("/")
         if value and value != expected:
-            raise ValueError("خادم التفعيل ثابت ويستخدم نفس سيرفر هوى الشام")
+            raise ValueError("إعدادات خدمة التفعيل ثابتة ولا يمكن تعديلها من التطبيق")
 
     def _seal_key(self, device_id: str) -> bytes:
         return hashlib.pbkdf2_hmac("sha256", device_id.encode(), _LOCAL_SEAL_SALT, 150_000, dklen=32)
@@ -175,7 +175,7 @@ class LicenseService:
 
     def _unseal_hawaa_payload(self, token: str) -> dict:
         if not token.startswith(f"{HAWAA_PROTOCOL}:"):
-            raise ValueError("صيغة ترخيص هوى الشام غير صحيحة")
+            raise ValueError("صيغة بيانات الترخيص غير صحيحة")
         try:
             body = token.split(":", 1)[1]
             encrypted_part, mac_part = body.split(".", 1)
@@ -464,7 +464,7 @@ class LicenseService:
                         raise RuntimeError(concise) from exc
             raise RuntimeError(message or f"رفض خادم التفعيل الطلب ({exc.code})") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError("تعذر الاتصال بسيرفر تفعيل هوى الشام") from exc
+            raise RuntimeError("تعذر الاتصال بخدمة التفعيل") from exc
         try:
             result = json.loads(raw or "{}")
         except json.JSONDecodeError as exc:

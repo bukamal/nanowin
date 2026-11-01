@@ -81,6 +81,11 @@ class FinanceCenter:
         # Publishes this section's contextual ribbon actions while finance is
         # on screen (سند قبض / سند دفع / سند مصروف).
         self.on_context_actions = on_context_actions
+        self._active_finance_view: str | None = None
+
+    @property
+    def is_vouchers_view(self) -> bool:
+        return self._active_finance_view == "vouchers"
 
     def money(self, value) -> str:
         return privacy.money_ctx(value, self.ctx)
@@ -157,6 +162,7 @@ class FinanceCenter:
         self.show_vouchers()
 
     def show_vouchers(self) -> None:
+        self._active_finance_view = "vouchers"
         self._set_header("السندات", "سندات القبض والدفع والمصروفات وربطها بالفواتير")
         search = SelectAllTextField(
             label="بحث في السندات",
@@ -687,7 +693,14 @@ class FinanceCenter:
         )
         self.page.open(detail_sheet)
 
-    def show_voucher_dialog(self, voucher_id: int | None = None, voucher_type: str = "receipt", initial_data: dict | None = None) -> None:
+    def show_voucher_dialog(
+        self,
+        voucher_id: int | None = None,
+        voucher_type: str = "receipt",
+        initial_data: dict | None = None,
+        *,
+        refresh_vouchers: bool = True,
+    ) -> None:
         existing = self.ctx.payments.get_voucher(voucher_id) if voucher_id else None
         seed = existing or initial_data or {}
         if voucher_id and not existing:
@@ -695,11 +708,17 @@ class FinanceCenter:
             return
 
         current_type = existing["voucher_type"] if existing else seed.get("voucher_type", voucher_type)
-        type_dd = SearchSelect(
+        type_dd = ft.Dropdown(
             label="نوع السند",
             value=current_type,
-            choices=[("receipt", "قبض من عميل"), ("payment", "صرف لمورد")],
-            allow_clear=False,
+            options=[
+                ft.dropdown.Option(key="receipt", text="قبض من عميل"),
+                ft.dropdown.Option(key="payment", text="دفع لمورد"),
+            ],
+            filled=True,
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.MD,
+            border_color=Colors.BORDER,
         )
         party_dd = SearchSelect(label="الحساب")
         amount = SmartAmountField(
@@ -711,15 +730,18 @@ class FinanceCenter:
         notes = SelectAllTextField(label="ملاحظات", value=seed.get("notes") or "", multiline=True, min_lines=1, max_lines=3)
         existing_allocations = {int(a["invoice_id"]): float(a["amount"]) for a in (existing.get("allocations") or [])} if existing else {}
         default_mode = "manual" if existing_allocations else "none" if existing else "oldest"
-        allocation_mode = SearchSelect(
+        allocation_mode = ft.Dropdown(
             label="توزيع الدفعة",
             value=default_mode,
-            choices=[
-                ("oldest", "الأقدم أولًا تلقائيًا"),
-                ("manual", "توزيع يدوي"),
-                ("none", "رصيد على الحساب دون توزيع"),
+            options=[
+                ft.dropdown.Option(key="oldest", text="الأقدم أولًا تلقائيًا"),
+                ft.dropdown.Option(key="manual", text="توزيع يدوي"),
+                ft.dropdown.Option(key="none", text="رصيد على الحساب دون توزيع"),
             ],
-            allow_clear=False,
+            filled=True,
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.MD,
+            border_color=Colors.BORDER,
         )
         manual_column = ft.Column(spacing=6)
         manual_fields: dict[int, ft.TextField] = {}
@@ -830,7 +852,8 @@ class FinanceCenter:
                     message = f"تم حفظ السند #{new_id}"
                 close()
                 self.notify(message)
-                self.show_vouchers()
+                if refresh_vouchers:
+                    self.show_vouchers()
                 self._changed()
                 # PHASE10: receipt/payment vouchers move the cash balance
                 # shown on the home screen widget -- refresh it right away.
@@ -883,6 +906,7 @@ class FinanceCenter:
         self.page.open(dialog)
 
     def show_expenses(self) -> None:
+        self._active_finance_view = "expenses"
         self._set_header("المصروفات", "تسجيل ومتابعة مصروفات النشاط")
         search = SelectAllTextField(
             label="بحث في المصروفات",
@@ -1273,37 +1297,35 @@ class FinanceCenter:
             "إزالة الصورة", icon=ft.Icons.DELETE_OUTLINE, on_click=_remove_receipt,
         )
         photo_buttons = [capture_button] + ([remove_button] if receipt_photo["bytes"] else [])
-        categories = self.ctx.expenses.list_categories()
-        category = SearchSelect(
-            label="التصنيف",
-            value=str(existing["category_id"]) if existing and existing.get("category_id") else None,
-            choices=[(str(c["id"]), c["name"]) for c in categories],
-        )
-        new_category = SelectAllTextField(label="تصنيف جديد")
-        description = SelectAllTextField(label="البيان", value=(existing["description"] if existing else ""))
+        description_value = str(existing.get("description") or "مصروف") if existing else "مصروف"
+        reference_value = str(existing.get("reference") or "") if existing else ""
         amount = SmartAmountField(
             label=currency.amount_field_label("المبلغ", self.ctx.settings),
             value=currency.to_input_text(existing.get("amount", 0) if existing else 0, self.ctx.settings),
         )
         edate = SmartDateField(label="التاريخ", value=str(existing["expense_date"] if existing else date.today().isoformat()))
-        reference = SelectAllTextField(label="المرجع", value=(existing.get("reference") or "") if existing else "")
         notes = SelectAllTextField(label="ملاحظات", value=(existing.get("notes") or "") if existing else "", multiline=True)
-        sheet = new_form_sheet()
+        page_w = int(self.page.width or 1280)
+        sheet_w = max(320, min(1080, page_w - 32))
+        sheet = ft.BottomSheet(
+            content=ft.Container(),
+            is_scroll_controlled=True,
+            enable_drag=True,
+            maintain_bottom_view_insets_padding=True,
+            size_constraints=ft.BoxConstraints(min_width=sheet_w, max_width=sheet_w),
+        )
 
         def close(_=None):
             self.page.close(sheet)
 
         def save(_):
             try:
-                category_id = int(category.value) if category.value else None
-                if (new_category.value or "").strip():
-                    category_id = self.ctx.expenses.create_category(new_category.value)
                 kwargs = {
                     "amount": currency.parse_display_input(amount.value, self.ctx.settings),
-                    "description": description.value or "",
+                    "description": description_value,
                     "expense_date": edate.value,
-                    "category_id": category_id,
-                    "reference": reference.value,
+                    "category_id": int(existing["category_id"]) if existing and existing.get("category_id") else None,
+                    "reference": reference_value,
                     "notes": notes.value,
                     "receipt_image": receipt_photo["bytes"],
                     "receipt_name": receipt_photo["name"],
@@ -1322,8 +1344,34 @@ class FinanceCenter:
         render_form_sheet(
             self.page, sheet,
             title="تعديل مصروف" if expense_id else "مصروف جديد",
-            fields=[category, new_category, description, ft.Row([amount, edate], wrap=True), reference, notes,
-                    ft.Column([photo_area, ft.Row(photo_buttons)], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)],
+            fields=[
+                ft.ResponsiveRow(
+                    [
+                        ft.Container(amount, col={"xs": 12, "md": 6}),
+                        ft.Container(edate, col={"xs": 12, "md": 6}),
+                        ft.Container(notes, col={"xs": 12, "md": 6}),
+                        ft.Container(
+                            ft.Column(
+                                [
+                                    ft.Text("إيصال (اختياري)", size=12, weight=ft.FontWeight.W_600),
+                                    photo_area,
+                                    ft.Row(photo_buttons, wrap=True),
+                                ],
+                                spacing=8,
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            padding=12,
+                            bgcolor=Colors.BACKGROUND,
+                            border=ft.border.all(1, Colors.BORDER),
+                            border_radius=Radius.MD,
+                            col={"xs": 12, "md": 6},
+                        ),
+                    ],
+                    spacing=12,
+                    run_spacing=10,
+                    rtl=True,
+                )
+            ],
             on_close=close, on_save=save,
         )
         self.page.open(sheet)
@@ -1370,6 +1418,7 @@ class FinanceCenter:
         self.page.open(dialog)
 
     def show_statements(self, party_type: str, party_id: int | None = None) -> None:
+        self._active_finance_view = "customers" if party_type == "customer" else "suppliers"
         source = self.ctx.customers.list() if party_type == "customer" else self.ctx.suppliers.list()
         title = "كشف حساب العملاء" if party_type == "customer" else "كشف حساب الموردين"
         active = "customers" if party_type == "customer" else "suppliers"
@@ -1624,6 +1673,7 @@ class FinanceCenter:
         every posted account plus a per-account chronological statement --
         the same card language as the customer/supplier statements, so the
         whole money area reads as one system."""
+        self._active_finance_view = "ledger"
         self._set_header("دفتر الأستاذ", "ميزان المراجعة وكشوف الحسابات من القيود المرحلة")
         account_dd = SearchSelect(
             label="الحساب",

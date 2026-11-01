@@ -650,20 +650,16 @@ class AdminCenter:
 
         refresh_backups()
 
-        # License tab: server URL, device ID and status are treated as
-        # private data and masked by default, the same way the activation
-        # screen (ActivationGate) never shows a full device ID and always
-        # keeps the license key itself behind a password field. An explicit
-        # reveal toggle is the only way to see the real values here.
+        # License details are private and masked by default. The key stays
+        # hidden, and the full device ID is only shown on explicit reveal.
         license_key = SelectAllTextField(label="مفتاح الترخيص", password=True, can_reveal_password=True)
         license_state = ft.Text("", size=12)
         license_days = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
-        license_server = ft.Text("", size=10, color=Colors.TEXT_SECONDARY, selectable=False)
         license_device = ft.Text("", size=11, color=Colors.TEXT_SECONDARY, selectable=False)
         activation_progress = ft.ProgressBar(visible=False)
-        activation_button = ft.FilledButton("إعادة التفعيل", icon=ft.Icons.VERIFIED_USER)
+        activation_button = ft.FilledButton("تفعيل الترخيص", icon=ft.Icons.VERIFIED_USER)
 
-        _license_raw = {"server": self.ctx.license.activation_url(), "device": "", "status": ""}
+        _license_raw = {"device": ""}
         _license_reveal = {"on": False}
 
         def _mask_secret(value: str) -> str:
@@ -675,10 +671,8 @@ class AdminCenter:
 
         def _apply_license_visibility():
             revealed = _license_reveal["on"]
-            license_server.value = _license_raw["server"] if revealed else _mask_secret(_license_raw["server"])
             device = _license_raw["device"]
             license_device.value = "معرّف الجهاز: " + (device if revealed else _mask_secret(device))
-            license_server.selectable = revealed
             license_device.selectable = revealed
             license_reveal_button.icon = ft.Icons.VISIBILITY_OFF_OUTLINED if revealed else ft.Icons.VISIBILITY_OUTLINED
             license_reveal_button.tooltip = "إخفاء بيانات الترخيص" if revealed else "إظهار بيانات الترخيص (خاصة)"
@@ -702,7 +696,7 @@ class AdminCenter:
             status = self.ctx.license.status()
             _license_raw["device"] = status.device_id or ""
             if status.valid:
-                license_state.value = f"مفعل • {status.edition or 'standard'} • الانتهاء {status.expires_at or 'دائم/غير محدد'} • {status.protocol or 'hawaa-v1'}"
+                license_state.value = f"ترخيص كاشير مفعل • {status.edition or 'standard'} • الانتهاء {status.expires_at or 'دائم/غير محدد'}"
                 license_state.color = Colors.SUCCESS_DARK
             else:
                 license_state.value = f"غير صالح/غير مفعل • {status.reason or ''}"
@@ -733,7 +727,7 @@ class AdminCenter:
             try:
                 status = await asyncio.to_thread(self.ctx.license.activate_online, license_key.value or "", APP_VERSION)
                 refresh_license()
-                self._notify("تم التفعيل عبر سيرفر هوى الشام" if status.valid else (status.reason or "فشل التفعيل"))
+                self._notify("تم تفعيل كاشير بنجاح" if status.valid else (status.reason or "فشل التفعيل"))
             except Exception as exc:
                 self._notify(str(exc), kind="error")
             finally:
@@ -2480,18 +2474,23 @@ class AdminCenter:
                 ],
             ),
             "license": self._section(
-                "التفعيل — نفس سيرفر هوى الشام",
+                "ترخيص كاشير",
                 [
-                    ft.Text(f"تطبيق {branding.APP_NAME_AR} يرسل مفتاح الترخيص ومعرّف الجهاز فقط إلى سيرفر تفعيل هوى الشام. لا تُرسل الفواتير أو العملاء أو الموردون أو المخزون. بعد نجاح التفعيل يعمل التطبيق أوفلاين.", size=12, color=Colors.TEXT_MUTED),
+                    ft.Text(
+                        f"يُستخدم مفتاح الترخيص ومعرّف الجهاز للتحقق من صلاحية نسخة {branding.APP_NAME_AR}. "
+                        "لا تُرسل بيانات العمل مثل الفواتير أو العملاء أو الموردين أو المخزون، "
+                        "ويمكنك متابعة العمل دون اتصال بعد التفعيل.",
+                        size=12,
+                        color=Colors.TEXT_MUTED,
+                    ),
                     ft.Row(
                         [
-                            ft.Text("سيرفر التفعيل ومعرّف الجهاز (بيانات خاصة)", size=11, color=Colors.TEXT_SECONDARY),
+                            ft.Text("معرّف الجهاز (بيانات خاصة)", size=11, color=Colors.TEXT_SECONDARY),
                             license_reveal_button,
                         ],
                         spacing=4,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    license_server,
                     license_device,
                     ft.ResponsiveRow(
                         [

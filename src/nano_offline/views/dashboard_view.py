@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -1030,8 +1031,15 @@ class DashboardCenter:
                     msg += " (مع تسوية)"
             self._notify(msg, kind="success", sound_kind="save")
             if print_after.value:
-                _print_close_report(result)
-            self.show_center()
+                async def print_after_close():
+                    await asyncio.sleep(0.12)
+                    _print_close_report(result)
+
+                self.page.run_task(print_after_close)
+            if self.on_navigate:
+                self.on_navigate("dashboard")
+            else:
+                self.show_center()
 
         last_line = ""
         if last:
@@ -1060,6 +1068,61 @@ class DashboardCenter:
             save_icon=ft.Icons.LOCK_CLOCK_OUTLINED,
         )
         self.page.open(sheet)
+
+    def day_close_card(self) -> ft.Container:
+        """A dashboard shortcut that reflects the current cash-close state."""
+        book_cash = self.ctx.cash_day_close.book_cash()
+        last_close = self.ctx.cash_day_close.last_close()
+        closed_today = bool(last_close and last_close.get("date") == date.today().isoformat())
+        if closed_today:
+            closed_at = str(last_close.get("closed_at") or "")
+            close_time = closed_at.rsplit("T", 1)[-1][:5] if "T" in closed_at else ""
+            status = f"آخر إغلاق اليوم: {close_time}" if close_time else "تم تسجيل إغلاق اليوم"
+            action_label = "تحديث الإغلاق"
+        else:
+            status = "راجع النقد الفعلي قبل إنهاء اليوم"
+            action_label = "إغلاق الصندوق"
+        return ft.Container(
+            ft.Row(
+                [
+                    ft.Container(
+                        ft.Icon(ft.Icons.LOCK_CLOCK_OUTLINED, size=22, color=Colors.PRIMARY),
+                        width=48,
+                        height=48,
+                        alignment=ft.alignment.center,
+                        bgcolor=Colors.PRIMARY_BG,
+                        border_radius=Radius.MD,
+                    ),
+                    ft.Column(
+                        [
+                            ft.Text("إغلاق صندوق اليوم", size=14, weight=ft.FontWeight.BOLD),
+                            ft.Text(status, size=11, color=Colors.TEXT_SECONDARY),
+                            ft.Text(f"رصيد الدفتر: {self.money(book_cash)}", size=11, color=Colors.TEXT_MUTED),
+                            ft.Text(
+                                f"آخر عدّ: {self.money(last_close.get('counted_cash') or 0)}",
+                                size=11,
+                                color=Colors.TEXT_MUTED,
+                            ) if closed_today else ft.Container(height=0),
+                        ],
+                        spacing=3,
+                        expand=True,
+                    ),
+                    ft.FilledButton(
+                        action_label,
+                        icon=ft.Icons.ARROW_FORWARD_ROUNDED,
+                        on_click=self._open_day_close,
+                    ),
+                ],
+                spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                wrap=True,
+            ),
+            padding=14,
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.PRIMARY_BORDER if closed_today else Colors.BORDER),
+            border_radius=Radius.LG,
+            shadow=Shadow.SM,
+        )
 
     def _weekly_owner_card(self, data: dict) -> ft.Container:
         change = data.get("sales_change_pct")
@@ -1287,7 +1350,6 @@ class DashboardCenter:
                     self._action("شراء", ft.Icons.ADD_SHOPPING_CART, lambda _: self.on_open_purchase()),
                     self._action("الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED, lambda _: self.on_navigate("invoices")),
                     self._action("قائمة شراء", ft.Icons.SHOPPING_BAG_OUTLINED, lambda _: self._open_purchase_list()),
-                    self._action("إغلاق يوم", ft.Icons.LOCK_CLOCK_OUTLINED, lambda _: self._open_day_close()),
                     self._action("المواد", ft.Icons.INVENTORY_2_OUTLINED, lambda _: self.on_navigate("items")),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_AROUND,
@@ -1471,6 +1533,7 @@ class DashboardCenter:
                 kpi_header,
                 kpi_container,
                 quick_actions,
+                self.day_close_card(),
                 grid,
             ],
             spacing=14,

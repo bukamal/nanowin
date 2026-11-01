@@ -11,5 +11,5 @@ for needle in ["إنشاء المدير الأول", "تسجيل الدخول ا
     assert needle in shell, needle
 for needle in ["المستخدمون المحليون", "النسخ الاحتياطي والاسترجاع", "سجل التدقيق", "create_backup", "restore_backup"]:
     assert needle in admin, needle
-assert ("التفعيل الأونلاين فقط" in admin) or ("نفس سيرفر هوى الشام" in admin)
+assert "ترخيص كاشير" in admin
 print("phase5_admin_ui_contract_smoke_test passed")

@@ -96,6 +96,7 @@ class CommandBar(ft.Container):
 
         self._active = {"key": None}
         self._docs: dict[str, ft.Container] = {}
+        self._tab_history: list[str] = []
 
         self._actions_row = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self._actions_wrap = ft.Container(self._actions_row, visible=False)
@@ -339,20 +340,31 @@ class CommandBar(ft.Container):
         box = self._docs.pop(key, None)
         if box is None:
             return
+        was_active = self._active.get("key") == key
         try:
             self._docs_row.controls.remove(box)
         except Exception:
             pass
         self._docs_wrap.visible = bool(self._docs_row.controls)
-        if self._active.get("key") == key and self.on_close and not silent:
-            try:
-                self.on_close(key)
-            except Exception:
-                pass
+        self._tab_history = [tab for tab in self._tab_history if tab != key and tab in self._docs]
+        if was_active:
+            next_tab = self._tab_history[-1] if self._tab_history else next(reversed(self._docs), None)
+            self.set_active(next_tab)
+            if next_tab and self.on_open and not silent:
+                try:
+                    self.on_open(next_tab)
+                except Exception:
+                    pass
+            elif next_tab is None and self.on_close and not silent:
+                try:
+                    self.on_close(key)
+                except Exception:
+                    pass
         self._safe_update(self)
 
     def close_all_tabs(self) -> None:
         self._docs.clear()
+        self._tab_history.clear()
         self._docs_row.controls = []
         self._docs_wrap.visible = False
         self._safe_update(self)
@@ -367,6 +379,9 @@ class CommandBar(ft.Container):
 
     def set_active(self, key: str | None) -> None:
         self._active["key"] = key
+        if key in self._docs:
+            self._tab_history = [tab for tab in self._tab_history if tab != key]
+            self._tab_history.append(key)
         for k, box in self._docs.items():
             active = k == key
             row = box.content

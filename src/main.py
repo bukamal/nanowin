@@ -267,7 +267,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         )
 
     def open_receipt(customer_id=None, amount=None):
-        navigate("finance")
+        if not session.can("finance"):
+            notify("لا تملك صلاحية المالية", kind="error")
+            return
         seed = {"voucher_type": "receipt"}
         if customer_id is not None:
             try:
@@ -276,11 +278,16 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 pass
         if amount is not None:
             seed["amount"] = amount
-        finance_center.show_vouchers()
-        finance_center.show_voucher_dialog(voucher_type="receipt", initial_data=seed)
+        finance_center.show_voucher_dialog(
+            voucher_type="receipt",
+            initial_data=seed,
+            refresh_vouchers=router.current == "finance" and finance_center.is_vouchers_view,
+        )
 
     def open_supplier_payment(supplier_id=None, amount=None):
-        navigate("finance")
+        if not session.can("finance"):
+            notify("لا تملك صلاحية المالية", kind="error")
+            return
         seed = {"voucher_type": "payment"}
         if supplier_id is not None:
             try:
@@ -289,8 +296,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 pass
         if amount is not None:
             seed["amount"] = amount
-        finance_center.show_vouchers()
-        finance_center.show_voucher_dialog(voucher_type="payment", initial_data=seed)
+        finance_center.show_voucher_dialog(
+            voucher_type="payment",
+            initial_data=seed,
+            refresh_vouchers=router.current == "finance" and finance_center.is_vouchers_view,
+        )
 
     def open_admin_section(section: str = "backup"):
         navigate("admin")
@@ -592,25 +602,38 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         except Exception:
             _logo = ""
         hero_logo = (
-            ft.Image(src_base64=_logo.split(",", 1)[1], width=72, height=72, fit=ft.ImageFit.CONTAIN)
+            ft.Image(src_base64=_logo.split(",", 1)[1], width=112, height=112, fit=ft.ImageFit.CONTAIN)
             if _logo and "," in _logo
-            else ft.Image(src="icon.png", width=72, height=72, fit=ft.ImageFit.CONTAIN)
+            else ft.Image(src="icon.png", width=112, height=112, fit=ft.ImageFit.CONTAIN)
         )
         company_card = ft.Container(
             ft.Column(
                 [
                     ft.Container(
                         hero_logo,
-                        width=96,
-                        height=96,
+                        width=136,
+                        height=136,
                         alignment=ft.alignment.center,
                         bgcolor=Colors.WHITE,
-                        border_radius=22,
+                        border_radius=28,
                         border=ft.border.all(1, Colors.BORDER),
                         shadow=Shadow.SM,
                     ),
                     ft.Text(company_name, size=18, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY, text_align=ft.TextAlign.CENTER),
-                    ft.Text(branding.APP_TAGLINE, size=11, color=Colors.TEXT_SECONDARY, text_align=ft.TextAlign.CENTER),
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.POINT_OF_SALE_OUTLINED, size=14, color=Colors.PRIMARY),
+                                ft.Text(branding.APP_TAGLINE, size=10, color=Colors.PRIMARY_DARK, text_align=ft.TextAlign.CENTER),
+                            ],
+                            spacing=6,
+                            tight=True,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                        bgcolor=Colors.PRIMARY_BG,
+                        border_radius=20,
+                    ),
                 ],
                 spacing=8,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -658,6 +681,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             [
                 ft.ResponsiveRow(tiles, spacing=12, run_spacing=12),
                 quick_inquiry,
+                dashboard_center.day_close_card(),
                 ft.Text(
                     "اختصارات فقط — يمكنك التبديل إلى العرض الكلاسيكي من شريط الحالة بالأسفل.",
                     size=11,
@@ -913,14 +937,13 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
             ]))
         if session.can("finance"):
-            out.append(RibbonMenu("vouchers", "السندات", ft.Icons.PAYMENTS_OUTLINED, [
-                ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
-                ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
-            ]))
             out.append(RibbonMenu("finance", "المالية", icon_map["finance"], [
                 "عام",
                 ("فتح المالية", icon_map["finance"], lambda: navigate("finance")),
                 ("دفتر اليومية", ft.Icons.MENU_BOOK_OUTLINED, lambda: navigate("finance")),
+                "السندات",
+                ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
+                ("سند دفع", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
                 "الحسابات",
                 ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("customer")),
             ]))
@@ -1401,6 +1424,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             return
         if getattr(e, "ctrl", False) and norm == "k":
             open_command_palette()
+            return
+        if norm in {"escape", "esc"}:
+            if any(bool(getattr(control, "open", False)) for control in getattr(page, "overlay", ())):
+                return
+            navigate("dashboard")
 
     # Expose the palette to the DataGrid (it reads this off the page so its
     # own key handler can honour Ctrl+K without importing the shell).

@@ -13,7 +13,7 @@ from nano_offline.core.theme import Colors, Radius, Shadow, STATUS_STYLES as _ST
 
 
 class ActivationGate:
-    """First-run/invalid-license gate using the Hawaa Al-Sham activation server."""
+    """First-run and invalid-license gate for Cashir."""
 
     def __init__(self, page: ft.Page, ctx, *, on_success):
         self.page = page

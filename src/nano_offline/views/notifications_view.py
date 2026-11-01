@@ -189,7 +189,15 @@ class NotificationCenter:
         sheet = new_form_sheet()
         state = {"filter": "all"}
         chip_refs: dict[str, ft.Container] = {}
-        list_column = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, height=420)
+        page_width = int(self.page.width or 420)
+        panel_width = max(280, min(1120, page_width - 32))
+        panel_height = max(
+            260,
+            min(560, int((self.page.height or 760) * (0.62 if page_width >= 800 else 0.34))),
+        )
+        sheet.size_constraints = ft.BoxConstraints(min_width=panel_width, max_width=panel_width)
+        decision_column = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, height=panel_height)
+        list_column = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, height=panel_height)
         count_text = ft.Text("", size=11, color=Colors.TEXT_FAINT)
 
         def close(_=None):
@@ -251,11 +259,10 @@ class NotificationCenter:
                 chip.content.color = Colors.WHITE if active else Colors.TEXT_MUTED
             rows = filtered_rows(filter_key)
             count_text.value = f"{len(rows)} تنبيه" if filter_key != "all" else f"{len(all_rows)} تنبيه"
-            controls: list[ft.Control] = []
+            decision_controls: list[ft.Control] = []
             if filter_key == "all" and decisions:
-                controls.append(ft.Text("قرارات مقترحة", size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY))
                 for d in decisions[:5]:
-                    controls.append(
+                    decision_controls.append(
                         ft.Container(
                             ft.Row(
                                 [
@@ -279,8 +286,20 @@ class NotificationCenter:
                             ink=True,
                         )
                     )
-                controls.append(ft.Divider(height=8, color=Colors.BORDER))
-                controls.append(ft.Text("سجل التنبيهات", size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY))
+            decision_column.controls = decision_controls or [
+                ft.Container(
+                    ft.Text(
+                        "تظهر القرارات المقترحة عند اختيار «الكل»." if filter_key != "all" else "لا توجد قرارات مقترحة الآن.",
+                        size=11,
+                        color=Colors.TEXT_FAINT,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    alignment=ft.alignment.center,
+                    padding=16,
+                )
+            ]
+            decision_panel.visible = filter_key == "all" and bool(decisions)
+            controls: list[ft.Control] = []
             if not rows:
                 controls.append(
                     ft.Container(
@@ -330,6 +349,31 @@ class NotificationCenter:
 
         filter_row = ft.Row([make_chip(k, l) for k, l in _FILTERS], spacing=6)
 
+        decision_panel = ft.Container(
+            ft.Column(
+                [
+                    ft.Text("قرارات مقترحة", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    decision_column,
+                ],
+                spacing=8,
+            ),
+            padding=12,
+            bgcolor=Colors.BACKGROUND,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.LG,
+            col={"xs": 12, "md": 5},
+        )
+        alerts_panel = ft.Container(
+            ft.Column(
+                [
+                    ft.Text("سجل التنبيهات", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    list_column,
+                ],
+                spacing=8,
+            ),
+            col={"xs": 12, "md": 7},
+        )
+        panels = ft.ResponsiveRow([decision_panel, alerts_panel], spacing=12, run_spacing=12, rtl=True)
         body = ft.Column(
             [
                 ft.Row(
@@ -343,9 +387,9 @@ class NotificationCenter:
                 ),
                 ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10),
                 ft.Row([filter_row, count_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                list_column,
+                panels,
             ],
-            spacing=14, tight=True,
+            spacing=14, tight=True, scroll=ft.ScrollMode.AUTO,
         )
         sheet.content = ft.Container(
             body,
@@ -776,7 +820,7 @@ class NotificationCenter:
             padding=14, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.LG, shadow=Shadow.SM,
         )
 
-        cards = [
+        internal_cards = [
             rule_card("receivables", *_RULE_META[0][1:], receivables_extra),
             rule_card("low_stock", *_RULE_META[1][1:], low_stock_extra),
             rule_card("backup", *_RULE_META[2][1:], backup_extra),
@@ -789,12 +833,48 @@ class NotificationCenter:
             # this hour; the Windows open-app refresh is a fixed 5-minute
             # loop, so showing the field there would imply an effect it
             # does not have. The value is still loaded/saved untouched.
-            cards.append(daily_hour_card)
-        cards += [
+            internal_cards.append(daily_hour_card)
+
+        def settings_section(title: str, icon: str) -> ft.Control:
+            return ft.Row(
+                [
+                    ft.Container(
+                        ft.Icon(icon, size=17, color=Colors.PRIMARY),
+                        width=34,
+                        height=34,
+                        alignment=ft.alignment.center,
+                        bgcolor=Colors.PRIMARY_BG,
+                        border_radius=Radius.MD,
+                    ),
+                    ft.Text(title, size=15, weight=ft.FontWeight.BOLD),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+        def card_grid(items: list[ft.Control], *, columns: int = 6) -> ft.ResponsiveRow:
+            return ft.ResponsiveRow(
+                [
+                    ft.Container(card, col={"xs": 12, "md": columns})
+                    for card in items
+                ],
+                spacing=12,
+                run_spacing=12,
+                rtl=True,
+            )
+
+        settings_cards: list[ft.Control] = [
+            ft.Text(
+                "كل تنبيه يعتمد على بياناتك الحالية مباشرة (الفواتير، المخزون، الترخيص). "
+                "الإرسال الخارجي اختياري ولا يتصل بالإنترنت إلا عند تفعيله.",
+                size=11,
+                color=Colors.TEXT_SECONDARY,
+            ),
+            settings_section("قواعد التنبيه الداخلي", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
+            card_grid(internal_cards),
+            settings_section("قنوات الإرسال الخارجية", ft.Icons.CLOUD_OUTLINED),
             ext_header,
-            telegram_card,
-            email_card,
-            webhook_card,
+            card_grid([telegram_card, email_card, webhook_card]),
             routing_card,
             test_notification_card,
         ]
@@ -849,11 +929,7 @@ class NotificationCenter:
 
         self.content.content = ft.Column(
             [
-                ft.Text(
-                    "كل تنبيه يعتمد على بياناتك الحالية مباشرة (الفواتير، المخزون، الترخيص). الإرسال الخارجي (تيليغرام/بريد/Webhook) اختياري ويتصل بالإنترنت فقط عند تفعيله.",
-                    size=11, color=Colors.TEXT_SECONDARY,
-                ),
-                *cards,
+                *settings_cards,
                 ft.FilledButton("حفظ الإعدادات", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
             ],
             spacing=12, scroll=ft.ScrollMode.AUTO, expand=True,
