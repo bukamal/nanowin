@@ -25,6 +25,9 @@ def test_thermal_profile_overrides_document_page_size_and_width():
     assert "width: 56mm !important" in result
     assert result.index('id="nano-print-profile"') < result.lower().index("</head>")
     assert ".totals-wrap { width: 100% !important" in result
+    assert "table th, table td { text-align: center !important; }" in result
+    assert ".money-wrap {\n  display: inline-flex !important; flex-direction: column !important;" in result
+    assert ".money-wrap .amt, .money-wrap .sym { white-space: nowrap !important; }" in result
     # The injected style block must be closed: an unclosed <style> makes the
     # browser treat the rest of the document as CSS and print a blank page
     # (barcode labels worked only because they skip this wrapper).
@@ -41,6 +44,7 @@ def test_a4_profile_overrides_preexisting_thermal_template():
 
     assert "@page { size: A4; margin: 12mm; }" in result
     assert "max-width: 100% !important" in result
+    assert "table th, table td { text-align: center !important; }" in result
     assert result.count("<style") == result.count("</style>")
 
 

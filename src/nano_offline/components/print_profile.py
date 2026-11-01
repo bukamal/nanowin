@@ -376,6 +376,15 @@ body {{ color: #000 !important; font-size: 11px !important; line-height: 1.5 !im
 .metric strong {{ color: #000 !important; }}
 table {{ width: 100% !important; table-layout: fixed !important; font-size: 10px !important; }}
 th, td {{ padding: 5px 4px !important; overflow-wrap: anywhere !important; }}
+table th, table td {{ text-align: center !important; }}
+.money {{ white-space: normal !important; text-align: center !important; }}
+.money-wrap {{
+  display: inline-flex !important; flex-direction: column !important;
+  align-items: center !important; gap: 0 !important;
+  max-width: 100% !important; white-space: normal !important;
+}}
+.money-wrap .amt, .money-wrap .sym {{ white-space: nowrap !important; }}
+.money-wrap .sym {{ font-size: 9px !important; line-height: 1.15 !important; }}
 .inv-table .item-cell {{ font-size: 10px !important; color: #000 !important; }}
 .inv-table .unit, .inv-table .equiv {{ font-size: 9px !important; color: #111 !important; }}
 .totals-wrap {{ width: 100% !important; margin: 0 !important; }}
@@ -448,6 +457,7 @@ tbody tr:last-child td {{ border-bottom: 1px solid #999 !important; }}
 @page { size: A4; margin: 12mm; }
 html, body { width: auto !important; min-width: 0 !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
 .sheet { width: 100% !important; max-width: 100% !important; }
+table th, table td { text-align: center !important; }
 </style>
 """
 

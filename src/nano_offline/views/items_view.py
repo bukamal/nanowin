@@ -16,7 +16,7 @@ from nano_offline.components.buttons import header_close_button, inline_icon_but
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
-from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
+from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog, preview_document
 from nano_offline.core.theme import Colors, IconSize, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import privacy
@@ -1507,6 +1507,22 @@ class ItemsCenter:
                 except Exception as exc:
                     notify(str(exc), kind="error")
 
+            async def do_preview(_):
+                if self.native_files is None:
+                    notify("المعاينة غير مهيأة في هذا البناء")
+                    return
+                try:
+                    result = await preview_document(
+                        self.native_files,
+                        build_html(),
+                        name="nano-barcode-labels",
+                        layout=layout,
+                        roll_width_mm=roll_width_mm,
+                    )
+                    notify("تم فتح المعاينة في المتصفح." if result == "browser" else "تم تجهيز معاينة PDF.")
+                except Exception as exc:
+                    notify(f"تعذرت المعاينة: {exc}", kind="error")
+
             surface_label = f"لفة حرارية {roll_width_mm} مم" if is_roll else "ورق A4"
             dialog.title = ft.Text("طباعة ملصقات الباركود")
             dialog.content = ft.Column(
@@ -1520,6 +1536,7 @@ class ItemsCenter:
             )
             dialog.actions = [
                 ft.TextButton("إلغاء", on_click=close),
+                ft.TextButton("معاينة", icon=ft.Icons.VISIBILITY_OUTLINED, on_click=do_preview),
                 ft.OutlinedButton("تصدير PDF", icon=ft.Icons.DESCRIPTION_OUTLINED, on_click=do_pdf),
                 ft.FilledButton("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=do_print),
             ]

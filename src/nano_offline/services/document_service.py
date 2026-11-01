@@ -265,6 +265,7 @@ tbody tr:last-child td {{ border-bottom:1px solid #E2E8F0; }}
   display:inline-flex; align-items:baseline; gap:3px;
   direction:rtl; unicode-bidi:isolate; white-space:nowrap; font-variant-numeric:tabular-nums;
 }}
+table th, table td {{ text-align:center; }}
 .note {{ border:1px solid #BFD5E8; background:#EEF6FC; border-radius:10px; padding:10px 12px; margin-top:14px; font-size:11.5px; break-inside:avoid; }}
 .note b {{ color:{accent_deep}; }}
 .footer {{
@@ -822,6 +823,8 @@ body {{
 }}
 .lbl-barcode svg {{ width:100%; height:auto; display:block; }}
 .lbl-price {{ font-size:14px; font-weight:800; direction:ltr; color:{accent}; margin-top:2mm; }}
+.lbl-price .money-wrap {{ display:flex; flex-direction:column; align-items:center; gap:0; white-space:normal; }}
+.lbl-price .money-wrap .amt, .lbl-price .money-wrap .sym {{ white-space:nowrap; }}
 .lbl-price-row {{ display:flex; align-items:center; justify-content:center; gap:6px; margin-top:2mm; }}
 .lbl-price-qr {{ line-height:0; }}
 </style>

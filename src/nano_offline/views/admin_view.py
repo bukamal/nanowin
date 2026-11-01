@@ -76,6 +76,18 @@ class AdminCenter:
         )
         self.page.open(error_dialog)
 
+    @staticmethod
+    def _settings_columns(controls: list[ft.Control]) -> ft.ResponsiveRow:
+        full_width_types = (ft.Text, ft.Divider, ft.ResponsiveRow, ft.Column, ft.Container)
+        columns = [
+            ft.Container(
+                content=control,
+                col={"xs": 12, "md": 12 if isinstance(control, full_width_types) else 6},
+            )
+            for control in controls
+        ]
+        return ft.ResponsiveRow(columns, spacing=12, run_spacing=10, rtl=True)
+
     def _section(self, title: str, controls: list[ft.Control]) -> ft.Container:
         section_icons = (
             ("المظهر", ft.Icons.DARK_MODE_OUTLINED),
@@ -111,7 +123,7 @@ class AdminCenter:
                         spacing=10,
                     ),
                     ft.Divider(height=1, color=Colors.BORDER_ALT),
-                    *controls,
+                    self._settings_columns(controls),
                 ],
                 spacing=10,
             ),

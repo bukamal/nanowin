@@ -46,6 +46,31 @@ def test_invoice_print_defaults_to_clean_layout(tmp_path):
     assert "المتبقي" not in body
 
 
+def test_invoice_shell_centers_table_headers_and_cells(tmp_path):
+    db = Database(tmp_path / "centered-print.db")
+    db.initialize()
+    invoices = InvoiceService(db)
+    html = DocumentService(db, invoices, StatementService(db))._shell(
+        "فاتورة", "فاتورة بيع", "<table><thead><tr><th>السعر</th></tr></thead><tbody><tr><td>10</td></tr></tbody></table>"
+    )
+
+    assert "table th, table td { text-align:center; }" in html
+
+
+def test_thermal_barcode_labels_stack_currency_symbol(tmp_path):
+    db = Database(tmp_path / "thermal-label.db")
+    db.initialize()
+    invoices = InvoiceService(db)
+    html = DocumentService(db, invoices, StatementService(db)).barcode_labels_html(
+        [{"name": "مادة", "barcode": "123456", "price": 1234}],
+        layout="roll",
+        roll_width_mm=58,
+    )
+
+    assert ".lbl-price .money-wrap { display:flex; flex-direction:column;" in html
+    assert ".lbl-price .money-wrap .amt, .lbl-price .money-wrap .sym { white-space:nowrap; }" in html
+
+
 def test_invoice_print_optional_blocks_follow_admin_settings(tmp_path):
     body = _render_invoice(
         tmp_path,
