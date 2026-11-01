@@ -532,6 +532,23 @@ class ItemRepository(Offloadable):
                     raise ValueError("هذا الباركود مستخدم بالفعل لمادة أخرى") from exc
                 raise
             self._replace_units(conn, item_id, base_unit_id, item_units or [])
+            # Keep the opening-cost baseline (which rebuild_inventory uses to
+            # value the opening stock) in sync with a manually edited purchase
+            # price, otherwise the next rebuild would revert purchase_price /
+            # average_cost to the ORIGINAL opening cost. Real purchase
+            # invoices remain authoritative (their weighted average wins).
+            opening_qty = float(old["opening_quantity"] or 0)
+            has_purchases = conn.execute(
+                "SELECT 1 FROM invoice_lines il JOIN invoices inv ON inv.id=il.invoice_id "
+                "WHERE il.item_id=? AND inv.type='purchase' LIMIT 1",
+                (item_id,),
+            ).fetchone()
+            if not has_purchases and opening_qty > 0:
+                new_cost = money.quantized(purchase_price or 0)
+                conn.execute(
+                    "UPDATE items SET opening_unit_cost=?,average_cost=? WHERE id=?",
+                    (new_cost, new_cost, item_id),
+                )
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','item',?,?)",
                 (item_id, name),

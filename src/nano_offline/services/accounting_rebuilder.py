@@ -34,7 +34,12 @@ class AccountingRebuilder:
             avg = float(item["opening_unit_cost"] or 0) if qty > EPSILON else 0.0
             state[int(item["id"])] = {"qty": qty, "avg": avg}
             conn.execute(
-                "UPDATE items SET quantity=?,average_cost=?,purchase_price=CASE WHEN ? > 0 THEN ? ELSE purchase_price END WHERE id=?",
+                # Preserve a manually set purchase_price (only seed it from the
+                # opening cost when none was stored); otherwise a rebuild would
+                # revert the user's edit back to the original opening cost.
+                "UPDATE items SET quantity=?,average_cost=?,"
+                "purchase_price=CASE WHEN purchase_price > 0 THEN purchase_price WHEN ? > 0 THEN ? ELSE purchase_price END "
+                "WHERE id=?",
                 (qty, avg, qty, avg, item["id"]),
             )
 
