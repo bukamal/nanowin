@@ -139,10 +139,41 @@ jobs:
         # newer VS alone does NOT satisfy it. The windows-2025-vs2026 runner
         # image ships no Visual Studio at all, so install the 2019 Build
         # Tools plus the C++ workload (MSVC v142 + Windows SDK) here, before
-        # flet build needs them.
+        # flet build needs them. Chocolatey can report success when its feed
+        # times out resolving the workload package, so install it separately
+        # and verify the compiler component with vswhere before building.
         shell: pwsh
         run: |
-          choco install visualstudio2019buildtools visualstudio2019-workload-vctools -y --no-progress
+          choco install visualstudio2019buildtools -y --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            throw "Chocolatey could not install Visual Studio 2019 Build Tools"
+          }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe is missing after installing Visual Studio 2019 Build Tools"
+          }
+
+          $vcToolsReady = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Installing Visual Studio 2019 C++ tools (attempt $attempt/3)"
+            choco install visualstudio2019-workload-vctools -y --no-progress
+            $installExitCode = $LASTEXITCODE
+
+            $installationPath = & $vswhere -products * -version "[16.0,17.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if ($LASTEXITCODE -eq 0 -and $installationPath) {
+              Write-Host "Visual Studio 2019 C++ tools are installed at $installationPath"
+              $vcToolsReady = $true
+              break
+            }
+
+            Write-Warning "Visual Studio C++ tools are still unavailable (Chocolatey exit code: $installExitCode)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+          }
+
+          if (-not $vcToolsReady) {
+            throw "Visual Studio 2019 C++ tools were not installed; refusing to run a build that will fail in CMake"
+          }
 
       - name: Build Windows EXE
         # NOTE: the pipe to Tee-Object masks flet's exit code (the step would
