@@ -846,7 +846,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ] + invoice_actions
         # "فاتورة بيع/شراء" already open the single-table sheet, so there is no
         # separate "شاملة (جدول)" entry (it was a duplicate of فاتورة بيع).
-        if key in ("invoices", "sale", "purchase", "items", "pos"):
+        if key in ("invoices", "sale", "purchase", "pos"):
             return invoice_actions
         if key == "finance":
             return [
