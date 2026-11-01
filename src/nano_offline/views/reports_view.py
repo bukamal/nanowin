@@ -7,6 +7,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SmartDateField, empty_state, metric_row
+from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import privacy
@@ -50,7 +51,7 @@ def _badge_bg(accent: str) -> str:
 
 
 class ReportsCenter:
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_statement=None, on_open_invoice=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_statement=None, on_open_invoice=None, on_context_actions=None):
         self.page = page
         self.ctx = ctx
         self.content = content
@@ -58,6 +59,9 @@ class ReportsCenter:
         self.on_title_change = on_title_change
         self.on_open_statement = on_open_statement
         self.on_open_invoice = on_open_invoice
+        # Publishes the screen's primary actions into the shell's command
+        # strip (under the tab), like the items/parties screens.
+        self.on_context_actions = on_context_actions
         self._report_key: str = "pnl"
         self._refresh_generation = 0
         self.report_chips: dict[str, ft.Container] = {}
@@ -347,12 +351,8 @@ class ReportsCenter:
                     report_picker,
                     ft.ResponsiveRow(
                         [
-                            ft.Container(self.date_from, col={"xs": 6, "md": 4}),
-                            ft.Container(self.date_to, col={"xs": 6, "md": 4}),
-                            ft.Container(
-                                ft.FilledButton("تحديث", icon=ft.Icons.REFRESH, on_click=self._refresh),
-                                col={"xs": 12, "md": 4},
-                            ),
+                            ft.Container(self.date_from, col={"xs": 6, "md": 6}),
+                            ft.Container(self.date_to, col={"xs": 6, "md": 6}),
                         ],
                         spacing=10, run_spacing=10,
                     ),
@@ -364,19 +364,15 @@ class ReportsCenter:
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
 
-        # Sticky footer: طباعة/مشاركة PDF stay one tap away regardless of
-        # scroll position, same as the primary action bars on other screens.
-        # Rounded top corners + equal-width buttons read as a deliberate
-        # floating action bar instead of a plain strip butting against the
-        # last report card.
-        bottom_bar = ft.Container(
-            self.export_actions,
-            padding=ft.padding.only(left=18, right=18, top=12, bottom=12),
-            bgcolor=Colors.WHITE,
-            border_radius=ft.border_radius.only(top_left=20, top_right=20),
-            border=ft.border.all(1, Colors.BORDER),
-            shadow=Shadow.LG,
-        )
+        # Primary actions (تحديث / طباعة / مشاركة PDF) live in the shell's
+        # command strip under the tab, consistent with every other screen --
+        # not in an in-content footer.
+        if self.on_context_actions is not None:
+            self.on_context_actions([
+                RibbonAction("refresh", "تحديث", ft.Icons.REFRESH, on_click=lambda _=None: self._refresh()),
+                RibbonAction("print", "طباعة التقرير", ft.Icons.PRINT_OUTLINED, on_click=lambda _=None: self.page.run_task(self._print_report)),
+                RibbonAction("pdf", "مشاركة PDF", ft.Icons.PICTURE_AS_PDF_OUTLINED, on_click=lambda _=None: self.page.run_task(self._share_report_pdf)),
+            ])
 
         self.content.content = ft.Column(
             [
@@ -386,7 +382,6 @@ class ReportsCenter:
                     padding=ft.padding.only(left=18, right=18, top=14, bottom=22),
                     expand=True,
                 ),
-                bottom_bar,
             ],
             spacing=0,
             expand=True,

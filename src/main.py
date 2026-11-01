@@ -213,6 +213,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     reports_center = ReportsCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_open_statement=open_statement, on_open_invoice=invoice_center.show_invoice_detail,
+        on_context_actions=lambda actions: set_context_actions(actions),
     )
     admin_center = AdminCenter(page, ctx, content, on_logout=on_logout, native_files=native_files, on_theme_changed=on_theme_changed, on_context_actions=lambda actions: set_context_actions(actions))
     party_center = PartyCenter(
@@ -222,6 +223,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         on_open_receipt=lambda customer_id=None, amount=None: open_receipt(customer_id, amount),
         on_open_payment=lambda supplier_id=None, amount=None: open_supplier_payment(supplier_id, amount),
         on_open_statement=open_statement,
+        on_context_actions=lambda actions: set_context_actions(actions),
     )
     # Lets the active view publish its own contextual ribbon actions (e.g.
     # items offers "مادة جديدة" backed by its internal editor). Guarded

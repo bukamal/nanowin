@@ -12,6 +12,7 @@ from nano_offline.core.party_reliability import grade_party
 
 from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.column_visibility import ColumnVisibility
+from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core import privacy
@@ -35,7 +36,7 @@ class PartyCenter:
     Extracted from ``main.py`` (previously the inline ``party_view`` closure).
     """
 
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_receipt=None, on_open_payment=None, on_open_statement=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_receipt=None, on_open_payment=None, on_open_statement=None, on_context_actions=None):
         self.page = page
         self.ctx = ctx
         self.content = content
@@ -44,6 +45,9 @@ class PartyCenter:
         self.on_open_receipt = on_open_receipt
         self.on_open_payment = on_open_payment
         self.on_open_statement = on_open_statement
+        # Publishes the screen's primary actions into the shell's command
+        # strip (under the tab), like the items screen.
+        self.on_context_actions = on_context_actions
 
     def _set_header(self, title: str, subtitle: str = "") -> None:
         if self.on_title_change:
@@ -765,18 +769,19 @@ class PartyCenter:
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
         scroll_body = ft.Column([summary_row, list_switch], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True)
-        bottom_bar = ft.Container(
-            ft.FilledButton(f"إضافة {singular}", icon=ft.Icons.ADD, on_click=lambda _: open_editor(), expand=True),
-            padding=ft.padding.only(left=18, right=18, top=10, bottom=10),
-            bgcolor=Colors.WHITE,
-            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
-            shadow=ft.BoxShadow(blur_radius=16, color=Colors.BORDER, offset=ft.Offset(0, -4)),
-        )
+        # The primary "add" action lives in the shell's command strip (under
+        # the tab), consistent with every other screen -- not a bottom bar.
+        if self.on_context_actions is not None:
+            self.on_context_actions([
+                RibbonAction(
+                    "add_party", f"إضافة {singular}", ft.Icons.ADD, accent=True,
+                    on_click=lambda _=None: open_editor(),
+                ),
+            ])
         content.content = ft.Column(
             [
                 sticky_top,
                 ft.Container(scroll_body, padding=ft.padding.only(left=18, right=18, top=14, bottom=10), expand=True),
-                bottom_bar,
             ],
             spacing=0,
             expand=True,
