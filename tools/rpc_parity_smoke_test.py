@@ -68,6 +68,8 @@ with tempdir(prefix="qeid-parity-") as td:
         assert isinstance(remote.expenses.list_categories(), list)
         assert isinstance(remote.notifications.get_config(), dict)
         assert isinstance(remote.notifications.unread_summary(), dict)
+        assert isinstance(remote.dashboard.today_summary(), dict)
+        assert isinstance(remote.cash_day_close.book_cash(), (int, float))
         assert remote.cash_day_close.today_cash_movement() is not None
         assert isinstance(remote.external_notifications.get_config(), dict)
 

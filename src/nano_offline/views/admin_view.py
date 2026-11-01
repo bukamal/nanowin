@@ -2734,7 +2734,7 @@ class AdminCenter:
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         padding=12,
-                        bgcolor=Colors.BACKGROUND,
+                        bgcolor=Colors.WHITE,
                         border=ft.border.all(1, Colors.BORDER),
                         border_radius=Radius.LG,
                     ),

@@ -32,7 +32,7 @@ from nano_offline.components.command_bar import CommandBar, RibbonAction, Ribbon
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
 from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
@@ -361,12 +361,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     label_map = {k: v[0] for k, v in page_meta.items()}
     allowed_keys = [k for k in actions if session.can(k)]
 
-    # ---------------- home styles: classic dashboard vs module board --------
+    # ---------------- home styles: classic, module board, or store ---------
     _home_style_key = "ui.home_style"
+    _HOME_STYLES = ("classic", "board", "store")
 
     def _home_style() -> str:
         try:
-            return "board" if str(ctx.settings.get(_home_style_key, "classic")).strip() == "board" else "classic"
+            value = str(ctx.settings.get(_home_style_key, "classic")).strip()
+            return value if value in _HOME_STYLES else "classic"
         except Exception:
             return "classic"
 
@@ -707,8 +709,287 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             expand=True,
         )
 
+    def _render_store_home() -> None:
+        from nano_offline.core import business_profile as _business_profile
+        from nano_offline.core import currency as _currency
+
+        summary = ctx.dashboard.summary()
+        today_summary = ctx.dashboard.today_summary()
+        business_type = _business_profile.business_type(ctx.settings)
+        store_name = str(ctx.settings.get("company_name", "") or "").strip() or branding.APP_NAME_AR
+        labels = {
+            "retail": {
+                "subtitle": "مساحة متجرك — أرففك ومبيعاتك وإدارة نشاطك في مكان واحد",
+                "stock": "الأرفف والمخزون",
+                "sales": "منطقة البيع",
+                "supply": "منطقة التوريد",
+            },
+            "wholesale": {
+                "subtitle": "مركز عمليات الجملة — متابعة البيع والمخزون والتوريد",
+                "stock": "المستودع والمخزون",
+                "sales": "مبيعات الجملة",
+                "supply": "التوريد والاستلام",
+            },
+            "restaurant": {
+                "subtitle": "مساحة المطعم — الطلبات والمكونات والحسابات في لوحة واحدة",
+                "stock": "المكونات والمخزون",
+                "sales": "منطقة الطلبات",
+                "supply": "التوريد والمشتريات",
+            },
+            "services": {
+                "subtitle": "مساحة الخدمات — متابعة المبيعات والمواد والحسابات",
+                "stock": "المواد والخدمات",
+                "sales": "منطقة تقديم الخدمة",
+                "supply": "المشتريات",
+            },
+        }.get(business_type, {})
+        if not labels:
+            labels = {
+                "subtitle": "مساحة نشاطك — مبيعاتك ومخزونك وإدارتك في مكان واحد",
+                "stock": "المخزون",
+                "sales": "المبيعات",
+                "supply": "المشتريات",
+            }
+
+        def money(value) -> str:
+            return _currency.format_amount(float(value or 0), ctx.settings)
+
+        set_header("مساحة المتجر", labels["subtitle"])
+        sales_today = float(today_summary.get("total") or 0)
+        close_balance = ctx.cash_day_close.book_cash()
+        zones: list[ft.Control] = []
+
+        def zone(
+            *,
+            icon,
+            title: str,
+            description: str,
+            metric_label: str,
+            metric_value: str,
+            color: str,
+            on_click,
+            featured: bool = False,
+        ) -> ft.Control:
+            return ft.Container(
+                ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Container(
+                                    ft.Icon(icon, size=22, color=Colors.WHITE if featured else color),
+                                    width=46,
+                                    height=46,
+                                    alignment=ft.alignment.center,
+                                    bgcolor=color if featured else Colors.PRIMARY_BG,
+                                    border_radius=14,
+                                ),
+                                ft.Column(
+                                    [
+                                        ft.Text(title, size=14, weight=ft.FontWeight.BOLD, color=Colors.WHITE if featured else Colors.TEXT_PRIMARY),
+                                        ft.Text(description, size=10, color=Colors.WHITE if featured else Colors.TEXT_SECONDARY, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ],
+                                    spacing=3,
+                                    expand=True,
+                                ),
+                                ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED, size=17, color=Colors.WHITE if featured else Colors.TEXT_FAINT),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Divider(height=1, color=Colors.WHITE if featured else Colors.BORDER_ALT),
+                        ft.Row(
+                            [
+                                ft.Text(metric_label, size=10, color=Colors.WHITE if featured else Colors.TEXT_MUTED),
+                                ft.Container(expand=True),
+                                ft.Text(metric_value, size=13, weight=ft.FontWeight.BOLD, color=Colors.WHITE if featured else color),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                    ],
+                    spacing=10,
+                ),
+                padding=14,
+                bgcolor=color if featured else Colors.WHITE,
+                border=ft.border.all(1, color if featured else Colors.BORDER),
+                border_radius=Radius.LG,
+                shadow=Shadow.MD if featured else Shadow.SM,
+                ink=True,
+                on_click=on_click,
+                col={"xs": 12, "sm": 6, "lg": 4},
+            )
+
+        if session.can("invoices"):
+            zones.append(
+                zone(
+                    icon=ft.Icons.POINT_OF_SALE_OUTLINED,
+                    title=labels["sales"],
+                    description="ابدأ عملية بيع أو افتح شاشة الكاشير",
+                    metric_label="مبيعات اليوم",
+                    metric_value=money(sales_today),
+                    color=Colors.PRIMARY,
+                    on_click=lambda _e=None: open_pos(),
+                    featured=True,
+                )
+            )
+        if session.can("items"):
+            zones.append(
+                zone(
+                    icon=ft.Icons.INVENTORY_2_OUTLINED,
+                    title=labels["stock"],
+                    description="الأصناف والكميات وحالة المخزون",
+                    metric_label="قيمة المخزون",
+                    metric_value=money(summary.get("inventory_value")),
+                    color=Colors.PURPLE,
+                    on_click=lambda _e=None: navigate("items"),
+                )
+            )
+        if session.can("invoices"):
+            zones.append(
+                zone(
+                    icon=ft.Icons.LOCAL_SHIPPING_OUTLINED,
+                    title=labels["supply"],
+                    description="فواتير الشراء ومتابعة التوريد",
+                    metric_label="إجمالي المشتريات",
+                    metric_value=money(summary.get("purchases")),
+                    color=Colors.ORANGE,
+                    on_click=lambda _e=None: navigate("invoices", initial_type="purchase"),
+                )
+            )
+        if session.can("finance"):
+            zones.append(
+                zone(
+                    icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED,
+                    title="الصندوق والمالية",
+                    description="الأرصدة والسندات والحركات المالية",
+                    metric_label="رصيد الصندوق",
+                    metric_value=money(close_balance),
+                    color=Colors.SUCCESS_DARK,
+                    on_click=lambda _e=None: navigate("finance"),
+                )
+            )
+        if session.can("customers"):
+            zones.append(
+                zone(
+                    icon=ft.Icons.PEOPLE_OUTLINE,
+                    title="العملاء",
+                    description="الحسابات والذمم ومتابعة العملاء",
+                    metric_label="ذمم العملاء",
+                    metric_value=money(summary.get("receivables")),
+                    color=Colors.PURPLE_LIGHT,
+                    on_click=lambda _e=None: navigate("customers"),
+                )
+            )
+        if session.can("reports"):
+            zones.append(
+                zone(
+                    icon=ft.Icons.QUERY_STATS_OUTLINED,
+                    title="مركز الرؤية",
+                    description="تقارير الأداء والمؤشرات التشغيلية",
+                    metric_label="إجمالي المبيعات",
+                    metric_value=money(summary.get("sales")),
+                    color=Colors.PRIMARY_DARK,
+                    on_click=lambda _e=None: navigate("reports"),
+                )
+            )
+
+        floor = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Column(
+                                [
+                                    ft.Text("مخطط النشاط", size=13, weight=ft.FontWeight.BOLD),
+                                    ft.Text("اختر منطقة للانتقال مباشرة إلى أدواتها", size=10, color=Colors.TEXT_SECONDARY),
+                                ],
+                                spacing=2,
+                                expand=True,
+                            ),
+                            ft.Container(
+                                ft.Row(
+                                    [
+                                        ft.Icon(ft.Icons.CIRCLE, size=9, color=Colors.SUCCESS),
+                                        ft.Text("متصل ببيانات النشاط", size=10, color=Colors.TEXT_SECONDARY),
+                                    ],
+                                    spacing=5,
+                                    tight=True,
+                                ),
+                                padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                                bgcolor=Colors.WHITE,
+                                border=ft.border.all(1, Colors.BORDER),
+                                border_radius=Radius.MD,
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        wrap=True,
+                    ),
+                    ft.ResponsiveRow(zones, spacing=12, run_spacing=12, rtl=True),
+                    dashboard_center.day_close_card(),
+                ],
+                spacing=14,
+            ),
+            padding=18,
+            bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.XL,
+        )
+        hero_content = [
+            ft.Container(
+                ft.Icon(ft.Icons.STORE_MALL_DIRECTORY_OUTLINED, size=28, color=Colors.PRIMARY),
+                width=58,
+                height=58,
+                alignment=ft.alignment.center,
+                bgcolor=Colors.WHITE,
+                border_radius=Radius.LG,
+            ),
+            ft.Column(
+                [
+                    ft.Text(store_name, size=21, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
+                    ft.Text(labels["subtitle"], size=12, color=Colors.WHITE),
+                ],
+                spacing=4,
+                expand=True,
+            ),
+        ]
+        if session.can("invoices"):
+            hero_content.append(
+                ft.FilledButton(
+                    "إنشاء فاتورة بيع",
+                    icon=ft.Icons.ADD_SHOPPING_CART,
+                    on_click=lambda _e=None: open_table_invoice("sale"),
+                    style=ft.ButtonStyle(
+                        color=Colors.PRIMARY,
+                        bgcolor=Colors.WHITE,
+                    ),
+                )
+            )
+        hero = ft.Container(
+            ft.Row(
+                hero_content,
+                spacing=14,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                wrap=True,
+                rtl=True,
+            ),
+            padding=20,
+            gradient=ft.LinearGradient(
+                colors=[Colors.BRAND_START, Colors.BRAND_DEEP],
+                begin=ft.alignment.top_right,
+                end=ft.alignment.bottom_left,
+            ),
+            border_radius=Radius.XL,
+            shadow=Shadow.MD,
+        )
+        content.content = ft.Column(
+            [hero, floor],
+            spacing=16,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
     def show_home() -> None:
-        if _home_style() == "board":
+        style = _home_style()
+        if style == "board":
             try:
                 _render_module_board()
                 return
@@ -716,6 +997,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 import logging
 
                 logging.getLogger("nano.home").warning("module board failed; using classic", exc_info=True)
+        elif style == "store":
+            try:
+                _render_store_home()
+                return
+            except Exception:
+                import logging
+
+                logging.getLogger("nano.home").warning("store home failed; using classic", exc_info=True)
         dashboard_center.show_center()
 
     actions["dashboard"] = show_home
@@ -1129,19 +1418,33 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         )
         _refresh_safe()
 
-        home_label = ft.Text("عرض كلاسيكي" if _home_style() == "board" else "عرض الوحدات", size=11, color=Colors.TEXT_SECONDARY)
+        home_style_labels = {
+            "classic": "الكلاسيكية",
+            "board": "الوحدات",
+            "store": "مساحة المتجر",
+        }
+
+        def _next_home_style(style: str) -> str:
+            return _HOME_STYLES[(_HOME_STYLES.index(style) + 1) % len(_HOME_STYLES)]
+
+        home_label = ft.Text(
+            f"الرئيسية: {home_style_labels[_home_style()]}",
+            size=11,
+            color=Colors.TEXT_SECONDARY,
+        )
 
         def _toggle_home(_=None):
             try:
-                nxt = "classic" if _home_style() == "board" else "board"
+                nxt = _next_home_style(_home_style())
                 ctx.settings.set(_home_style_key, nxt)
-            except Exception:
-                nxt = "board"
-            home_label.value = "عرض كلاسيكي" if nxt == "board" else "عرض الوحدات"
+            except Exception as exc:
+                notify(f"تعذر حفظ شكل الرئيسية: {exc}", kind="error")
+                return
+            home_label.value = f"الرئيسية: {home_style_labels[nxt]}"
             try:
                 navigate("dashboard")
-            except Exception:
-                pass
+            except Exception as exc:
+                notify(f"تعذر فتح الرئيسية: {exc}", kind="error")
 
         home_btn = ft.Container(
             ft.Row(
@@ -1152,7 +1455,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             border_radius=10,
             ink=True,
             on_click=_toggle_home,
-            tooltip="تبديل شكل الرئيسية (وحدات / كلاسيكي)",
+            tooltip="التبديل بين الشاشة الكلاسيكية وشاشة الوحدات ومساحة المتجر",
         )
         return ft.Container(
             ft.Row(
