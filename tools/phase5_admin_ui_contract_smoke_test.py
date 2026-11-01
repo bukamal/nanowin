@@ -12,4 +12,6 @@ for needle in ["إنشاء المدير الأول", "تسجيل الدخول ا
 for needle in ["المستخدمون المحليون", "النسخ الاحتياطي والاسترجاع", "سجل التدقيق", "create_backup", "restore_backup"]:
     assert needle in admin, needle
 assert "ترخيص كاشير" in admin
+assert "audit_rows_view = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, height=400)" in admin
+assert "ft.DataTable(" in admin and "تحميل المزيد" in admin
 print("phase5_admin_ui_contract_smoke_test passed")

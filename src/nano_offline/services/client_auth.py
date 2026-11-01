@@ -75,8 +75,8 @@ class ClientAuth:
             "auth", "reset_password", user_id=int(user_id), new_password=str(new_password)
         )
 
-    def audit_entries(self, limit: int = 200) -> list:
-        return self._transport.call("auth", "audit_entries", limit=int(limit))
+    def audit_entries(self, limit: int = 200, offset: int = 0) -> list:
+        return self._transport.call("auth", "audit_entries", limit=int(limit), offset=int(offset))
 
     def require(self, permission: str) -> UserSession:
         session = self._session

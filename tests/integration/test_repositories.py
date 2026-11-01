@@ -94,6 +94,31 @@ def test_audit_chain_valid_after_writes(ctx, seeded):
     assert result["hashed"] >= 1
 
 
+def test_audit_entries_support_offset_pagination(ctx):
+    ctx.auth.create_user(
+        username="admin",
+        full_name="مدير",
+        password="test-password-123",
+        role="admin",
+        _bootstrap=True,
+    )
+    ctx.auth.login("admin", "test-password-123")
+    with ctx.db.transaction() as conn:
+        for index in range(5):
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,details) VALUES('create','item',?)",
+                (f"entry-{index}",),
+            )
+
+    first_page = ctx.auth.audit_entries(limit=3)
+    second_page = ctx.auth.audit_entries(limit=3, offset=3)
+
+    assert len(first_page) == 3
+    assert len(second_page) == 3
+    assert first_page[0]["id"] > first_page[-1]["id"] > second_page[0]["id"]
+    assert {row["id"] for row in first_page}.isdisjoint(row["id"] for row in second_page)
+
+
 def test_audit_chain_detects_tampering(ctx, seeded):
     supplier_id = ctx.suppliers.list()[0]["id"]
     ctx.invoices.create_invoice(

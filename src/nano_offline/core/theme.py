@@ -10,11 +10,12 @@ Usage (unchanged from before dark mode existed — this is the whole point):
 
     ft.Text("...", color=Colors.TEXT_PRIMARY)
 
-Dark mode wiring
+Theme wiring
 -----------------
 ``Colors`` and ``Shadow`` are no longer plain classes with fixed class
 attributes. ``Colors.PRIMARY`` (etc.) is resolved *at access time* against
-whichever mode is currently active (see ``set_mode``/``get_mode`` below),
+the active light/dark mode and the selected brand accent (see
+``set_mode``/``set_brand_accent`` below),
 via a metaclass ``__getattr__`` (only invoked once *normal* attribute
 lookup fails — which is why the classes below have empty bodies instead of
 the literal hex values). This means every one of the hundreds of existing
@@ -47,6 +48,75 @@ import flet as ft
 # ``core.theme_settings.resolve_effective_mode``'s job; this module only
 # ever deals in the end result, so it stays a trivial on/off switch.
 _state: dict[str, str] = {"mode": "light"}
+_DEFAULT_BRAND_ACCENT = "#0B5FCC"
+_brand_accent = _DEFAULT_BRAND_ACCENT
+BRAND_PRESETS = (
+    ("#0B5FCC", "أزرق كاشير"),
+    ("#2563EB", "أزرق ملكي"),
+    ("#0E7490", "محيطي"),
+    ("#0F766E", "تركوازي"),
+    ("#047857", "زمردي"),
+    ("#4F46E5", "نيلي"),
+    ("#7C3AED", "بنفسجي"),
+    ("#BE185D", "وردي توتي"),
+    ("#C2410C", "طوبي"),
+    ("#B45309", "كهرماني"),
+    ("#475569", "رمادي أردوازي"),
+    ("#334155", "فحمي"),
+)
+
+
+def _blend_color(color: str, target: str, amount: float) -> str:
+    source_rgb = tuple(int(color[index:index + 2], 16) for index in (1, 3, 5))
+    target_rgb = tuple(int(target[index:index + 2], 16) for index in (1, 3, 5))
+    blended = tuple(
+        round(source + (destination - source) * amount)
+        for source, destination in zip(source_rgb, target_rgb, strict=True)
+    )
+    return "#" + "".join(f"{channel:02X}" for channel in blended)
+
+
+def _brand_tokens(accent: str) -> tuple[dict[str, str], dict[str, str]]:
+    light = {
+        "PRIMARY": accent,
+        "PRIMARY_DARK": _blend_color(accent, "#000000", 0.20),
+        "PRIMARY_BG": _blend_color(accent, "#FFFFFF", 0.92),
+        "PRIMARY_BORDER": _blend_color(accent, "#FFFFFF", 0.68),
+        "BRAND_START": accent,
+        "BRAND_DEEP": _blend_color(accent, "#000000", 0.18),
+        "BRAND_CYAN": _blend_color(accent, "#FFFFFF", 0.20),
+    }
+    dark = {
+        "PRIMARY": _blend_color(accent, "#FFFFFF", 0.28),
+        "PRIMARY_DARK": _blend_color(accent, "#FFFFFF", 0.46),
+        "PRIMARY_BG": _blend_color(accent, "#000000", 0.82),
+        "PRIMARY_BORDER": _blend_color(accent, "#000000", 0.52),
+        "BRAND_START": accent,
+        "BRAND_DEEP": _blend_color(accent, "#000000", 0.18),
+        "BRAND_CYAN": _blend_color(accent, "#FFFFFF", 0.30),
+    }
+    return light, dark
+
+
+def normalize_brand_accent(color: str | None) -> str:
+    candidate = str(color or _DEFAULT_BRAND_ACCENT).strip().upper()
+    if len(candidate) == 7 and candidate.startswith("#"):
+        try:
+            int(candidate[1:], 16)
+        except ValueError:
+            return _DEFAULT_BRAND_ACCENT
+        return candidate
+    return _DEFAULT_BRAND_ACCENT
+
+
+def set_brand_accent(color: str | None) -> None:
+    """Set the shared brand color used by UI and documents."""
+    global _brand_accent
+    _brand_accent = normalize_brand_accent(color)
+
+
+def get_brand_accent() -> str:
+    return _brand_accent
 
 
 def get_mode() -> str:
@@ -189,6 +259,9 @@ assert set(_DARK) == set(_LIGHT), "dark/light token tables drifted out of sync"
 
 class _ColorsMeta(type):
     def __getattr__(cls, name: str):
+        if name in {"PRIMARY", "PRIMARY_DARK", "PRIMARY_BG", "PRIMARY_BORDER", "BRAND_START", "BRAND_DEEP", "BRAND_CYAN"}:
+            light, dark = _brand_tokens(_brand_accent)
+            return (dark if _state["mode"] == "dark" else light)[name]
         table = _DARK if _state["mode"] == "dark" else _LIGHT
         try:
             return table[name]
@@ -374,5 +447,6 @@ class LazyPalette:
 
 __all__ = [
     "Colors", "Spacing", "Radius", "IconSize", "Shadow", "SEVERITY_STYLE", "STATUS_STYLES", "LazyPalette",
+    "BRAND_PRESETS", "get_brand_accent", "set_brand_accent", "normalize_brand_accent",
     "get_mode", "set_mode", "is_dark",
 ]

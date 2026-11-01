@@ -17,7 +17,7 @@ from nano_offline.components.command_bar import RibbonAction
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import BRAND_PRESETS, Colors, Radius, Shadow, normalize_brand_accent, set_brand_accent
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import barcode_settings
@@ -738,18 +738,19 @@ class AdminCenter:
         activation_button.on_click = activate
         refresh_license()
 
-        # --- Branding: company name/currency + logo + invoice accent color.
+        # --- Branding: company name/currency + logo + shared brand accent.
         # Printed documents (invoices, statements, barcode labels) all read
         # these from the `settings` table via DocumentService._shell(), so
         # saving here changes every future printed/PDF document immediately
         # -- no restart needed.
         brand_settings = self.ctx.settings.get_all()
-        ACCENT_PALETTE = [
-            ("#0B5FCC", "أزرق كاشير"), ("#0EA5E9", "سماوي"), ("#4F46E5", "نيلي"),
-            ("#7C3AED", "بنفسجي"), ("#DB2777", "وردي"), ("#DC2626", "أحمر"),
-            ("#D97706", "كهرماني"), ("#334155", "رمادي داكن"),
-        ]
-        brand_state = {"color": brand_settings.get("invoice_color") or ACCENT_PALETTE[0][0], "logo": brand_settings.get("company_logo") or ""}
+        brand_state = {
+            "color": normalize_brand_accent(brand_settings.get("invoice_color")),
+            "logo": brand_settings.get("company_logo") or "",
+        }
+        brand_presets = list(BRAND_PRESETS)
+        if brand_state["color"].upper() not in {color for color, _label in brand_presets}:
+            brand_presets.append((brand_state["color"], "اللون المحفوظ"))
 
         company_name_field = SelectAllTextField(label="اسم الشركة/المتجر", value=brand_settings.get("company_name") or branding.DEFAULT_COMPANY_NAME)
         currency_field = SelectAllTextField(label="العملة المخزَّنة (الأساس)", value=brand_settings.get("currency") or "USD", read_only=True, tooltip="كل الأسعار تُخزَّن داخليًا بهذه العملة، ولا يمكن تغييرها من هنا")
@@ -836,28 +837,64 @@ class AdminCenter:
             content=ft.Image(src_base64=brand_state["logo"].split(",", 1)[1], fit=ft.ImageFit.CONTAIN) if brand_state["logo"] and "," in brand_state["logo"] else ft.Icon(ft.Icons.IMAGE_OUTLINED, color=Colors.TEXT_FAINT, size=28),
             width=90, height=60, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND, border=ft.border.all(1, Colors.BORDER_ALT), border_radius=10,
         )
-        swatch_boxes: dict[str, ft.Container] = {}
+        swatch_boxes: dict[str, tuple[ft.Container, ft.Container, ft.Text]] = {}
+        brand_preview_name = ft.Text("", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY)
+        brand_preview_primary = ft.Container(
+            ft.Text("إجراء أساسي", size=11, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
+            padding=ft.padding.symmetric(horizontal=14, vertical=8),
+            border_radius=Radius.MD,
+        )
+        brand_preview_selected = ft.Container(
+            ft.Text("عنصر محدد", size=11, weight=ft.FontWeight.W_600),
+            padding=ft.padding.symmetric(horizontal=12, vertical=7),
+            border_radius=Radius.MD,
+        )
+
+        def update_brand_preview():
+            selected_name = next(
+                (label for color, label in brand_presets if color.upper() == brand_state["color"].upper()),
+                "لون مخصص",
+            )
+            brand_preview_name.value = f"معاينة الهوية — {selected_name}"
+            brand_preview_primary.bgcolor = brand_state["color"]
+            brand_preview_selected.bgcolor = Colors.PRIMARY_BG
+            brand_preview_selected.border = ft.border.all(1, Colors.PRIMARY_BORDER)
+            brand_preview_selected.content.color = Colors.PRIMARY_DARK
 
         def update_swatch_styles():
-            for hexcode, box in swatch_boxes.items():
+            for hexcode, (box, marker, label) in swatch_boxes.items():
                 selected = hexcode == brand_state["color"]
-                box.border = ft.border.all(3 if selected else 1, Colors.TEXT_PRIMARY if selected else Colors.BORDER_ALT)
-                box.content = ft.Icon(ft.Icons.CHECK, color=Colors.WHITE, size=16) if selected else None
+                box.border = ft.border.all(2 if selected else 1, hexcode if selected else Colors.BORDER_ALT)
+                box.bgcolor = Colors.BACKGROUND_ALT if selected else Colors.WHITE
+                marker.content = ft.Icon(ft.Icons.CHECK, color=Colors.WHITE, size=14) if selected else None
+                label.weight = ft.FontWeight.BOLD if selected else ft.FontWeight.W_500
 
         def pick_color(hexcode: str):
             def handler(_):
                 brand_state["color"] = hexcode
                 update_swatch_styles()
+                update_brand_preview()
                 self.page.update()
             return handler
 
         def swatch(hexcode: str, label: str) -> ft.Container:
+            marker = ft.Container(
+                width=30,
+                height=30,
+                alignment=ft.alignment.center,
+                bgcolor=hexcode,
+                border_radius=15,
+            )
+            label_text = ft.Text(label, size=11, color=Colors.TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
             box = ft.Container(
-                width=34, height=34, bgcolor=hexcode, border_radius=17,
-                alignment=ft.alignment.center, tooltip=label, ink=True,
+                ft.Row([marker, label_text], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=8,
+                border_radius=Radius.MD,
+                tooltip=label,
+                ink=True,
                 on_click=pick_color(hexcode),
             )
-            swatch_boxes[hexcode] = box
+            swatch_boxes[hexcode] = (box, marker, label_text)
             return box
 
         async def pick_logo(_):
@@ -914,12 +951,14 @@ class AdminCenter:
                     business_profile.BUSINESS_TAX_NUMBER_KEY: (business_tax_number_field.value or "").strip(),
                 })
                 exchange_rate_field.value = str(rate_value)
-                self._notify("تم حفظ هوية الشركة وإعدادات العملة — ستظهر في كل الشاشات والمستندات فورًا")
-                self.page.update()
+                set_brand_accent(brand_state["color"])
+                self._notify("تم حفظ الهوية وتطبيق لونها على الواجهة والمستندات", kind="success")
+                self.on_theme_changed()
             except Exception as exc:
                 self._notify(str(exc), kind="error")
 
         update_swatch_styles()
+        update_brand_preview()
 
         # --- Barcode/QR system: generation defaults, validation strictness,
         # printed-label layout, and POS scan feedback -- all admin-tunable
@@ -1623,7 +1662,7 @@ class AdminCenter:
             except Exception as exc:
                 self._notify(str(exc), kind="error")
 
-        audit_list = ft.Column(spacing=6)
+        audit_rows_view = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, height=400)
         audit_search = SelectAllTextField(
             label="بحث في السجل",
             hint_text="إجراء، نوع، مستخدم، تفاصيل…",
@@ -1649,15 +1688,14 @@ class AdminCenter:
             width=160,
         )
         audit_count_label = ft.Text("", size=11, color=Colors.TEXT_FAINT)
-        # Same client-visible paging as parties/items/invoices (see
-        # parties_view.py): the audit log only ever grows, so a fixed
-        # fetch of 300 rows used to be rendered as 300 controls in one
-        # shot every time the tab opened or a filter changed. Now the
-        # DB fetch itself grows with render_limit["n"] (capped at the
-        # service's own 1000-row ceiling), so "تحميل المزيد" pulls a
-        # fresh, larger page from the database instead of just re-slicing
-        # an already-fetched batch.
-        audit_render_limit = {"n": 60}
+        audit_page_size = 60
+        audit_data = {"rows": [], "offset": 0, "has_more": True}
+        audit_has_more = {"value": False}
+        audit_load_more = ft.OutlinedButton(
+            "تحميل المزيد",
+            icon=ft.Icons.EXPAND_MORE_ROUNDED,
+            visible=False,
+        )
 
         _ACTION_AR = {
             "create": "إنشاء",
@@ -1699,19 +1737,12 @@ class AdminCenter:
         def _audit_entity_label(entity: str) -> str:
             return _ENTITY_AR.get(str(entity or ""), str(entity or "—"))
 
-        def refresh_audit(_=None):
-            audit_list.controls = []
-            try:
-                rows = self.ctx.auth.audit_entries(audit_render_limit["n"])
-            except Exception as exc:
-                audit_list.controls.append(ft.Text(str(exc), color=Colors.DANGER))
-                audit_count_label.value = ""
-                self.page.update()
-                return
+        def render_audit():
+            audit_rows_view.controls = []
             q = (audit_search.value or "").strip().casefold()
             ent = audit_entity_dd.value or "all"
-            shown = 0
-            for row in rows:
+            filtered_rows = []
+            for row in audit_data["rows"]:
                 entity = str(row.get("entity_type") or "")
                 if ent != "all" and entity != ent:
                     continue
@@ -1721,73 +1752,175 @@ class AdminCenter:
                 hay = " ".join([action, entity, actor, details, str(row.get("entity_id") or "")]).casefold()
                 if q and q not in hay:
                     continue
-                accent = _ACTION_COLOR.get(action, Colors.TEXT_SECONDARY)
-                title = f"{_audit_action_label(action)} • {_audit_entity_label(entity)}"
-                if row.get("entity_id") not in (None, ""):
-                    title += f" #{row.get('entity_id')}"
-                audit_list.controls.append(
+                filtered_rows.append(row)
+
+            if not filtered_rows:
+                audit_rows_view.controls.append(
                     ft.Container(
-                        ft.Row(
+                        ft.Column(
                             [
-                                ft.Container(width=4, height=42, bgcolor=accent, border_radius=4),
-                                ft.Column(
-                                    [
-                                        ft.Row(
-                                            [
-                                                ft.Text(title, weight=ft.FontWeight.BOLD, size=13, expand=True),
-                                                ft.Text(str(row.get("created_at") or ""), size=10, color=Colors.TEXT_FAINT),
-                                            ],
-                                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                        ),
+                                ft.Icon(ft.Icons.HISTORY_ROUNDED, size=28, color=Colors.TEXT_FAINT),
+                                ft.Text("لا توجد أحداث مطابقة", size=12, color=Colors.TEXT_FAINT),
+                            ],
+                            spacing=8,
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        alignment=ft.alignment.center,
+                        padding=24,
+                    )
+                )
+            else:
+                table_rows = []
+                for row in filtered_rows:
+                    action = str(row.get("action") or "")
+                    entity = str(row.get("entity_type") or "")
+                    actor = str(row.get("username") or "النظام")
+                    entity_id = row.get("entity_id")
+                    entity_label = _audit_entity_label(entity)
+                    if entity_id not in (None, ""):
+                        entity_label += f" #{entity_id}"
+                    accent = _ACTION_COLOR.get(action, Colors.TEXT_SECONDARY)
+                    table_rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(
+                                    ft.Container(
                                         ft.Text(
-                                            f"{actor}" + (f" — {details}" if details else ""),
+                                            str(row.get("created_at") or "—"),
                                             size=11,
                                             color=Colors.TEXT_SECONDARY,
+                                            max_lines=2,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
                                         ),
-                                    ],
-                                    spacing=3,
-                                    expand=True,
+                                        width=142,
+                                    )
+                                ),
+                                ft.DataCell(
+                                    ft.Container(
+                                        ft.Text(
+                                            _audit_action_label(action),
+                                            size=11,
+                                            weight=ft.FontWeight.W_600,
+                                            color=accent,
+                                            max_lines=2,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                        ),
+                                        width=125,
+                                    )
+                                ),
+                                ft.DataCell(
+                                    ft.Container(
+                                        ft.Text(
+                                            entity_label,
+                                            size=11,
+                                            max_lines=2,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                        ),
+                                        width=120,
+                                    )
+                                ),
+                                ft.DataCell(
+                                    ft.Container(
+                                        ft.Text(
+                                            actor,
+                                            size=11,
+                                            max_lines=2,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                        ),
+                                        width=120,
+                                    )
+                                ),
+                                ft.DataCell(
+                                    ft.Container(
+                                        ft.Text(
+                                            str(row.get("details") or "—"),
+                                            size=11,
+                                            color=Colors.TEXT_SECONDARY,
+                                            max_lines=2,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                            tooltip=str(row.get("details") or ""),
+                                        ),
+                                        width=280,
+                                    )
                                 ),
                             ],
-                            spacing=10,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=10,
-                        bgcolor=Colors.BACKGROUND,
-                        border=ft.border.all(1, Colors.BORDER),
-                        border_radius=12,
+                        )
+                    )
+                audit_rows_view.controls.append(
+                    ft.Row(
+                        [
+                            ft.DataTable(
+                                columns=[
+                                    ft.DataColumn(ft.Text("التاريخ")),
+                                    ft.DataColumn(ft.Text("العملية")),
+                                    ft.DataColumn(ft.Text("العنصر")),
+                                    ft.DataColumn(ft.Text("المنفذ")),
+                                    ft.DataColumn(ft.Text("التفاصيل")),
+                                ],
+                                rows=table_rows,
+                                column_spacing=12,
+                                horizontal_margin=12,
+                                heading_row_height=44,
+                                data_row_min_height=54,
+                                data_row_max_height=70,
+                                divider_thickness=1,
+                                heading_row_color=Colors.BACKGROUND_ALT,
+                                border=ft.border.all(1, Colors.BORDER),
+                                border_radius=Radius.MD,
+                                show_bottom_border=True,
+                            )
+                        ],
+                        scroll=ft.ScrollMode.AUTO,
                     )
                 )
-                shown += 1
-            if shown == 0:
-                audit_list.controls.append(
-                    ft.Container(
-                        ft.Text("لا توجد أحداث مطابقة", size=12, color=Colors.TEXT_FAINT),
-                        padding=16,
-                    )
-                )
-            elif len(rows) >= audit_render_limit["n"] and audit_render_limit["n"] < 1000:
-                # There may be older rows the DB fetch hasn't reached yet
-                # (len(rows) == the fetch limit is our only signal, since
-                # audit_entries() doesn't report a total count) — offer to
-                # pull a bigger page rather than assuming this is everything.
-                def load_more_audit(_=None):
-                    audit_render_limit["n"] = min(1000, audit_render_limit["n"] + 60)
-                    refresh_audit()
 
-                audit_list.controls.append(
-                    ft.OutlinedButton(
-                        "تحميل المزيد",
-                        icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=load_more_audit,
-                    )
-                )
-            audit_count_label.value = f"عرض {shown} من أصل {len(rows)}"
+            audit_has_more["value"] = audit_data["has_more"]
+            audit_load_more.visible = audit_has_more["value"]
+            audit_count_label.value = f"المعروض: {len(filtered_rows)} • تم تحميل {len(audit_data['rows'])} سجل"
             self.page.update()
 
+        def fetch_audit_page(*, reset: bool = False):
+            if reset:
+                audit_data["rows"] = []
+                audit_data["offset"] = 0
+                audit_data["has_more"] = True
+            try:
+                rows = self.ctx.auth.audit_entries(
+                    audit_page_size,
+                    offset=audit_data["offset"],
+                )
+            except Exception as exc:
+                if not audit_data["rows"]:
+                    audit_rows_view.controls = [
+                        ft.Container(
+                            ft.Text(str(exc), color=Colors.DANGER, size=12),
+                            padding=16,
+                        )
+                    ]
+                    audit_count_label.value = ""
+                else:
+                    self._notify(str(exc), kind="error")
+                audit_has_more["value"] = False
+                audit_load_more.visible = False
+                self.page.update()
+                return
+            audit_data["rows"].extend(rows)
+            audit_data["offset"] += len(rows)
+            audit_data["has_more"] = len(rows) == audit_page_size
+            render_audit()
+
+        def refresh_audit(_=None):
+            fetch_audit_page(reset=True)
+
+        def load_more_audit(_=None):
+            if not audit_has_more["value"]:
+                return
+            fetch_audit_page()
+
+        audit_load_more.on_click = load_more_audit
+
         def refresh_audit_from_filter(_=None):
-            audit_render_limit["n"] = 60
-            refresh_audit()
+            fetch_audit_page(reset=True)
 
         audit_search.on_change = refresh_audit_from_filter
         audit_entity_dd.on_change = refresh_audit_from_filter
@@ -2518,7 +2651,12 @@ class AdminCenter:
             "branding": self._section(
                 "هوية الشركة والفواتير",
                 [
-                    ft.Text("تُطبَّق على كل الفواتير وكشوف الحساب وملصقات الباركود المطبوعة أو المُصدَّرة كـ PDF.", size=12, color=Colors.TEXT_SECONDARY),
+                    ft.Text(
+                        "اختر لون الهوية ليوحّد مظهر كاشير والمستندات. تُشتق درجات متناسقة تلقائيًا للوضعين النهاري والليلي، "
+                        "مع الحفاظ على ألوان النجاح والتحذير والخطأ.",
+                        size=12,
+                        color=Colors.TEXT_SECONDARY,
+                    ),
                     ft.ResponsiveRow(
                         [
                             ft.Container(company_name_field, col={"xs": 12, "md": 6}),
@@ -2561,8 +2699,45 @@ class AdminCenter:
                         spacing=12,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Text("لون الفواتير", size=12, weight=ft.FontWeight.W_600),
-                    ft.Row([swatch(h, l) for h, l in ACCENT_PALETTE], spacing=8, wrap=True),
+                    ft.Text("ثيمات الهوية", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "اختر من 12 لونًا متناسقًا. يظهر الثيم في الأزرار والتبويبات والعناصر المحددة، "
+                        "ويُستخدم أيضًا في الفواتير والتقارير المطبوعة.",
+                        size=11,
+                        color=Colors.TEXT_FAINT,
+                    ),
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(swatch(color, label), col={"xs": 6, "sm": 4, "md": 3})
+                            for color, label in brand_presets
+                        ],
+                        spacing=8,
+                        run_spacing=8,
+                        rtl=True,
+                    ),
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Column(
+                                    [
+                                        brand_preview_name,
+                                        ft.Text("معاينة الزر والعنصر المحدد قبل الحفظ", size=10, color=Colors.TEXT_FAINT),
+                                    ],
+                                    spacing=3,
+                                    expand=True,
+                                ),
+                                brand_preview_selected,
+                                brand_preview_primary,
+                            ],
+                            spacing=10,
+                            wrap=True,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=12,
+                        bgcolor=Colors.BACKGROUND,
+                        border=ft.border.all(1, Colors.BORDER),
+                        border_radius=Radius.LG,
+                    ),
                     ft.FilledButton("حفظ الهوية", icon=ft.Icons.SAVE_OUTLINED, on_click=save_branding),
                 ],
             ),
@@ -2570,7 +2745,7 @@ class AdminCenter:
                 "سجل التدقيق",
                 [
                     ft.Text(
-                        "آخر العمليات الحساسة على البيانات والمستخدمين — مفيد لمعرفة من عدّل أو حذف وماذا.",
+                        "سجل موحّد للأنشطة الإدارية والتغييرات المهمة، يوضح وقت العملية ونوعها والمنفذ والتفاصيل، مع البحث والتصفية.",
                         size=12,
                         color=Colors.TEXT_SECONDARY,
                     ),
@@ -2582,10 +2757,29 @@ class AdminCenter:
                             ft.OutlinedButton("تحديث", icon=ft.Icons.REFRESH, on_click=refresh_audit),
                         ],
                         spacing=8,
+                        wrap=True,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    audit_count_label,
-                    audit_list,
+                    ft.Row(
+                        [
+                            ft.Text("سجل العمليات", size=13, weight=ft.FontWeight.BOLD),
+                            ft.Container(expand=True),
+                            audit_count_label,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Container(
+                        audit_rows_view,
+                        height=420,
+                        padding=8,
+                        bgcolor=Colors.WHITE,
+                        border=ft.border.all(1, Colors.BORDER),
+                        border_radius=Radius.LG,
+                    ),
+                    ft.Row(
+                        [audit_load_more],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
                 ],
             ),
             "barcode": self._section(

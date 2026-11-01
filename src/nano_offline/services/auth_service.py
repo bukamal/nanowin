@@ -486,11 +486,13 @@ class AuthService:
                 (user_id,),
             )
 
-    def audit_entries(self, limit: int = 200) -> list[dict]:
+    def audit_entries(self, limit: int = 200, offset: int = 0) -> list[dict]:
         self.require("admin")
+        page_size = max(1, min(int(limit), 1000))
+        page_offset = max(0, int(offset))
         with self.db.connect() as conn:
             return [dict(r) for r in conn.execute(
                 """SELECT id,action,entity_type,entity_id,details,user_id,username,created_at
-                   FROM audit_log ORDER BY id DESC LIMIT ?""",
-                (max(1, min(int(limit), 1000)),),
+                   FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?""",
+                (page_size, page_offset),
             ).fetchall()]

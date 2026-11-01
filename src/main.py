@@ -68,6 +68,7 @@ def _resolve_and_set_theme(page: ft.Page, ctx: AppContext) -> str:
         system_dark = False
     effective = theme_settings.resolve_effective_mode(ctx.settings, system_is_dark=system_dark)
     theme.set_mode(effective)
+    theme.set_brand_accent(ctx.settings.get("invoice_color"))
     return effective
 
 
