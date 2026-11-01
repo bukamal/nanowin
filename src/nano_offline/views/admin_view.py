@@ -1518,6 +1518,79 @@ class AdminCenter:
             ]
             self.page.open(confirm)
 
+        def initialize_database_guarded(_):
+            password_field = SelectAllTextField(
+                label="كلمة مرور المدير", password=True, can_reveal_password=True, autofocus=True
+            )
+            status_line = ft.Text("", size=11, color=Colors.DANGER_DARKER)
+            initialize_button = ft.FilledButton(
+                "تهيئة قاعدة البيانات",
+                icon=ft.Icons.RESTART_ALT,
+                style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
+            )
+            confirm = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("تهيئة قاعدة البيانات"),
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "سيتم إنشاء نسخة أمان ثم استبدال قاعدة البيانات بقاعدة فارغة. "
+                            "سيُحذف المستخدمون والمواد والفواتير والعملاء والموردون والإعدادات. "
+                            "يُحتفظ بترخيص هذا الجهاز.",
+                            size=12,
+                        ),
+                        password_field,
+                        status_line,
+                    ],
+                    tight=True,
+                    width=380,
+                ),
+                actions=[
+                    ft.TextButton("إلغاء", on_click=lambda _: self.page.close(confirm)),
+                    initialize_button,
+                ],
+            )
+
+            async def initialize_database():
+                try:
+                    safety_path = await asyncio.to_thread(self.ctx.backup.initialize_fresh_database)
+                    self.ctx.reload(self.ctx.database_path())
+                    confirm.title = ft.Text("تمت تهيئة قاعدة البيانات")
+                    confirm.content = ft.Column(
+                        [
+                            ft.Text("أُنشئت قاعدة فارغة بنجاح. نسخة الأمان المحفوظة:"),
+                            ft.Text(safety_path.name, selectable=True),
+                        ],
+                        tight=True,
+                        width=380,
+                    )
+                    confirm.actions = [
+                        ft.FilledButton(
+                            "متابعة",
+                            on_click=lambda _: (self.page.close(confirm), self.on_logout()),
+                        )
+                    ]
+                    self.page.update()
+                except Exception as exc:
+                    status_line.value = str(exc)
+                    initialize_button.disabled = False
+                    self.page.update()
+
+            def do_initialize(_ev=None):
+                try:
+                    self.ctx.auth.verify_current_password(password_field.value or "")
+                except Exception as exc:
+                    status_line.value = str(exc)
+                    self.page.update()
+                    return
+                status_line.value = "جارٍ إنشاء نسخة الأمان وتهيئة القاعدة..."
+                initialize_button.disabled = True
+                self.page.update()
+                self.page.run_task(initialize_database)
+
+            initialize_button.on_click = do_initialize
+            self.page.open(confirm)
+
         # --- Reports center: which report and date range are pre-selected
         # the moment it opens -- admin-tunable and read via
         # core.reporting_settings each time ReportsCenter.show_center()
@@ -2385,6 +2458,12 @@ class AdminCenter:
                         icon=ft.Icons.RESTART_ALT,
                         style=ft.ButtonStyle(color=Colors.DANGER),
                         on_click=reset_settings_guarded,
+                    ),
+                    ft.OutlinedButton(
+                        "تهيئة قاعدة البيانات",
+                        icon=ft.Icons.RESTART_ALT,
+                        style=ft.ButtonStyle(color=Colors.DANGER),
+                        on_click=initialize_database_guarded,
                     ),
                 ],
             ),

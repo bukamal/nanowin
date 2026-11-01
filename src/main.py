@@ -853,8 +853,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 RibbonAction("receipt", "سند قبض", ft.Icons.PAYMENTS_OUTLINED, on_click=lambda _=None: open_receipt()),
                 RibbonAction("payment", "سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, on_click=lambda _=None: open_supplier_payment()),
             ]
-        if key == "admin":
-            return [RibbonAction("backup", "النسخ الاحتياطي", ft.Icons.BACKUP_OUTLINED, on_click=lambda _=None: open_admin_section("backup"))]
         return []
 
     session_for_bar = session

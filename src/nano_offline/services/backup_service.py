@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
+from uuid import uuid4
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -319,4 +320,59 @@ class BackupService:
                 )
         if self.db.integrity_check().lower() != "ok":
             raise RuntimeError("فشل فحص قاعدة البيانات بعد الاسترجاع")
+        return safety_path
+
+    def initialize_fresh_database(self) -> Path:
+        """Replace the current database with a fresh schema after a safety backup.
+
+        The device-bound license is retained, matching restore behavior. All
+        business data, users, and settings are removed.
+        """
+        self.db.checkpoint()
+        with self.db.connect() as conn:
+            current_license = conn.execute("SELECT * FROM license_state WHERE id=1").fetchone()
+            current_license_dict = dict(current_license) if current_license else None
+
+        safety_dir = self.db.path.parent / "backups"
+        safety_dir.mkdir(parents=True, exist_ok=True)
+        safety_path = safety_dir / f"pre_initialize_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{PRIMARY_BACKUP_EXT}"
+        self.create_backup(safety_path)
+
+        temp_target = self.db.path.with_name(f".{self.db.path.name}.{uuid4().hex}.fresh")
+        try:
+            candidate = Database(temp_target)
+            candidate.initialize()
+            if current_license_dict:
+                columns = [
+                    "id", "license_key", "signed_token", "device_id", "activated_at",
+                    "last_verified_at", "expires_at",
+                ]
+                values = [current_license_dict.get(column) for column in columns]
+                with candidate.transaction() as conn:
+                    conn.execute(
+                        f"INSERT INTO license_state({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
+                        values,
+                    )
+            if candidate.integrity_check().lower() != "ok":
+                raise RuntimeError("فشل فحص قاعدة البيانات الجديدة")
+            candidate.checkpoint()
+            gc.collect()
+
+            for suffix in ("-wal", "-shm"):
+                candidate_sidecar = Path(f"{temp_target}{suffix}")
+                if candidate_sidecar.exists():
+                    unlink_retry(candidate_sidecar)
+                live_sidecar = Path(f"{self.db.path}{suffix}")
+                if live_sidecar.exists():
+                    unlink_retry(live_sidecar)
+            replace_retry(temp_target, self.db.path)
+        finally:
+            for suffix in ("", "-wal", "-shm"):
+                leftover = Path(f"{temp_target}{suffix}")
+                if leftover.exists():
+                    unlink_retry(leftover)
+
+        self.db.initialize()
+        if self.db.integrity_check().lower() != "ok":
+            raise RuntimeError("فشل فحص قاعدة البيانات بعد التهيئة")
         return safety_path

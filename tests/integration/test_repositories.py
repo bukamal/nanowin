@@ -130,6 +130,32 @@ def test_backup_create_validate_restore(ctx, seeded, tmp_path):
     assert len(ctx.invoices.list_invoices()) == 1
 
 
+def test_initialize_fresh_database_keeps_license_and_creates_safety_backup(ctx, seeded):
+    ctx.auth.create_user(
+        username="admin",
+        full_name="مدير",
+        password="password123",
+        role="admin",
+        _bootstrap=True,
+    )
+    with ctx.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO license_state(id,license_key,device_id) VALUES(1,'license-key','device-id')"
+        )
+
+    safety_path = ctx.backup.initialize_fresh_database()
+    ctx.reload(ctx.db.path)
+
+    assert safety_path.is_file()
+    assert ctx.backup.validate_backup(safety_path).valid
+    assert ctx.items.list() == []
+    assert ctx.auth.has_users() is False
+    with ctx.db.connect() as conn:
+        license_row = conn.execute("SELECT license_key,device_id FROM license_state WHERE id=1").fetchone()
+    assert tuple(license_row) == ("license-key", "device-id")
+    assert ctx.db.integrity_check().lower() == "ok"
+
+
 def test_backup_encrypted_requires_password(ctx, seeded, tmp_path):
     target = tmp_path / "enc.nanobackup"
     ctx.backup.create_backup(target, password="s3cret!")
