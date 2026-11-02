@@ -1082,6 +1082,11 @@ class DashboardCenter:
         else:
             status = "راجع النقد الفعلي قبل إنهاء اليوم"
             action_label = "إغلاق الصندوق"
+        # NOTE: no wrap=True on this Row. Flutter's Wrap (what a wrapping
+        # ft.Row renders as) cannot host Expanded/Flexible children, and the
+        # Column below uses expand=True -- combining the two crashes the
+        # render into a silent gray box (same bug class as reports_view.py's
+        # export bar and components/segmented_toggle.py).
         return ft.Container(
             ft.Row(
                 [
@@ -1115,7 +1120,6 @@ class DashboardCenter:
                 ],
                 spacing=12,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                wrap=True,
             ),
             padding=14,
             bgcolor=Colors.WHITE,

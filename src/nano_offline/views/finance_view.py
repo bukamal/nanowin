@@ -803,7 +803,6 @@ class FinanceCenter:
                                 ),
                                 field,
                             ],
-                            wrap=True,
                         ),
                         padding=8,
                         border=ft.border.all(1, Colors.BORDER_ALT),

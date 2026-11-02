@@ -2716,6 +2716,10 @@ class AdminCenter:
                         rtl=True,
                     ),
                     ft.Container(
+                        # No wrap=True: Flutter's Wrap can't host the
+                        # expand=True column below, so this theme preview used
+                        # to paint as a gray box (same class as the dashboard
+                        # day-close card fix / segmented_toggle.py).
                         ft.Row(
                             [
                                 ft.Column(
@@ -2730,7 +2734,6 @@ class AdminCenter:
                                 brand_preview_primary,
                             ],
                             spacing=10,
-                            wrap=True,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         padding=12,
@@ -2757,7 +2760,6 @@ class AdminCenter:
                             ft.OutlinedButton("تحديث", icon=ft.Icons.REFRESH, on_click=refresh_audit),
                         ],
                         spacing=8,
-                        wrap=True,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row(
