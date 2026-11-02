@@ -1986,11 +1986,9 @@ class InvoiceCenter:
             except Exception:
                 pass
 
-        # The party (customer for a sale, supplier for a purchase) is a table
-        # COLUMN, exactly like المادة/الكمية/السعر -- not a separate field.
-        party_label = "العميل" if invoice_type == "sale" else "المورد"
-        parties = customers if invoice_type == "sale" else suppliers
-        party_map = {int(p["id"]): p["name"] for p in parties}
+        # The party (customer for a sale, supplier for a purchase) is a single
+        # header search field (party_dd) beside the date -- one party per
+        # invoice, so it does not belong as a per-row table column.
 
         density_state = {"compact": settings.get("ui.table_invoice_density", "comfortable") == "compact"}
 
@@ -2042,10 +2040,6 @@ class InvoiceCenter:
             return round(base * factor, 2)
 
         def row_formatter(col, value, row):
-            if col.key == "party":
-                if party_dd.value:
-                    return party_map.get(int(party_dd.value), "—")
-                return f"— اختر {party_label} —"
             if col.key == "item":
                 if not value:
                     return "— اختر مادة —"
@@ -2090,7 +2084,6 @@ class InvoiceCenter:
             return None
 
         line_columns = [
-            GridColumn("party", party_label, width=180, editable=True, kind="picker", tooltip="طرف الفاتورة — يُطبّق على كل البنود"),
             GridColumn("item", "المادة", width=220, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للبحث والاختيار داخلها"),
             GridColumn("description", "البيان", width=220, editable=True, tooltip="وصف البند الظاهر في الفاتورة"),
             GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="وحدة البند — تغيّر معامل التحويل والسعر"),
@@ -2127,21 +2120,17 @@ class InvoiceCenter:
             formatter=row_formatter,
             on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
             picker_options=lambda col, row: (
-                [(int(p["id"]), p["name"]) for p in parties]
-                if col.key == "party"
-                else (
-                    [
-                        (int(item_row["id"]), item_row["name"])
-                        for item_row in items
-                    ]
-                    if col.key == "item"
-                    else [
-                        (int(unit_row["id"]), _unit_label(unit_row))
-                        for unit_row in _units_of(int(row["item"]))
-                    ]
-                    if row.get("item")
-                    else []
-                )
+                [
+                    (int(item_row["id"]), item_row["name"])
+                    for item_row in items
+                ]
+                if col.key == "item"
+                else [
+                    (int(unit_row["id"]), _unit_label(unit_row))
+                    for unit_row in _units_of(int(row["item"]))
+                ]
+                if row.get("item")
+                else []
             ),
             on_sort=lambda key, direction: apply_lines_sort(key, direction),
             on_row_menu=lambda row: lines_row_menu(row),
@@ -2168,13 +2157,7 @@ class InvoiceCenter:
             lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
 
         def commit_line_cell(index: int, key: str, value) -> None:
-            if key == "party" and value:
-                # The party is one per invoice: reflect the pick on every row
-                # (and on the hidden holder used by save/summary).
-                party_dd.value = str(int(value))
-                for i in range(len(lines_grid.rows)):
-                    lines_grid.set_cell(i, "party", int(value), notify=False)
-            elif key == "item" and value:
+            if key == "item" and value:
                 fill_line_defaults(index, int(value))
             elif key == "unit" and value:
                 row = lines_grid.row_at(index) or {}
@@ -2716,6 +2699,7 @@ class InvoiceCenter:
                             [
                                 ft.Row(
                                     [
+                                        ft.Container(party_dd, width=260),
                                         ft.Container(invoice_date, width=200),
                                         ft.Container(expand=True),
                                         ft.Container(paid, width=240),

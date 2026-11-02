@@ -32,6 +32,7 @@ from nano_offline.components.command_bar import CommandBar, RibbonAction, Ribbon
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
+from nano_offline.core import font_settings
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
@@ -72,11 +73,29 @@ def _resolve_and_set_theme(page: ft.Page, ctx: AppContext) -> str:
     return effective
 
 
-def _apply_theme(page: ft.Page) -> None:
-    """Set page.theme/dark_theme with the brand seed color, current mode, and font."""
+def _apply_theme(page: ft.Page, ctx: AppContext) -> None:
+    """Set page.theme/dark_theme with the brand seed, mode, font family and size.
+
+    The admin's font family applies to every Flet control that doesn't pin its
+    own family (i.e. the whole UI), and the base size scales the Material text
+    theme so default-sized text tracks it too. Explicit ``size=`` on a control
+    still wins, by design.
+    """
+    family = font_settings.ui_family(ctx.settings, APP_FONT_FAMILY)
+    scale = font_settings.font_size(ctx.settings) / float(font_settings.DEFAULT_SIZE)
+
+    def _style(size: float) -> ft.TextStyle:
+        return ft.TextStyle(size=round(size * scale, 2))
+
+    text_theme = ft.TextTheme(
+        body_large=_style(16), body_medium=_style(14), body_small=_style(12),
+        label_large=_style(14), label_medium=_style(12), label_small=_style(11),
+        title_large=_style(22), title_medium=_style(16), title_small=_style(14),
+        headline_small=_style(24),
+    )
     if APP_FONTS:
         page.fonts = APP_FONTS
-    page.theme = ft.Theme(color_scheme_seed=Colors.PRIMARY, font_family=APP_FONT_FAMILY)
+    page.theme = ft.Theme(color_scheme_seed=Colors.PRIMARY, font_family=family, text_theme=text_theme)
     page.dark_theme = page.theme
     page.theme_mode = ft.ThemeMode.DARK if theme.is_dark() else ft.ThemeMode.LIGHT
 
@@ -106,7 +125,7 @@ def _apply_rtl_to_sheets(page: ft.Page) -> None:
 def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: PlatformNativeFiles, on_theme_changed):
     page.title = branding.APP_BRAND
     page.rtl = True
-    _apply_theme(page)
+    _apply_theme(page, ctx)
     page.padding = 0
     page.bgcolor = Colors.BACKGROUND
 
@@ -1662,7 +1681,7 @@ def main(page: ft.Page):
     page.rtl = True
     _apply_rtl_to_sheets(page)
     _resolve_and_set_theme(page, ctx)
-    _apply_theme(page)
+    _apply_theme(page, ctx)
     page.padding = 0
     page.bgcolor = Colors.BACKGROUND
 
@@ -1674,7 +1693,7 @@ def main(page: ft.Page):
 
     def reset_page():
         _resolve_and_set_theme(page, ctx)
-        _apply_theme(page)
+        _apply_theme(page, ctx)
         page.controls.clear()
         page.navigation_bar = None
         page.update()
@@ -1735,7 +1754,7 @@ def main(page: ft.Page):
         after = _resolve_and_set_theme(page, ctx)
         if after == before:
             return
-        _apply_theme(page)
+        _apply_theme(page, ctx)
         if current_screen["value"] == "shell":
             open_shell()
         else:

@@ -2814,8 +2814,8 @@ class ItemsCenter:
                                 _icon_bubble(ft.Icons.VIEW_LIST_OUTLINED, color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG),
                                 ft.Column(
                                     [
-                                        ft.Text("إضافة شاملة (جدول)", size=17, weight=ft.FontWeight.BOLD),
-                                        ft.Text("كل الحقول في جدول متكامل: أعمدة قابلة للإظهار والترتيب والتصدير، وأسطر تُكرر أو تُحذف، ثم احفظ الكل دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
+                                        ft.Text("مادة جديدة", size=17, weight=ft.FontWeight.BOLD),
+                                        ft.Text("أضف مادة أو أكثر في جدول متكامل: أعمدة قابلة للإظهار والترتيب والتصدير، وأسطر تُكرر أو تُحذف، ثم احفظ الكل دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
                                     ],
                                     spacing=1, expand=True,
                                 ),
@@ -3310,8 +3310,7 @@ class ItemsCenter:
         # these closures are only ever invoked while items is on screen.
         if self.on_context_actions is not None:
             self.on_context_actions([
-                RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: open_item_editor()),
-                RibbonAction("bulk_add", "إضافة شاملة (جدول)", ft.Icons.VIEW_LIST_OUTLINED, on_click=lambda _=None: open_bulk_add_sheet()),
+                RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: open_bulk_add_sheet()),
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),

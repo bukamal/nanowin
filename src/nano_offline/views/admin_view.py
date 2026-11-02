@@ -20,6 +20,7 @@ from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import BRAND_PRESETS, Colors, Radius, Shadow, normalize_brand_accent, set_brand_accent
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
+from nano_offline.core import font_settings
 from nano_offline.core import barcode_settings
 from nano_offline.core import branding
 from nano_offline.core import business_profile
@@ -2040,6 +2041,19 @@ class AdminCenter:
         theme_schedule_switch.on_change = _sync_schedule_row_visibility
         theme_schedule_row.visible = theme_schedule_switch.value
 
+        # --- Font family + base size (affect the UI and every printed doc) --#
+        font_family_field = ft.Dropdown(
+            label="خط الواجهة والطباعة",
+            value=font_settings.family(sset),
+            options=[ft.dropdown.Option(key, label) for key, label in font_settings.FAMILIES],
+            filled=True,
+            bgcolor=Colors.BACKGROUND_ALT,
+        )
+        font_size_field = SegmentedToggle(
+            options=[SegmentOption(str(px), label) for px, label in font_settings.SIZES],
+            value=str(font_settings.font_size(sset)),
+        )
+
         def save_theme_settings(_):
             theme_settings.set_mode_preference(sset, theme_mode_toggle.value)
             theme_settings.set_schedule(
@@ -2048,7 +2062,11 @@ class AdminCenter:
                 start_hour=int(theme_schedule_start_field.value or theme_settings.DEFAULT_SCHEDULE_START),
                 end_hour=int(theme_schedule_end_field.value or theme_settings.DEFAULT_SCHEDULE_END),
             )
-            self._notify("تم حفظ إعدادات المظهر", kind="success")
+            sset.set_many({
+                font_settings.SETTING_FAMILY: font_family_field.value or font_settings.DEFAULT_FAMILY,
+                font_settings.SETTING_SIZE: font_size_field.value or str(font_settings.DEFAULT_SIZE),
+            })
+            self._notify("تم حفظ إعدادات المظهر والخط", kind="success")
             self.on_theme_changed()
 
 
@@ -2524,6 +2542,16 @@ class AdminCenter:
                     ),
                     ft.Text("مظهر التطبيق", size=12, weight=ft.FontWeight.W_600),
                     theme_mode_toggle,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("الخط وحجمه", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "يُطبَّق خط الواجهة على كل الشاشات، ويُستخدم أيضًا في الطباعة وملفات PDF. "
+                        "الحجم الأساسي يضبط النصوص الافتراضية والمستندات المطبوعة.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                    font_family_field,
+                    ft.Text("الحجم الأساسي", size=11, color=Colors.TEXT_SECONDARY),
+                    font_size_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     theme_schedule_switch,
                     theme_schedule_row,

@@ -10,6 +10,7 @@ from nano_offline.core.database import Database
 from nano_offline.core import branding
 from nano_offline.core import business_profile
 from nano_offline.core import currency
+from nano_offline.core import font_settings
 from nano_offline.core import invoice_settings
 from nano_offline.services.invoice_service import InvoiceService
 from nano_offline.services.statement_service import StatementService
@@ -160,6 +161,10 @@ class DocumentService:
         header_number_html = (
             f'<div class="doc-number">{self._e(header_number)}</div>' if header_number else ""
         )
+        # Admin-chosen print font/size; "auto" keeps the default Arabic stack.
+        chosen_family = font_settings.print_family(settings, None)
+        font_stack = f"'{chosen_family}', " if chosen_family else ""
+        base_size = font_settings.font_size(settings)
         return f"""<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -172,10 +177,10 @@ class DocumentService:
 html, body {{ padding:0; }}
 body {{
   direction: rtl;
-  font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
+  font-family: {font_stack}'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
   color:#1E293B;
   margin:0;
-  font-size:12px;
+  font-size:{base_size}px;
   line-height:1.55;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -675,6 +680,60 @@ table th, table td {{ text-align:center; }}
   <p class="muted">تقرير داخلي من {branding.APP_NAME_AR} — للأرشفة والمراجعة.</p>
 """
         return self._shell("إغلاق يوم الصندوق", closed_at, body)
+
+    def voucher_html(self, voucher: dict) -> str:
+        """Printable receipt/payment voucher (سند قبض / سند دفع).
+
+        Built on the same :meth:`_shell` as invoices, statements and the
+        day-close report so the branding header (logo, company name and
+        contacts), typography, money formatting and the A4/thermal print
+        profile all match every other document -- the voucher previously used
+        its own bespoke 80mm-only HTML and looked like a different app.
+        """
+        receipt = str(voucher.get("voucher_type")) == "receipt"
+        title = "سند قبض" if receipt else "سند دفع"
+        party_label = "العميل" if receipt else "المورد"
+        voucher_id = voucher.get("id")
+        date_text = self._e(voucher.get("voucher_date") or "—")
+        party_text = self._e(voucher.get("party_name") or "نقدي")
+        reference_text = self._e(voucher.get("reference") or "—")
+
+        alloc_rows = []
+        for alloc in voucher.get("allocations") or []:
+            alloc_rows.append(
+                f"<tr><td>فاتورة #{self._e(alloc.get('invoice_id'))}</td>"
+                f"<td class='money'>{self._money(alloc.get('amount'))}</td></tr>"
+            )
+        allocations_html = (
+            "<table><thead><tr><th>توزيع على الفواتير</th><th>المبلغ</th></tr></thead>"
+            f"<tbody>{''.join(alloc_rows)}</tbody></table>"
+            if alloc_rows
+            else ""
+        )
+
+        notes = voucher.get("notes")
+        notes_html = f'<div class="note"><b>ملاحظات:</b> {self._e(notes)}</div>' if str(notes or "").strip() else ""
+
+        body = f"""
+<div class="meta-row">
+  <span>النوع: <b>{self._e(title)}</b></span>
+  <span class="sep">|</span>
+  <span>التاريخ: <b>{date_text}</b></span>
+  <span class="sep">|</span>
+  <span>{party_label}: <b>{party_text}</b></span>
+  <span class="sep">|</span>
+  <span>المرجع: <b>{reference_text}</b></span>
+</div>
+<div class="grid">
+  <div class="metric"><small>المبلغ</small><strong>{self._money(voucher.get('amount'))}</strong></div>
+  <div class="metric"><small>موزّع على فواتير</small><strong>{self._money(voucher.get('allocated_amount'))}</strong></div>
+  <div class="metric"><small>على الحساب</small><strong>{self._money(voucher.get('unallocated_amount'))}</strong></div>
+</div>
+{allocations_html}
+{notes_html}
+"""
+        doc_number = f"سند #{voucher_id}" if voucher_id is not None else title
+        return self._shell(title, title, body, doc_number=doc_number)
 
     def barcode_labels_html(
         self,

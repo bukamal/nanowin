@@ -22,6 +22,11 @@ class SearchSelect(ft.Column):
     through ``value`` while the field shows the human label.
     """
 
+    # Cap (px) for the results dropdown when a query returns many rows; the
+    # list scrolls inside this height so showing results never stretches the
+    # surrounding form sheet.
+    _RESULTS_MAX_HEIGHT = 288
+
     def __init__(
         self,
         *,
@@ -46,7 +51,7 @@ class SearchSelect(ft.Column):
             on_change=self._field_changed,
             on_focus=self._field_focused,
         )
-        self.results = ft.Column(spacing=0, tight=True)
+        self.results = ft.Column(spacing=0, tight=True, scroll=ft.ScrollMode.AUTO)
         self.results_box = ft.Container(
             content=self.results,
             visible=False,
@@ -168,6 +173,9 @@ class SearchSelect(ft.Column):
             return
         self.results.controls = controls
         self._last_render_controls = controls
+        # Cap the dropdown height so a long result list can never stretch the
+        # sheet/container it lives in; the list scrolls inside the cap instead.
+        self.results_box.height = self._RESULTS_MAX_HEIGHT if len(controls) > 5 else None
 
     def _choose(self, choice: SearchChoice | None) -> None:
         self._value = choice.key if choice else None
