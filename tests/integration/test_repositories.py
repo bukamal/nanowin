@@ -213,15 +213,14 @@ def test_delete_opening_balance_clears_baseline_and_survives_rebuild(tmp_path):
     assert ctx.db.integrity_check().lower() == "ok"
 
 
-def test_delete_opening_balance_blocked_after_invoice(ctx):
+def test_delete_opening_balance_blocked_after_invoice(ctx, seeded):
     supplier_id = ctx.suppliers.list()[0]["id"]
-    item_id = ctx.items.create(name="مورد", purchase_price=10, selling_price=15, quantity=5)
     ctx.invoices.create_invoice(
         invoice_type="purchase", supplier_id=supplier_id, paid_amount=0,
-        lines=[InvoiceLineInput(description="A", item_id=item_id, quantity=2, unit_price=12)],
+        lines=[InvoiceLineInput(description="A", item_id=seeded["item_id"], quantity=2, unit_price=12)],
     )
     with pytest.raises(ValueError, match="فاتورة"):
-        ctx.items.delete_opening_balance(item_id)
+        ctx.items.delete_opening_balance(seeded["item_id"])
 
 
 def test_delete_opening_balance_rejects_services(ctx):
