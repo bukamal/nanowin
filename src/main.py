@@ -32,7 +32,7 @@ from nano_offline.components.command_bar import CommandBar, RibbonAction, Ribbon
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
-from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
 from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
@@ -698,11 +698,87 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             expand=True,
         )
 
+    def _scene_enabled() -> bool:
+        try:
+            return str(ctx.settings.get("ui.home_scene", "1")).strip().lower() not in {"0", "false", "off", "no"}
+        except Exception:
+            return True
+
+    def _reduce_motion() -> bool:
+        try:
+            return str(ctx.settings.get("ui.reduce_motion", "0")).strip().lower() in {"1", "true", "on", "yes"}
+        except Exception:
+            return False
+
+    def _render_scene_home() -> None:
+        from nano_offline.components.store_scene import render_store_scene
+        from nano_offline.core import currency as _currency
+        from nano_offline.core import privacy as _privacy
+
+        def _fmt(value) -> str:
+            try:
+                return _privacy.money_ctx(float(value or 0), ctx)
+            except Exception:
+                try:
+                    return _currency.format_amount(float(value or 0), ctx.settings)
+                except Exception:
+                    return "—"
+
+        def _on_select(key: str) -> None:
+            if key == "pos":
+                open_pos()
+            elif key == "purchase":
+                navigate("invoices", initial_type="purchase")
+            else:
+                navigate(key)
+
+        def _on_action(action_id: str) -> None:
+            if action_id == "new_sale":
+                open_table_invoice("sale")
+            elif action_id == "last_sales":
+                navigate("invoices", initial_type="sale")
+            elif action_id == "stocktake":
+                navigate("stocktake")
+            elif action_id == "new_purchase":
+                open_table_invoice("purchase")
+            elif action_id == "open_suppliers":
+                navigate("suppliers")
+            elif action_id == "receipt":
+                open_receipt()
+            elif action_id == "payment":
+                open_supplier_payment()
+            elif action_id == "statement":
+                open_statement("customer")
+
+        surface = render_store_scene(
+            page,
+            ctx,
+            fmt=_fmt,
+            on_select=_on_select,
+            on_action=_on_action,
+            can=session.can,
+            reduce_motion=_reduce_motion(),
+            open_command_palette=open_command_palette,
+        )
+        set_header("الرئيسية الذكية", "متجرك في مشهد تفاعلي — اختر منطقة للبدء")
+        content.content = surface
+        try:
+            page.update()
+        except Exception:
+            pass
+
     def show_home() -> None:
+        if _scene_enabled():
+            try:
+                _render_scene_home()
+                return
+            except Exception:
+                import logging
+
+                logging.getLogger("nano.home").warning("store scene failed; using flat board", exc_info=True)
         _render_module_board()
 
     actions["dashboard"] = show_home
-
     selected_key = {"value": "dashboard"}
     sidebar_buttons: dict[str, ft.Container] = {}
 
