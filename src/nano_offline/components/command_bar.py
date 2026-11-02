@@ -177,18 +177,21 @@ class CommandBar(ft.Container):
 
         use_menu_bar = str(os.environ.get("CASHIR_MENUBAR", "1")).strip().lower() not in ("0", "false", "off", "no")
         try:
-            bar = ft.MenuBar(controls=[self._submenu(m) for m in self.menus], expand=True) if (self.menus and use_menu_bar) else None
+            bar = ft.MenuBar(controls=[self._submenu(m) for m in self.menus]) if (self.menus and use_menu_bar) else None
         except Exception:
             bar = None
         if bar is None:
             row = ft.Row(
                 [self._menu_button(m) for m in self.menus],
-                spacing=2,
-                scroll=ft.ScrollMode.AUTO,
+                spacing=4,
+                alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
             return ft.Container(row, expand=True)
-        return ft.Container(bar, expand=True)
+        # Centre the whole menu group inside the bar's available region so the
+        # titles keep equal space on both sides (the bar keeps its intrinsic
+        # width; the expanding, centre-aligned Container supplies the margins).
+        return ft.Container(bar, expand=True, alignment=ft.alignment.center)
 
     def _submenu(self, menu: RibbonMenu) -> ft.SubmenuButton:
         """One top-level menu: a real cascading menu (icon + name)."""
