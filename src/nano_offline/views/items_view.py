@@ -2909,6 +2909,14 @@ class ItemsCenter:
                 or any(float(stats.get(k) or 0) for k in ("sold_qty", "purchased_qty", "sale_count", "purchase_count"))
                 or bool(movements)
             )
+            # Opening balance can only be cleared while the item has never
+            # been invoiced; removing the baseline under real documents would
+            # corrupt inventory valuation (the repository re-checks anyway).
+            can_clear_opening = (
+                str(data.get("item_type")) == "مخزون"
+                and float(data.get("opening_quantity") or 0) > 1e-9
+                and not (int(stats.get("sale_count") or 0) or int(stats.get("purchase_count") or 0))
+            )
 
             # Bottom sheet instead of a centered AlertDialog: this is a
             # read-mostly detail view (no destructive/confirm action), so a
@@ -2942,6 +2950,12 @@ class ItemsCenter:
                 await asyncio.sleep(0.1)
                 confirm_delete_item(data)
 
+            async def clear_opening(_=None):
+                # Same close-then-act yield as edit()/delete_it().
+                close()
+                await asyncio.sleep(0.1)
+                confirm_clear_opening(data)
+
             # Same fix as the item editor and barcode-print sheets above:
             # give the OUTER sheet Container an explicit height computed
             # from the real screen height instead of letting Flutter
@@ -2951,7 +2965,7 @@ class ItemsCenter:
             # into a fixed footer so it's always reachable.
             page_h = page.height or 780
             total_sheet_h = min(int(page_h * 0.55), 600)
-            header_reserved, footer_reserved, gaps = 90, 100, 24
+            header_reserved, footer_reserved, gaps = 90, 140 if can_clear_opening else 100, 24
             body_area_height = max(180, total_sheet_h - header_reserved - footer_reserved - gaps)
 
             detail_sheet.content = ft.Container(
@@ -3010,6 +3024,17 @@ class ItemsCenter:
                                         ),
                                         spacing=10,
                                     ),
+                                    ft.Row(
+                                        [
+                                            ft.TextButton(
+                                                "حذف الرصيد الافتتاحي",
+                                                icon=ft.Icons.MONEY_OFF_ROUNDED,
+                                                on_click=clear_opening,
+                                                expand=True,
+                                            )
+                                        ],
+                                        spacing=10,
+                                    ) if can_clear_opening else ft.Container(height=0),
                                 ],
                                 spacing=8,
                             ),
@@ -3051,6 +3076,34 @@ class ItemsCenter:
             confirm.title = ft.Text("حذف المادة")
             confirm.content = ft.Text(f"هل تريد حذف «{item['name']}»؟ لن يُسمح بالحذف إذا استُخدمت المادة لاحقًا.")
             confirm.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
+            page.open(confirm)
+
+        def confirm_clear_opening(item: dict) -> None:
+            confirm = ft.AlertDialog(modal=True)
+
+            def close(_=None):
+                page.close(confirm)
+
+            def do_clear(_=None):
+                try:
+                    result = ctx.items.delete_opening_balance(int(item["id"]))
+                    page.close(confirm)
+                    qty = float(result.get("removed_quantity") or 0)
+                    notify(f"تم حذف الرصيد الافتتاحي ({qty:g})", kind="success", sound_kind="delete")
+                    refresh()
+                except Exception as exc:
+                    page.close(confirm)
+                    notify(str(exc), kind="error")
+
+            confirm.title = ft.Text("حذف الرصيد الافتتاحي")
+            confirm.content = ft.Text(
+                f"سيُصفَّر الرصيد الافتتاحي للمادة «{item['name']}» وتُحذف حركة الافتتاح، ولا يمكن التراجع. "
+                "لن يُسمح بذلك إذا استُخدمت المادة في أي فاتورة."
+            )
+            confirm.actions = [
+                ft.TextButton("إلغاء", on_click=close),
+                ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=do_clear),
+            ]
             page.open(confirm)
 
         def _quiet_item_ids() -> set[int]:

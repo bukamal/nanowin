@@ -576,6 +576,61 @@ class ItemRepository(Offloadable):
                 (item_id,),
             )
 
+    @blocking
+    def delete_opening_balance(self, item_id: int) -> dict:
+        """Remove an item's opening stock entry (mistake undo).
+
+        Adding a stock item with an opening quantity writes one
+        ``inventory_movements`` row of type ``adjustment`` (invoice_id NULL)
+        plus the ``items.opening_quantity``/``opening_unit_cost`` baseline,
+        which ``AccountingRebuilder.rebuild_inventory`` replays on every
+        rebuild. This clears that baseline entirely so a rebuild reproduces
+        empty stock, and deletes the matching opening adjustment row.
+
+        Deliberately narrow, like :meth:`delete`: allowed only while the item
+        has never appeared on any invoice and its only inventory history is
+        that single opening adjustment. Once real documents exist the opening
+        baseline is load-bearing history, so it must be corrected through a
+        stocktake instead of removed underneath it.
+        """
+        with self.db.transaction() as conn:
+            item = conn.execute(
+                "SELECT id,item_type,opening_quantity,opening_unit_cost FROM items WHERE id=?",
+                (item_id,),
+            ).fetchone()
+            if item is None:
+                raise ValueError("المادة غير موجودة")
+            if str(item["item_type"]) != "مخزون":
+                raise ValueError("الرصيد الافتتاحي يُطبَّق على مواد المخزون فقط")
+            invoiced = conn.execute(
+                "SELECT 1 FROM invoice_lines WHERE item_id=? LIMIT 1", (item_id,)
+            ).fetchone()
+            if invoiced:
+                raise ValueError("لا يمكن حذف الرصيد الافتتاحي بعد استخدام المادة في فاتورة")
+            adjustments = conn.execute(
+                "SELECT COUNT(*) AS c FROM inventory_movements WHERE item_id=? AND invoice_id IS NULL",
+                (item_id,),
+            ).fetchone()["c"]
+            if int(adjustments or 0) > 1:
+                raise ValueError("يوجد أكثر من تسوية مخزون لهذه المادة — صحّح الرصيد عبر الجرد")
+
+            opening_qty = float(item["opening_quantity"] or 0)
+            opening_cost = float(item["opening_unit_cost"] or 0)
+            conn.execute(
+                "DELETE FROM inventory_movements WHERE item_id=? AND invoice_id IS NULL",
+                (item_id,),
+            )
+            conn.execute(
+                "UPDATE items SET quantity=0,opening_quantity=0,average_cost=0,opening_unit_cost=0,"
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (item_id,),
+            )
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('opening_delete','item',?,?)",
+                (item_id, f"qty={opening_qty} cost={opening_cost}"),
+            )
+            return {"removed_quantity": opening_qty, "removed_unit_cost": opening_cost}
+
     @staticmethod
     def _replace_units(conn, item_id: int, base_unit_id: int | None, item_units: list[dict]) -> None:
         conn.execute("DELETE FROM item_units WHERE item_id=?", (item_id,))

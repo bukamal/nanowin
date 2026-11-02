@@ -191,3 +191,40 @@ def test_backup_encrypted_requires_password(ctx, seeded, tmp_path):
         ctx.backup.validate_backup(target)
     with pytest.raises(ValueError):
         ctx.backup.restore_backup(target)
+
+
+def test_delete_opening_balance_clears_baseline_and_survives_rebuild(tmp_path):
+    ctx = AppContext.create(tmp_path / "opening.db")
+    item_id = ctx.items.create(name="افتتاحي", purchase_price=10, selling_price=15, quantity=7)
+    assert float(ctx.items.get(item_id)["opening_quantity"]) == 7
+    assert len(ctx.items.movements(item_id)) == 1
+
+    result = ctx.items.delete_opening_balance(item_id)
+    assert result["removed_quantity"] == 7
+
+    item = ctx.items.get(item_id)
+    assert float(item["quantity"]) == 0
+    assert float(item["opening_quantity"]) == 0
+    assert float(item["average_cost"]) == 0
+    assert ctx.items.movements(item_id) == []
+
+    fresh = AppContext.create(tmp_path / "opening.db")  # restart -> rebuild
+    assert float(fresh.items.get(item_id)["quantity"]) == 0
+    assert ctx.db.integrity_check().lower() == "ok"
+
+
+def test_delete_opening_balance_blocked_after_invoice(ctx):
+    supplier_id = ctx.suppliers.list()[0]["id"]
+    item_id = ctx.items.create(name="مورد", purchase_price=10, selling_price=15, quantity=5)
+    ctx.invoices.create_invoice(
+        invoice_type="purchase", supplier_id=supplier_id, paid_amount=0,
+        lines=[InvoiceLineInput(description="A", item_id=item_id, quantity=2, unit_price=12)],
+    )
+    with pytest.raises(ValueError, match="فاتورة"):
+        ctx.items.delete_opening_balance(item_id)
+
+
+def test_delete_opening_balance_rejects_services(ctx):
+    service_id = ctx.items.create(name="خدمة", item_type="خدمة", purchase_price=0, selling_price=20)
+    with pytest.raises(ValueError, match="المخزون"):
+        ctx.items.delete_opening_balance(service_id)
