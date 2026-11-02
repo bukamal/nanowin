@@ -699,10 +699,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         )
 
     def _scene_enabled() -> bool:
+        # The smart-store scene is opt-in; the flat units board is the
+        # default home again.
         try:
-            return str(ctx.settings.get("ui.home_scene", "1")).strip().lower() not in {"0", "false", "off", "no"}
+            return str(ctx.settings.get("ui.home_scene", "0")).strip().lower() in {"1", "true", "on", "yes"}
         except Exception:
-            return True
+            return False
 
     def _reduce_motion() -> bool:
         try:
