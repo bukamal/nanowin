@@ -8,10 +8,10 @@ running Flet app -- the same reasoning behind ``core.router``.
 The interaction model is the spreadsheet one users already know from Excel:
 
 * **Arrows** move the selection over every cell (read-only ones included).
-* **Tab / Shift+Tab** hop over *editable* cells only, wrapping into the
-  next/previous row, so data entry never lands on a computed column.
-* **Enter** starts editing the active cell (if editable); a second Enter
-  commits. **Escape** cancels without writing.
+* **Enter / Tab** move one cell forward row-major across *every* column --
+  read-only ones included -- wrapping into the next row, so the last column
+  is never skipped. **Shift+Tab** steps backwards the same way.
+* **Escape** cancels an edit without writing.
 * **Home / End** jump to the first/last column, **Ctrl+Home/End** were
   intentionally left out -- the model stays small and predictable.
 * **PageUp / PageDown** move by a caller-supplied page height.
@@ -149,28 +149,24 @@ class GridNavigator:
         return self.move(dr=int(direction) * max(1, int(page_size)))
 
     def tab(self, shift: bool = False) -> bool:
-        """Advance to the next/previous *editable* cell across the grid.
+        """Step one cell forward (or backward with ``shift``), row-major.
 
-        Scanning is flat (row-major) and stops at the grid edges rather than
-        wrapping, so Tab at the last field simply stays put -- no surprising
-        jump back to the top-left mid-entry.
+        Walks *every* column -- read-only ones included -- so advancing never
+        skips the last column and jump to the next row unexpectedly. Stops at
+        the grid edges rather than wrapping, so the caller can append a new
+        row at the very end (see ``DataGrid._advance_forward``).
         """
-        editable = self.editable_cols
-        if not editable or not self.has_rows:
+        if not self.columns or not self.has_rows:
             return False
         ncols = len(self.columns)
         total = self.row_count * ncols
         step = -1 if shift else 1
-        pos = self.row * ncols + self.col
-        for _ in range(total):
-            pos += step
-            if pos < 0 or pos >= total:
-                return False
-            r, c = divmod(pos, ncols)
-            if c in editable:
-                self.row, self.col, self.editing = r, c, False
-                return True
-        return False
+        pos = self.row * ncols + self.col + step
+        if pos < 0 or pos >= total:
+            return False
+        r, c = divmod(pos, ncols)
+        self.row, self.col, self.editing = r, c, False
+        return True
 
     # ------------------------------------------------------------------ edit
     def begin_edit(self) -> bool:

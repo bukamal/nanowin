@@ -94,11 +94,11 @@ def test_arming_via_click_enables_keyboard_navigation():
     assert g._cell_boxes[(1, 1)].bgcolor is None
 
 
-def test_tab_hops_only_editable_columns():
+def test_tab_steps_to_next_column_including_read_only():
     g = make_grid()
     g._on_cell_click(0, 0)
     g._handle_key(FakeKey("Tab"))
-    assert g.nav.cell == (0, 2)  # skips read-only category
+    assert g.nav.cell == (0, 1)  # read-only category is not skipped
 
 
 def test_delete_clears_editable_cell_and_notifies():
@@ -456,7 +456,7 @@ def test_type_to_edit_starts_editor_with_the_typed_character():
     assert g._rows[0]["name"] == "قلم رصاص"
 
 
-def test_enter_commits_and_advances_to_next_editable_cell():
+def test_enter_commits_and_advances_to_next_cell():
     g = make_grid()
     g._on_cell_click(0, 0)           # name (first editable)
     g._handle_key(FakeKey("F2"))     # open editor (keeps value)
@@ -464,7 +464,7 @@ def test_enter_commits_and_advances_to_next_editable_cell():
     g._edit_field.value = "دفتر"
     g._handle_key(FakeKey("Enter"))  # commit + advance
     assert g._rows[0]["name"] == "دفتر"
-    assert g.nav.cell == (0, 2)      # next editable cell (price)
+    assert g.nav.cell == (0, 1)      # next column (read-only included)
 
 
 def test_enter_wraps_to_next_row():
@@ -485,6 +485,33 @@ def test_enter_at_last_cell_appends_a_row():
     g._edit_field.value = "1"
     g._handle_key(FakeKey("Enter"))
     assert len(g.rows) == len(ROWS) + 1
+
+
+def test_tab_at_last_cell_appends_a_row():
+    g = make_grid()
+    last = len(ROWS) - 1
+    g._on_cell_click(last, len(COLS) - 1)
+    g._handle_key(FakeKey("Tab"))
+    assert len(g.rows) == len(ROWS) + 1
+
+
+def test_shift_tab_steps_backwards():
+    g = make_grid()
+    g._on_cell_click(1, 2)
+    g._handle_key(FakeKey("Tab", shift=True))
+    assert g.nav.cell == (1, 1)
+
+
+def test_tab_while_editing_commits_and_advances():
+    g = make_grid()
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("F2"))
+    assert g._edit_field is not None
+    g._edit_field.value = "قلم جاف"
+    g._handle_key(FakeKey("Tab"))
+    assert g._edit_field is None
+    assert g._rows[0]["name"] == "قلم جاف"
+    assert g.nav.cell == (0, 1)
 
 
 def test_ctrl_a_selects_the_whole_grid():

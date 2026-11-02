@@ -270,11 +270,16 @@ class DataGrid(ft.Column):
                 self._picker_move(-1)
             return
         if self._edit_field is not None:
-            # While a cell editor is open, Enter/Escape resolve it; every
-            # other key is the user typing, so leave it to the TextField.
+            # While a cell editor is open, Enter/Tab commit and move (Tab
+            # behaves exactly like Enter, Shift+Tab moves backwards); Escape
+            # cancels. Every other key is the user typing, so leave it to the
+            # TextField.
             key = _norm_key(e.key)
+            shift = bool(getattr(e, "shift", False))
             if key == "enter":
                 self._commit_edit(move="next")
+            elif key == "tab":
+                self._commit_edit(move="prev" if shift else "next")
             elif key in ("escape", "esc"):
                 self._cancel_edit()
             return
@@ -372,7 +377,14 @@ class DataGrid(ft.Column):
         elif key == _RIGHT:
             moved = self.nav.move_right()
         elif key == "tab":
-            moved = self.nav.tab(shift)
+            # Tab mirrors Enter (forward): step across every column, wrapping
+            # to the next row and appending a fresh row at the very end.
+            # Shift+Tab steps backwards.
+            if shift:
+                moved = self.nav.tab(shift=True)
+            else:
+                self._advance_forward()
+                return
         elif key == "home":
             moved = self.nav.home()
         elif key == "end":
@@ -1505,22 +1517,29 @@ class DataGrid(ft.Column):
                 return
         self._render_row(r)
         self._safe_update(self._body)
-        # Enter commits and advances to the next editable cell (wrapping to
-        # the next row, appending a row at the end).
+        # Enter/Tab commit and advance to the next cell (wrapping to the next
+        # row, appending a row at the end); Shift+Tab steps backwards.
         if move == "next":
             self._advance_forward()
+        elif move == "prev":
+            self._advance_backward()
         elif move == "down" and self.nav.move_down():
             self._paint_selection()
 
     def _advance_forward(self) -> None:
-        """Move to the next editable cell; at the end of a row wrap to the
-        first editable cell of the next row, and at the very end of the grid
-        append a fresh row (editable grids only)."""
+        """Move to the next cell; at the end of a row wrap to the first cell
+        of the next row, and at the very end of the grid append a fresh row
+        (editable grids only)."""
         if self.nav.tab(False):
             self._paint_selection()
             return
         if self.nav.editable_cols:
             self.add_row()
+
+    def _advance_backward(self) -> None:
+        """Step to the previous cell (Shift+Tab); stops at the very start."""
+        if self.nav.tab(shift=True):
+            self._paint_selection()
 
     def _cancel_edit(self) -> None:
         if self._edit_field is None:

@@ -96,23 +96,25 @@ def test_page_size_minimum_one():
 
 
 # ------------------------------------------------------------------ Tab order
-def test_tab_skips_read_only_columns():
+def test_tab_visits_every_column_including_read_only():
     nav = make_nav(COLS, row_count=2)
     nav.select(0, 0)  # editable: name
     assert nav.tab() is True
-    assert nav.cell == (0, 2)  # skips read-only category -> quantity
+    assert nav.cell == (0, 1)  # read-only category is not skipped
+    assert nav.tab() is True
+    assert nav.cell == (0, 2)  # quantity
     assert nav.tab() is True
     assert nav.cell == (0, 3)  # selling_price
 
 
 def test_tab_wraps_into_next_row():
     nav = make_nav(COLS, row_count=2)
-    nav.select(0, 3)  # last editable of row 0
+    nav.select(0, 3)  # last column of row 0
     assert nav.tab() is True
-    assert nav.cell == (1, 0)  # first editable of row 1
+    assert nav.cell == (1, 0)  # first column of row 1
 
 
-def test_tab_stops_at_last_editable_cell():
+def test_tab_stops_at_last_cell():
     nav = make_nav(COLS, row_count=2)
     nav.select(1, 3)
     assert nav.tab() is False
@@ -129,11 +131,11 @@ def test_shift_tab_steps_backwards_and_stops_at_start():
     assert nav.cell == (0, 0)
 
 
-def test_tab_with_no_editable_columns_is_noop():
+def test_tab_moves_across_read_only_columns_too():
     cols = [GridColumn("a", "A"), GridColumn("b", "B")]
     nav = make_nav(cols, row_count=3)
-    assert nav.tab() is False
-    assert nav.cell == (0, 0)
+    assert nav.tab() is True
+    assert nav.cell == (0, 1)
 
 
 def test_tab_with_no_rows_is_noop():
