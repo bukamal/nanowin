@@ -1403,6 +1403,7 @@ class InvoiceCenter:
             columns=line_columns,
             rows=[], page=self.page,
             row_height=36,
+            center_cells=True,
             hidden_keys=line_visibility.hidden_keys,
             picker_options=lambda _col, _row: [
                 (int(item_row["id"]), item_row["name"])
@@ -2055,8 +2056,24 @@ class InvoiceCenter:
         def _syp_text(amount_usd: float) -> str:
             return currency.format_amount(amount_usd, rate=configured_rate, symbol=syp_symbol, decimals=0)
 
+        # The extra cost/total columns are shown in the *complementary*
+        # currency (opposite to the display currency, which the primary
+        # price/total columns already use), so no column is ever duplicated.
+        extra_currency = {
+            "value": (
+                currency.DISPLAY_CURRENCY_SYP
+                if currency.get_display_currency(settings) == currency.DISPLAY_CURRENCY_USD
+                else currency.DISPLAY_CURRENCY_USD
+            )
+        }
+
+        def _extra_text(amount_usd: float) -> str:
+            if extra_currency["value"] == currency.DISPLAY_CURRENCY_SYP:
+                return _syp_text(amount_usd)
+            return _usd_text(amount_usd)
+
         def row_formatter(col, value, row):
-            if col.key in ("_sale_usd", "_sale_syp", "_cost_usd", "_cost_syp", "_total_usd", "_total_syp"):
+            if col.key in ("_extra_cost", "_extra_total"):
                 try:
                     qty = float(row.get("qty") or 0)
                 except (TypeError, ValueError):
@@ -2068,24 +2085,12 @@ class InvoiceCenter:
                 price_usd = (price_disp / rate) if rate else price_disp
                 item_row = item_map.get(int(row["item"])) if row.get("item") else None
                 if (type_dd.value or "sale") == "sale":
-                    sale_usd = price_usd
                     cost_usd = float((item_row or {}).get("average_cost") or (item_row or {}).get("purchase_price") or 0)
                 else:
-                    sale_usd = float((item_row or {}).get("selling_price") or 0)
                     cost_usd = price_usd
-                total_usd = qty * price_usd
-                if col.key == "_sale_usd":
-                    return _usd_text(sale_usd)
-                if col.key == "_sale_syp":
-                    return _syp_text(sale_usd)
-                if col.key == "_cost_usd":
-                    return _usd_text(cost_usd)
-                if col.key == "_cost_syp":
-                    return _syp_text(cost_usd)
-                if col.key == "_total_usd":
-                    return _usd_text(total_usd)
-                if col.key == "_total_syp":
-                    return _syp_text(total_usd)
+                if col.key == "_extra_cost":
+                    return _extra_text(cost_usd)
+                return _extra_text(qty * price_usd)
             if col.key == "item":
                 if not value:
                     return "— اختر مادة —"
@@ -2136,12 +2141,8 @@ class InvoiceCenter:
             GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
             GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
             GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
-            GridColumn("_cost_usd", "سعر الشراء $", width=112, align="end", sortable=False),
-            GridColumn("_cost_syp", "سعر الشراء ل.س", width=120, align="end", sortable=False),
-            GridColumn("_sale_usd", "سعر المبيع $", width=112, align="end", sortable=False),
-            GridColumn("_sale_syp", "سعر المبيع ل.س", width=120, align="end", sortable=False),
-            GridColumn("_total_usd", "المجموع $", width=112, align="end", sortable=False),
-            GridColumn("_total_syp", "المجموع ل.س", width=120, align="end", sortable=False),
+            GridColumn("_extra_cost", "التكلفة", width=130, align="end", sortable=False, tooltip="تكلفة الوحدة بالعملة الإضافية (بدّل $/ل.س من الشريط)"),
+            GridColumn("_extra_total", "الإجمالي", width=140, align="end", sortable=False, tooltip="إجمالي البند بالعملة الإضافية"),
             GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
         ]
         line_visibility = ColumnVisibility(
@@ -2154,6 +2155,24 @@ class InvoiceCenter:
             ),
         )
         columns_button = line_visibility.button()
+
+        extra_currency_toggle = SegmentedToggle(
+            options=[
+                SegmentOption(currency.DISPLAY_CURRENCY_USD, "$"),
+                SegmentOption(currency.DISPLAY_CURRENCY_SYP, "ل.س"),
+            ],
+            value=extra_currency["value"],
+        )
+
+        def _extra_currency_changed(_=None):
+            extra_currency["value"] = extra_currency_toggle.value or currency.DISPLAY_CURRENCY_USD
+            try:
+                lines_grid.set_rows(list(lines_grid.rows))
+            except Exception:
+                pass
+            self.page.update()
+
+        extra_currency_toggle.on_change = _extra_currency_changed
 
         bulk_bar = ft.Container(
             visible=False,
@@ -2189,6 +2208,7 @@ class InvoiceCenter:
             selectable=True,
             on_selection_change=lambda rows: render_lines_selection(rows),
             empty_text="أدخل مادة للبدء أو امسح باركود",
+            center_cells=True,
         )
 
         def fill_line_defaults(index: int, item_id: int) -> None:
@@ -2724,6 +2744,7 @@ class InvoiceCenter:
                             ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
                             ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
+                            ft.Container(extra_currency_toggle, width=130),
                             density_button,
                             export_button,
                         ],
@@ -3150,6 +3171,7 @@ class InvoiceCenter:
             page=self.page,
             viewport_height=max(240, int(int(self.page.height or 800) * 0.62) - 150),
             row_height=36 if line_density_state["compact"] else 48,
+            center_cells=True,
             hidden_keys=set(line_hidden_state["keys"]),
             formatter=row_formatter,
             picker_options=lambda col, row: (
@@ -3843,6 +3865,7 @@ class InvoiceCenter:
                 ],
                 rows=[], page=self.page,
                 row_height=36,
+                center_cells=True,
                 picker_options=lambda _col, _row: [
                     (int(item_row["id"]), item_row["name"])
                     for item_row in items

@@ -2488,6 +2488,7 @@ class ItemsCenter:
             bulk_grid = DataGrid(
                 columns=bulk_columns, rows=[], page=page,
                 row_height=36 if bulk_density_state["compact"] else 48,
+                center_cells=True,
                 hidden_keys=bulk_visibility.hidden_keys,
                 formatter=bulk_formatter,
                 edit_formatter=lambda col, value, row: _edit_item_cell_text(col, value, row, ctx.settings),
