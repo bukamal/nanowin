@@ -9,7 +9,7 @@ from nano_offline.core import currency
 from nano_offline.core import invoice_settings
 from nano_offline.core import money
 from nano_offline.core.expiring import invalidate_insights
-from nano_offline.services.accounting_rebuilder import AccountingRebuilder
+from nano_offline.services.accounting_rebuilder import AccountingRebuilder, OPENING_BALANCE_MARKER
 
 EPSILON = 1e-9
 
@@ -188,6 +188,105 @@ class InvoiceService:
             )
             # Dashboard insights (receivables, pulse, alerts) are cached for
             # a short TTL; a fresh sale must not wait it out.
+            invalidate_insights()
+            return invoice_id
+
+    def convert_opening_balances(
+        self, *, item_ids: list[int] | None = None, reference: str = "أول المدة"
+    ) -> int | None:
+        """Turn opening-stock balances into an inventory-only purchase invoice.
+
+        Items created with an opening quantity carry it in
+        ``items.opening_quantity`` (the baseline ``AccountingRebuilder``
+        replays). This converts eligible items -- no invoice history yet --
+        into a single cash-free "أول المدة" purchase invoice priced at each
+        item's opening cost, then zeroes the baseline and removes the opening
+        adjustment movements, all in one transaction so inventory is never
+        double-counted.
+
+        The invoice is marked (:data:`OPENING_BALANCE_MARKER`) so the rebuilder
+        treats it as inventory-only: it seeds stock/valuation and shows up in
+        the purchases list, but posts no cash, payables or period profit.
+        Returns the new invoice id, or ``None`` when nothing was eligible.
+        """
+        with self.db.transaction() as conn:
+            sql = (
+                "SELECT id,name,opening_quantity,opening_unit_cost,purchase_price,base_unit_id "
+                "FROM items WHERE item_type='مخزون' AND opening_quantity > 1e-9 "
+                "AND id NOT IN (SELECT DISTINCT item_id FROM invoice_lines WHERE item_id IS NOT NULL)"
+            )
+            params: list[object] = []
+            if item_ids:
+                ids_filter = [int(i) for i in item_ids]
+                sql += " AND id IN (" + ",".join("?" for _ in ids_filter) + ")"
+                params.extend(ids_filter)
+            candidates = [dict(r) for r in conn.execute(sql, params).fetchall()]
+            if not candidates:
+                return None
+
+            ids = [int(r["id"]) for r in candidates]
+            conn.executemany(
+                "UPDATE items SET opening_quantity=0, opening_unit_cost=0 WHERE id=?",
+                [(i,) for i in ids],
+            )
+            for i in ids:
+                conn.execute(
+                    "DELETE FROM inventory_movements "
+                    "WHERE item_id=? AND invoice_id IS NULL AND movement_type='adjustment'",
+                    (i,),
+                )
+
+            lines = [
+                InvoiceLineInput(
+                    description=f'{r["name"]} — أول المدة',
+                    item_id=int(r["id"]),
+                    unit_id=int(r["base_unit_id"]) if r["base_unit_id"] is not None else None,
+                    quantity=float(r["opening_quantity"] or 0),
+                    unit_price=float(r["opening_unit_cost"] or r["purchase_price"] or 0),
+                )
+                for r in candidates
+            ]
+            prepared, total, _paid = self._validate_and_prepare(
+                conn,
+                invoice_type="purchase",
+                lines=lines,
+                customer_id=None,
+                supplier_id=None,
+                paid_amount=0,
+            )
+            settings = {
+                str(r["key"]): str(r["value"])
+                for r in conn.execute("SELECT key,value FROM settings").fetchall()
+            }
+            print_snapshot = invoice_settings.encode_print_snapshot(
+                invoice_settings.print_snapshot_from_settings(settings)
+            )
+            cur = conn.execute(
+                """INSERT INTO invoices(type,customer_id,supplier_id,invoice_date,reference,notes,total,
+                                         initial_paid_amount,paid_amount,allow_negative_stock,
+                                         invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol,
+                                         print_options)
+                   VALUES('purchase',NULL,NULL,?,?,?,?,?,?,0,?,?,?,?)""",
+                (
+                    date.today().isoformat(),
+                    (reference or "").strip() or "أول المدة",
+                    OPENING_BALANCE_MARKER,
+                    total,
+                    total,
+                    total,
+                    currency.get_exchange_rate(settings),
+                    currency.get_display_currency(settings),
+                    currency.get_display_symbol(settings),
+                    print_snapshot,
+                ),
+            )
+            invoice_id = int(cur.lastrowid)
+            self._insert_lines(conn, invoice_id, prepared)
+            AccountingRebuilder.rebuild(conn)
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','invoice',?,?)",
+                (invoice_id, f"purchase:opening:{total}"),
+            )
             invalidate_insights()
             return invoice_id
 

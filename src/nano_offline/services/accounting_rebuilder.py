@@ -4,6 +4,21 @@ from nano_offline.core import money
 
 EPSILON = 1e-9
 
+#: Marker stored on an invoice's ``notes`` when it represents a converted
+#: opening-stock balance ("أول المدة"). Such invoices exist to expose opening
+#: stock in the purchases list and to seed inventory valuation, but they must
+#: NOT post cash, payables or period profit (the stock was not bought in this
+#: period and no supplier is owed). The rebuilder therefore treats them as
+#: inventory-only.
+OPENING_BALANCE_MARKER = "__opening_balance__"
+
+
+def _is_opening_invoice(inv) -> bool:
+    try:
+        return OPENING_BALANCE_MARKER in str(inv["notes"] or "")
+    except Exception:
+        return False
+
 
 class AccountingRebuilder:
     """Rebuild deterministic derived accounting/inventory state.
@@ -137,6 +152,10 @@ class AccountingRebuilder:
             "SELECT * FROM invoices ORDER BY invoice_date, created_at, id"
         ).fetchall()
         for inv in invoices:
+            if _is_opening_invoice(inv):
+                # Opening stock is not a purchased-in-period document: skip
+                # its derived initial payment entirely.
+                continue
             # Deliberately NOT money.quantized here: stored initial/total were
             # already quantized to cents at write time for every modern row.
             # Legacy rate-derived rows (51000 SYP / 13500 = 3.7760000000000002)
@@ -248,7 +267,8 @@ class AccountingRebuilder:
             """UPDATE invoices
                SET paid_amount=COALESCE((
                    SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.invoice_id=invoices.id
-               ),0)"""
+               ),0)
+               WHERE notes IS NULL OR notes NOT LIKE '%__opening_balance__%'"""
         )
 
     @classmethod
@@ -261,6 +281,11 @@ class AccountingRebuilder:
             "SELECT * FROM invoices ORDER BY invoice_date, created_at, id"
         ).fetchall()
         for inv in invoices:
+            if _is_opening_invoice(inv):
+                # Inventory-only: the opening invoice already seeded stock in
+                # rebuild_inventory; posting PURCHASES/AP or moving cash here
+                # would invent a period expense/liability that never happened.
+                continue
             invoice_id = int(inv["id"])
             total = float(inv["total"])
             if inv["type"] == "sale":

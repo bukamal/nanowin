@@ -2045,7 +2045,47 @@ class InvoiceCenter:
             factor = float((unit_row or {}).get("conversion_factor") or 1)
             return round(base * factor, 2)
 
+        configured_rate = currency.get_exchange_rate(settings)
+        usd_symbol = str(settings.get(currency.USD_DISPLAY_SYMBOL_KEY) or currency.DEFAULT_USD_DISPLAY_SYMBOL)
+        syp_symbol = str(settings.get(currency.DISPLAY_SYMBOL_KEY) or currency.DEFAULT_DISPLAY_SYMBOL)
+
+        def _usd_text(amount_usd: float) -> str:
+            return currency.format_amount(amount_usd, rate=1.0, symbol=usd_symbol, decimals=2)
+
+        def _syp_text(amount_usd: float) -> str:
+            return currency.format_amount(amount_usd, rate=configured_rate, symbol=syp_symbol, decimals=0)
+
         def row_formatter(col, value, row):
+            if col.key in ("_sale_usd", "_sale_syp", "_cost_usd", "_cost_syp", "_total_usd", "_total_syp"):
+                try:
+                    qty = float(row.get("qty") or 0)
+                except (TypeError, ValueError):
+                    qty = 0.0
+                try:
+                    price_disp = float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    price_disp = 0.0
+                price_usd = (price_disp / rate) if rate else price_disp
+                item_row = item_map.get(int(row["item"])) if row.get("item") else None
+                if (type_dd.value or "sale") == "sale":
+                    sale_usd = price_usd
+                    cost_usd = float((item_row or {}).get("average_cost") or (item_row or {}).get("purchase_price") or 0)
+                else:
+                    sale_usd = float((item_row or {}).get("selling_price") or 0)
+                    cost_usd = price_usd
+                total_usd = qty * price_usd
+                if col.key == "_sale_usd":
+                    return _usd_text(sale_usd)
+                if col.key == "_sale_syp":
+                    return _syp_text(sale_usd)
+                if col.key == "_cost_usd":
+                    return _usd_text(cost_usd)
+                if col.key == "_cost_syp":
+                    return _syp_text(cost_usd)
+                if col.key == "_total_usd":
+                    return _usd_text(total_usd)
+                if col.key == "_total_syp":
+                    return _syp_text(total_usd)
             if col.key == "item":
                 if not value:
                     return "— اختر مادة —"
@@ -2096,6 +2136,12 @@ class InvoiceCenter:
             GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
             GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
             GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
+            GridColumn("_cost_usd", "سعر الشراء $", width=112, align="end", sortable=False),
+            GridColumn("_cost_syp", "سعر الشراء ل.س", width=120, align="end", sortable=False),
+            GridColumn("_sale_usd", "سعر المبيع $", width=112, align="end", sortable=False),
+            GridColumn("_sale_syp", "سعر المبيع ل.س", width=120, align="end", sortable=False),
+            GridColumn("_total_usd", "المجموع $", width=112, align="end", sortable=False),
+            GridColumn("_total_syp", "المجموع ل.س", width=120, align="end", sortable=False),
             GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
         ]
         line_visibility = ColumnVisibility(
@@ -2360,17 +2406,13 @@ class InvoiceCenter:
             value=currency.to_input_text(paid_initial, settings),
             on_change=lambda e: refresh_summary(),
         )
-        lines_summary_text = ft.Text(
-            "لا بنود بعد", size=18, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY,
-            text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-        )
         total_text = ft.Text(
-            "0", size=26, weight=ft.FontWeight.BOLD,
-            text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+            "0", size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY,
+            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
         remaining_text = ft.Text(
-            "0", size=22, weight=ft.FontWeight.BOLD,
-            text_align=ft.TextAlign.CENTER, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+            "0", size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY,
+            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
 
         def rows_total_display() -> float:
@@ -2405,7 +2447,6 @@ class InvoiceCenter:
                 })
             else:
                 lines_grid.set_footer(None)
-            lines_summary_text.value = f"{count} بند" if count else "لا بنود بعد"
             # Anonymous invoices are cash by definition (same rule the wizard
             # and the accounting service enforce): no party -> paid == total.
             cash_without_party = not bool(party_dd.value)
@@ -2424,7 +2465,6 @@ class InvoiceCenter:
             remaining_text.color = Colors.SUCCESS if total - paid_value <= 1e-9 else Colors.ORANGE
             quick_chips.visible = not cash_without_party
             cash_note.visible = cash_without_party
-            _safe_update(lines_summary_text)
             _safe_update(paid)
             _safe_update(total_text)
             _safe_update(remaining_text)
@@ -2708,75 +2748,62 @@ class InvoiceCenter:
                                         ft.Container(party_dd, width=260),
                                         ft.Container(invoice_date, width=200),
                                         ft.Container(expand=True),
-                                        ft.Container(paid, width=240),
-                                    ],
-                                    spacing=10,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                ),
-                                ft.ResponsiveRow(
-                                    [
                                         ft.Container(
                                             ft.Column(
                                                 [
-                                                    ft.Text("البنود", size=10, color=Colors.TEXT_SECONDARY),
-                                                    lines_summary_text,
-                                                ],
-                                                spacing=0, tight=True,
-                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                            ),
-                                            col={"xs": 4},
-                                            padding=ft.padding.symmetric(horizontal=6, vertical=8),
-                                            bgcolor=Colors.BACKGROUND,
-                                            border_radius=Radius.SM,
-                                        ),
-                                        ft.Container(
-                                            ft.Column(
-                                                [
-                                                    ft.Text("الإجمالي", size=10, color=Colors.TEXT_SECONDARY),
+                                                    ft.Text("الإجمالي", size=9, color=Colors.TEXT_SECONDARY),
                                                     total_text,
                                                 ],
                                                 spacing=0, tight=True,
-                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                             ),
-                                            col={"xs": 4},
-                                            padding=ft.padding.symmetric(horizontal=6, vertical=8),
-                                            bgcolor=Colors.BACKGROUND,
-                                            border_radius=Radius.SM,
+                                            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                                            bgcolor=Colors.BACKGROUND, border_radius=Radius.SM,
                                         ),
                                         ft.Container(
                                             ft.Column(
                                                 [
-                                                    ft.Text("المتبقي", size=10, color=Colors.TEXT_SECONDARY),
+                                                    ft.Text("المتبقي", size=9, color=Colors.TEXT_SECONDARY),
                                                     remaining_text,
                                                 ],
                                                 spacing=0, tight=True,
-                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                             ),
-                                            col={"xs": 4},
-                                            padding=ft.padding.symmetric(horizontal=6, vertical=8),
-                                            bgcolor=Colors.BACKGROUND,
-                                            border_radius=Radius.SM,
+                                            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                                            bgcolor=Colors.BACKGROUND, border_radius=Radius.SM,
                                         ),
-                                    ],
-                                    spacing=8, run_spacing=8,
-                                ),
-                                ft.Row(
-                                    [
-                                        quick_chips,
-                                        cash_note,
-                                        ft.Container(expand=True),
-                                        ft.FilledButton(
-                                            "حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
-                                            icon=ft.Icons.SAVE_OUTLINED,
-                                            on_click=save,
-                                            style=ft.ButtonStyle(
-                                                padding=ft.padding.symmetric(horizontal=26, vertical=16),
-                                                text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD),
-                                            ),
-                                        ),
+                                        ft.Container(paid, width=220),
                                     ],
                                     spacing=10,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Row(
+                                    [quick_chips, cash_note],
+                                    spacing=10,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Container(
+                                            ft.Column(
+                                                [
+                                                    ft.Icon(ft.Icons.SAVE_OUTLINED, size=26, color=Colors.WHITE),
+                                                    ft.Text(
+                                                        "تحديث" if invoice_id else "حفظ",
+                                                        size=12, weight=ft.FontWeight.BOLD,
+                                                        color=Colors.WHITE, text_align=ft.TextAlign.CENTER,
+                                                    ),
+                                                ],
+                                                spacing=2, tight=True,
+                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                                alignment=ft.MainAxisAlignment.CENTER,
+                                            ),
+                                            width=96, height=96,
+                                            alignment=ft.alignment.center,
+                                            bgcolor=Colors.PRIMARY, border_radius=Radius.MD,
+                                            ink=True, on_click=save,
+                                            tooltip="حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
+                                        ),
+                                    ],
+                                    alignment=ft.MainAxisAlignment.CENTER,
                                 ),
                             ],
                             spacing=10, tight=True,

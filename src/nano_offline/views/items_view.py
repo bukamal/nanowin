@@ -36,6 +36,8 @@ ITEM_GRID_COLUMNS = [
     GridColumn("quantity", "الكمية", width=90, align="end", kind="number", tooltip="الكمية المتاحة حاليًا من حركات المخزون"),
     GridColumn("purchase_price", "سعر الشراء", width=110, align="end", kind="money", tooltip="آخر سعر شراء"),
     GridColumn("selling_price", "سعر البيع", width=110, align="end", kind="money", tooltip="سعر البيع الحالي"),
+    GridColumn("_stock_usd", "مجموع المتوفر $", width=130, align="end", sortable=False, tooltip="الكمية × متوسط التكلفة (بالدولار)"),
+    GridColumn("_stock_syp", "مجموع المتوفر ل.س", width=140, align="end", sortable=False, tooltip="قيمة المخزون بالتكلفة × سعر الصرف"),
     GridColumn("_status", "الحالة", width=100, align="center", kind="badge", sortable=False, tooltip="متوفر / منخفض / نفد / خدمة"),
 ]
 
@@ -299,6 +301,21 @@ class ItemsCenter:
                 return str(value or "بلا وحدة")
             if col.key == "quantity":
                 return qty_fmt(value) if row.get("item_type") == "مخزون" else "—"
+            if col.key in ("_stock_usd", "_stock_syp"):
+                try:
+                    stock_qty = float(row.get("quantity") or 0)
+                    avg_cost = float(row.get("average_cost") or 0)
+                except (TypeError, ValueError):
+                    stock_qty = avg_cost = 0.0
+                stock_value = stock_qty * avg_cost
+                if not stock_value:
+                    return ""
+                if col.key == "_stock_usd":
+                    sym = str(ctx.settings.get(currency.USD_DISPLAY_SYMBOL_KEY) or currency.DEFAULT_USD_DISPLAY_SYMBOL)
+                    return currency.format_amount(stock_value, rate=1.0, symbol=sym, decimals=2)
+                rate = currency.get_exchange_rate(ctx.settings)
+                sym = str(ctx.settings.get(currency.DISPLAY_SYMBOL_KEY) or currency.DEFAULT_DISPLAY_SYMBOL)
+                return currency.format_amount(stock_value, rate=rate, symbol=sym, decimals=0)
             if col.kind == "money":
                 return money(value)
             return None  # text columns: default rendering
@@ -1259,6 +1276,12 @@ class ItemsCenter:
                     else:
                         item_id = ctx.items.create(quantity=float(qty.value or 0), **kwargs)
                         msg = "تمت إضافة المادة"
+                        # Opening stock shows up in purchases as an inventory-only
+                        # "أول المدة" invoice (no cash/payable impact).
+                        try:
+                            ctx.invoices.convert_opening_balances(item_ids=[item_id], reference="أول المدة")
+                        except Exception:
+                            pass
                     # Persist each sub-unit's barcode (idempotent -- skip any
                     # code the item already owns; surface conflicts with other
                     # items without aborting the whole save).
@@ -2674,6 +2697,7 @@ class ItemsCenter:
             def save_all(_=None) -> None:
                 type_default = type_sel.value or "مخزون"
                 created_indices: list[int] = []
+                created_ids: list[int] = []
                 updated_count = 0
                 errors: list[str] = []
                 warnings: list[str] = []
@@ -2723,6 +2747,7 @@ class ItemsCenter:
                         else:
                             item_id = ctx.items.create(quantity=row.get("quantity") or 0, **fields)
                             created_indices.append(index)
+                            created_ids.append(int(item_id))
                         alternate_barcode = str(row.get("alternate_barcode") or "").strip()
                         if alternate_barcode:
                             try:
@@ -2738,6 +2763,13 @@ class ItemsCenter:
                 for index in sorted(created_indices, reverse=True):
                     bulk_grid.remove_row(index)
                 refresh_bulk_footer()
+                if created_ids:
+                    # Opening stock becomes an inventory-only "أول المدة"
+                    # purchase invoice (no cash/payable impact).
+                    try:
+                        ctx.invoices.convert_opening_balances(item_ids=created_ids, reference="أول المدة")
+                    except Exception as exc:
+                        warnings.append(f"أول المدة: {exc}")
                 if not created_indices and not updated_count and not errors:
                     notify("لا توجد صفوف للحفظ", kind="error")
                     return
@@ -3333,6 +3365,18 @@ class ItemsCenter:
             ],
             spacing=0, expand=True,
         )
+        def _convert_opening_balances(_=None):
+            try:
+                invoice_id = ctx.invoices.convert_opening_balances(reference="أول المدة")
+            except Exception as exc:
+                notify(str(exc), kind="error")
+                return
+            if invoice_id:
+                notify("تم إنشاء فاتورة «أول المدة» من الأرصدة الافتتاحية", sound_kind="success")
+                refresh()
+            else:
+                notify("لا توجد أرصدة افتتاحية قابلة للتحويل", kind="warning")
+
         refresh()
         # Publish this section's contextual ribbon actions (desktop). The
         # shell resets them to its own defaults on the next navigation, so
@@ -3343,6 +3387,7 @@ class ItemsCenter:
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),
+                RibbonAction("opening_invoices", "أول المدة", ft.Icons.INVENTORY_2_OUTLINED, on_click=_convert_opening_balances),
                 *(
                     [RibbonAction("import_card", "استيراد بطاقة", ft.Icons.QR_CODE_SCANNER, on_click=lambda _=None: open_import_card_sheet())]
                     if supports("barcode_camera_scan")
