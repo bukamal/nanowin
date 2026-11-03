@@ -97,6 +97,61 @@ def get_effective_rate(settings) -> float:
     return get_exchange_rate(settings)
 
 
+# --------------------------------------------------------------------------- #
+# Single-source-of-truth writers + change notification
+# --------------------------------------------------------------------------- #
+#: Listeners called with no arguments whenever the display currency or the
+#: exchange rate changes. Surfaces (status bar, home board, grids) subscribe so
+#: every place that shows money stays in step without each re-reading settings
+#: at a different time.
+_change_listeners = []
+
+
+def on_change(listener) -> None:
+    if listener not in _change_listeners:
+        _change_listeners.append(listener)
+
+
+def off_change(listener) -> None:
+    try:
+        _change_listeners.remove(listener)
+    except ValueError:
+        pass
+
+
+def _notify_change() -> None:
+    for listener in list(_change_listeners):
+        try:
+            listener()
+        except Exception:
+            pass
+
+
+def set_display_currency(settings, code: str) -> str:
+    """Persist the display currency and notify every subscriber."""
+    normalized = str(code or "").strip().upper()
+    if normalized not in SUPPORTED_DISPLAY_CURRENCIES:
+        normalized = DEFAULT_DISPLAY_CURRENCY
+    if settings is not None:
+        settings.set(DISPLAY_CURRENCY_KEY, normalized)
+    _notify_change()
+    return normalized
+
+
+def set_exchange_rate(settings, rate) -> float:
+    """Persist the SYP-per-USD rate and notify every subscriber."""
+    try:
+        value = float(rate or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        raise ValueError("سعر الصرف يجب أن يكون رقمًا أكبر من صفر")
+    if settings is not None:
+        settings.set(EXCHANGE_RATE_KEY, str(value))
+    _notify_change()
+    return value
+
+
 def invoice_settings(invoice: dict | None, settings=None):
     """Return a settings view pinned to an invoice's currency snapshot.
 
@@ -287,6 +342,10 @@ __all__ = [
     "get_display_currency",
     "get_exchange_rate",
     "get_effective_rate",
+    "on_change",
+    "off_change",
+    "set_display_currency",
+    "set_exchange_rate",
     "invoice_settings",
     "get_display_symbol",
     "to_display",

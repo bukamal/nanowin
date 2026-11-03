@@ -35,7 +35,7 @@ from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core import font_settings
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
 from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
@@ -595,7 +595,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         def _currency_change(_):
             try:
                 code = currency_toggle.value or _currency.DEFAULT_DISPLAY_CURRENCY
-                ctx.settings.set(_currency.DISPLAY_CURRENCY_KEY, code)
+                _currency.set_display_currency(ctx.settings, code)
             except Exception:
                 pass
             _refresh_metrics()
@@ -621,9 +621,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             if value <= 0:
                 notify("سعر الصرف يجب أن يكون رقمًا أكبر من صفر", kind="error")
                 return
-            payload = {_currency.EXCHANGE_RATE_KEY: str(value)}
             try:
-                ctx.settings.set_many(payload)
+                _currency.set_exchange_rate(ctx.settings, value)
             except Exception:
                 try:
                     ctx.settings.set(_currency.EXCHANGE_RATE_KEY, str(value))
@@ -1175,6 +1174,95 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
 
     # The desktop ribbon sits above the section header; the old branded
     # sidebar is no longer used -- the ribbon is the one navigation surface.
+    def _open_currency_popover(_=None):
+        """One unified place to switch display currency and edit the rate.
+
+        Applies through :mod:`core.currency` setters, which notify every
+        subscribed surface (status bar, home, lists) so they never drift.
+        """
+        from nano_offline.components import (
+            SegmentedToggle,
+            SegmentOption,
+            new_form_sheet,
+            render_form_sheet,
+        )
+        from nano_offline.components.text_field import SelectAllTextField
+        from nano_offline.core import currency as _currency
+
+        toggle = SegmentedToggle(
+            options=[
+                SegmentOption(_currency.DISPLAY_CURRENCY_SYP, "الليرة السورية (ل.س)"),
+                SegmentOption(_currency.DISPLAY_CURRENCY_USD, "الدولار الأمريكي ($)"),
+            ],
+            value=_currency.get_display_currency(ctx.settings),
+        )
+        rate_field = SelectAllTextField(
+            label="سعر صرف الدولار (ل.س لكل 1$)",
+            value=f"{_currency.get_exchange_rate(ctx.settings):.0f}",
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+
+        def _nudge(step):
+            def handler(_):
+                try:
+                    base = float((rate_field.value or "0").replace(",", "") or 0)
+                except ValueError:
+                    base = 0.0
+                rate_field.value = f"{max(0.0, base + step):.0f}"
+                try:
+                    rate_field.update()
+                except Exception:
+                    pass
+            return handler
+
+        sheet = new_form_sheet()
+
+        def close(_=None):
+            page.close(sheet)
+
+        def save(_=None):
+            try:
+                _currency.set_display_currency(ctx.settings, toggle.value)
+                _currency.set_exchange_rate(ctx.settings, rate_field.value)
+            except Exception as exc:
+                notify(str(exc), kind="error")
+                return
+            close()
+            notify("تم تحديث العملة المعروضة وسعر الصرف", kind="success", sound_kind="save")
+            try:
+                navigate(selected_key["value"])
+            except Exception:
+                pass
+
+        render_form_sheet(
+            page, sheet,
+            title="العملة المعروضة وسعر الصرف",
+            fields=[
+                ft.Text("تُطبَّق على كل الشاشات والقوائم وحقول الفواتير فورًا.", size=11, color=Colors.TEXT_SECONDARY),
+                ft.Text("العملة المعروضة", size=12, weight=ft.FontWeight.W_600),
+                toggle,
+                rate_field,
+                ft.Row(
+                    [
+                        ft.Text("تعديل سريع:", size=11, color=Colors.TEXT_FAINT),
+                        *[
+                            ft.Container(
+                                ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY),
+                                padding=ft.padding.symmetric(horizontal=12, vertical=7),
+                                bgcolor=Colors.PRIMARY_BG, border_radius=Radius.MD,
+                                on_click=_nudge(step), ink=True,
+                            )
+                            for label, step in (("-100", -100), ("+100", 100), ("+500", 500), ("+1000", 1000))
+                        ],
+                    ],
+                    spacing=6, wrap=True,
+                ),
+            ],
+            on_close=close, on_save=save,
+            save_label="حفظ", save_icon=ft.Icons.CHECK_ROUNDED,
+        )
+        page.open(sheet)
+
     def _status_item(icon, text) -> ft.Control:
         return ft.Row(
             [ft.Icon(icon, size=13, color=Colors.TEXT_SECONDARY), ft.Text(text, size=11, color=Colors.TEXT_SECONDARY)],
@@ -1190,12 +1278,46 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         weekdays = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
         now = datetime.now()
         date_text = f"{weekdays.get(now.weekday(), '')} {now:%Y-%m-%d}"
-        try:
-            rate = _currency.get_effective_rate(ctx.settings)
-            symbol = _currency.get_display_symbol(ctx.settings)
-            rate_text = f"1$ = {rate:,.0f} {symbol}" if rate else "—"
-        except Exception:
-            rate_text = "—"
+        currency_rate_text = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+
+        def _refresh_currency_status() -> None:
+            try:
+                rate = _currency.get_exchange_rate(ctx.settings)
+                symbol = _currency.get_display_symbol(ctx.settings)
+                currency_rate_text.value = f"1$ = {rate:,.0f} ل.س · العرض {symbol}"
+            except Exception:
+                currency_rate_text.value = "—"
+
+        _refresh_currency_status()
+
+        def _on_currency_changed() -> None:
+            _refresh_currency_status()
+            try:
+                currency_btn.update()
+            except Exception:
+                pass
+
+        currency_btn = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.CURRENCY_EXCHANGE, size=13, color=Colors.TEXT_SECONDARY),
+                    currency_rate_text,
+                ],
+                spacing=5,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=10,
+            ink=True,
+            on_click=_open_currency_popover,
+            tooltip="العملة المعروضة وسعر الصرف",
+        )
+        # Replace any listener from a previous shell build (theme rebuild).
+        previous_listener = getattr(page, "_nano_currency_listener", None)
+        if previous_listener is not None:
+            _currency.off_change(previous_listener)
+        _currency.on_change(_on_currency_changed)
+        page._nano_currency_listener = _on_currency_changed
         try:
             sess = ctx.auth.current()
             if sess is not None:
@@ -1254,14 +1376,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ft.Row(
                 [
                     _status_item(ft.Icons.SCHEDULE, date_text),
-                    ft.Container(
-                        _status_item(ft.Icons.CURRENCY_EXCHANGE, rate_text),
-                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                        border_radius=10,
-                        ink=True,
-                        on_click=lambda _=None: dashboard_center._open_rate_sheet(),
-                        tooltip="تعديل سعر الصرف",
-                    ),
+                    currency_btn,
                     safe_btn,
                     _status_item(ft.Icons.PERSON_OUTLINE, user_text),
                     _status_item(ft.Icons.INFO_OUTLINE, f"v{_APP_VERSION}"),

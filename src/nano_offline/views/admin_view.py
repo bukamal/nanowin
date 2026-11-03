@@ -952,6 +952,16 @@ class AdminCenter:
                     business_profile.BUSINESS_TAX_NUMBER_KEY: (business_tax_number_field.value or "").strip(),
                 })
                 exchange_rate_field.value = str(rate_value)
+                # Emit the change through the single-source setters so the
+                # status bar and every live surface update immediately.
+                try:
+                    currency.set_display_currency(
+                        self.ctx.settings,
+                        display_currency_field.value or currency.DEFAULT_DISPLAY_CURRENCY,
+                    )
+                    currency.set_exchange_rate(self.ctx.settings, rate_value)
+                except Exception:
+                    pass
                 set_brand_accent(brand_state["color"])
                 self._notify("تم حفظ الهوية وتطبيق لونها على الواجهة والمستندات", kind="success")
                 self.on_theme_changed()

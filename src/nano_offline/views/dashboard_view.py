@@ -272,7 +272,7 @@ class DashboardCenter:
             if rate_value <= 0:
                 self._notify("سعر الصرف يجب أن يكون رقمًا أكبر من صفر", kind="error")
                 return
-            self.ctx.settings.set_many({currency.EXCHANGE_RATE_KEY: str(rate_value)})
+            currency.set_exchange_rate(self.ctx.settings, rate_value)
             close()
             self._notify("تم تحديث سعر الصرف — سيظهر في كل الشاشات والمستندات فورًا", kind="success", sound_kind="save")
             self._rerender_home()
@@ -307,7 +307,7 @@ class DashboardCenter:
             return
         if currency.get_display_currency(self.ctx.settings) == code:
             return
-        self.ctx.settings.set_many({currency.DISPLAY_CURRENCY_KEY: code})
+        currency.set_display_currency(self.ctx.settings, code)
         symbol = currency.get_display_symbol(self.ctx.settings)
         label = "الليرة السورية" if code == currency.DISPLAY_CURRENCY_SYP else "الدولار الأمريكي"
         self._notify(
