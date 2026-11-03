@@ -40,6 +40,24 @@ REMOTE_SERVICES = (
     "stocktake", "cash_day_close", "party_trust", "external_notifications",
 )
 
+#: Methods that must run on the *client* device even though their service is
+#: otherwise remote (native notification hooks, local backup bookkeeping).
+#: They are routed to the local AppContext service, never sent to the server.
+LOCAL_METHODS: dict[str, frozenset[str]] = {
+    "notifications": frozenset({
+        "set_system_hook", "sync_in_background", "native_schedule_payload",
+        "record_backup_completed",
+    }),
+    "external_notifications": frozenset({"dispatch_async"}),
+}
+
+#: Plain attributes (not methods) the UI reads directly off the service object;
+#: routed to the local instance so ``ctx.notifications.settings.get(...)`` works
+#: in client mode instead of resolving to a remote callable.
+LOCAL_ATTRS: dict[str, frozenset[str]] = {
+    "notifications": frozenset({"settings"}),
+}
+
 
 def build_hybrid_context(
     local_db_path: str | Path,
@@ -56,8 +74,19 @@ def build_hybrid_context(
     path = Path(local_db_path)
     ctx = AppContext.create(path)
     transport = RemoteTransport(base_url, token=token)
+    local_services = {name: getattr(ctx, name, None) for name in REMOTE_SERVICES}
     for name in REMOTE_SERVICES:
-        setattr(ctx, name, RemoteService(transport, name))
+        setattr(
+            ctx,
+            name,
+            RemoteService(
+                transport,
+                name,
+                local_service=local_services.get(name),
+                local_methods=LOCAL_METHODS.get(name, frozenset()),
+                local_attrs=LOCAL_ATTRS.get(name, frozenset()),
+            ),
+        )
     ctx.auth = ClientAuth(transport)
     ctx.settings = ClientSettings(transport, prefs or LocalPrefs(path.parent / "local_prefs.json"))
     return ctx
@@ -100,4 +129,4 @@ def context_for(db_path: str | Path, prefs: LocalPrefs | None = None) -> AppCont
     return AppContext.create(path)
 
 
-__all__ = ["REMOTE_SERVICES", "build_hybrid_context", "context_for"]
+__all__ = ["REMOTE_SERVICES", "LOCAL_METHODS", "LOCAL_ATTRS", "build_hybrid_context", "context_for"]

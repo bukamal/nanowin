@@ -12,7 +12,6 @@ phase 2), guarded by the shared subnet allow-list and an optional bearer token.
 No admin/POS/price endpoints live here.
 """
 
-import contextlib
 import dataclasses
 import json
 import secrets
@@ -30,28 +29,49 @@ log = get_logger("nano.lan.api")
 #: Read-only methods a client may call in phase 1. Grows carefully in phase 2+;
 #: anything not listed here is refused (writes stay local/server-only).
 READ_METHODS = frozenset({
-    "items.list", "items.find_by_barcode", "items.pos_catalog", "items.units",
-    "invoices.list_invoices", "invoices.get_invoice",
+    # items
+    "items.list", "items.get", "items.find_by_barcode", "items.pos_catalog", "items.units",
+    "items.activity_summary", "items.movements", "items.list_barcodes",
+    "items.find_similar_names", "items.find_similar_barcodes",
+    "items.purchased_by_party", "items.quiet_item_ids",
+    "items.build_item_card", "items.verify_item_card",
+    # invoices
+    "invoices.list_invoices", "invoices.get_invoice", "invoices.check_purchase_price",
+    # parties
     "customers.list", "customers.get", "customers.count", "customers.activity_summary",
     "suppliers.list", "suppliers.get", "suppliers.count", "suppliers.activity_summary",
+    # definitions
     "definitions.list_categories", "definitions.list_units",
-    "documents.invoice_html", "documents.statement_html",
-    "statements.party_statement",
-    "dashboard.summary", "dashboard.today_summary",
-    "reports.income_statement", "reports.top_selling_items",
-    "settings.get", "settings.get_all",
-    "auth.has_users",
-    "auth.list_users", "auth.audit_entries",
-    "notifications.generate_alerts",
+    # documents (print HTML generated from shared data)
+    "documents.invoice_html", "documents.statement_html", "documents.voucher_html",
+    "documents.day_close_html", "documents.party_card_html", "documents.item_card_html",
+    "documents.barcode_labels_html",
+    # statements / reports / dashboard
+    "statements.party_statement", "statements.account_statement", "statements.trial_balance",
+    "dashboard.summary", "dashboard.today_summary", "dashboard.sales_trend",
+    "dashboard.restock_predictions", "dashboard.purchase_list", "dashboard.weekly_owner_summary",
+    "reports.income_statement", "reports.top_selling_items", "reports.cash_movement",
+    "reports.outstanding_invoices",
+    "forecast.seasonal_forecast",
+    # settings / auth
+    "settings.get", "settings.get_all", "auth.has_users", "auth.list_users", "auth.audit_entries",
+    # notifications / assistant / pulse
+    "notifications.generate_alerts", "notifications.get_config", "notifications.recent",
+    "notifications.unread_summary",
     "smart_assistant.decisions", "smart_assistant.decision_of_the_day",
     "owner_pulse.generate",
+    # expenses (reads)
     "expenses.list_expenses", "expenses.list_categories", "expenses.get_expense",
+    "expenses.get_expense_receipt",
+    # payments / vouchers (reads)
+    "payments.list_vouchers", "payments.get_voucher", "payments.payment_source",
+    "payments.allocatable_invoices", "payments.open_invoices",
+    # stocktake (reads)
     "stocktake.find_resumable_session", "stocktake.lines", "stocktake.diff_summary",
+    # cash close / trust / external notifications
     "cash_day_close.book_cash", "cash_day_close.today_cash_movement", "cash_day_close.last_close",
     "party_trust.score",
     "external_notifications.get_config", "external_notifications.delivery_log",
-    "notifications.get_config", "notifications.recent",
-    "notifications.unread_summary", "notifications.settings",
 })
 
 #: Write methods a client may call, each mapped to the permission the user must
@@ -60,16 +80,40 @@ READ_METHODS = frozenset({
 #: ``Database.set_actor``).
 WRITE_METHODS: dict[str, str] = {
     "invoices.create_invoice": "invoices",
+    "invoices.update_invoice": "invoices",
     "invoices.delete_invoice": "invoices",
     "items.create": "items",
     "items.update": "items",
     "items.delete": "items",
+    "items.add_barcode": "items",
+    "items.remove_barcode": "items",
+    "items.delete_opening_balance": "items",
+    "definitions.create_category": "items",
+    "definitions.rename_category": "items",
+    "definitions.delete_category": "items",
+    "definitions.create_unit": "items",
+    "definitions.rename_unit": "items",
+    "definitions.delete_unit": "items",
     "customers.create": "customers",
     "customers.update": "customers",
     "customers.delete": "customers",
     "suppliers.create": "suppliers",
     "suppliers.update": "suppliers",
     "suppliers.delete": "suppliers",
+    "payments.create_voucher": "finance",
+    "payments.update_voucher": "finance",
+    "payments.delete_voucher": "finance",
+    "payments.register_invoice_payment": "finance",
+    "expenses.create_expense": "finance",
+    "expenses.update_expense": "finance",
+    "expenses.delete_expense": "finance",
+    "cash_day_close.close_day": "finance",
+    "stocktake.start_session": "items",
+    "stocktake.scan": "items",
+    "stocktake.set_counted_qty": "items",
+    "stocktake.remove_line": "items",
+    "stocktake.commit": "items",
+    "stocktake.discard_session": "items",
     "auth.create_user": "admin",
     "auth.set_active": "admin",
     "auth.reset_password": "admin",
@@ -115,11 +159,28 @@ def _jsonable(value):
     return str(value)
 
 
+def _decode_special(value):
+    """Reverse the transport's JSON encoding of non-JSON values (bytes)."""
+    if isinstance(value, dict):
+        if set(value.keys()) == {"__bytes__"}:
+            import base64
+
+            try:
+                return base64.b64decode(str(value["__bytes__"]))
+            except Exception:
+                return b""
+        return {k: _decode_special(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_decode_special(v) for v in value]
+    return value
+
+
 def _coerce_args(service: str, method: str, args: dict) -> dict:
-    """Rebuild dataclass arguments a client could only send as plain dicts.
+    """Rebuild dataclass / non-JSON arguments a client could only send as plain data.
 
     ``invoices.create_invoice(lines=[...])`` expects ``InvoiceLineInput``
-    objects; over JSON they arrive as dicts, so rebuild them here.
+    objects over JSON as dicts; ``payments.*`` ``allocations`` arrive with
+    string keys; ``expenses.*`` receipt images arrive base64-encoded.
     """
     if service == "invoices" and method in ("create_invoice", "update_invoice"):
         lines = args.get("lines")
@@ -131,6 +192,14 @@ def _coerce_args(service: str, method: str, args: dict) -> dict:
                 line if isinstance(line, InvoiceLineInput) else InvoiceLineInput(**line)
                 for line in lines
             ]
+    if service == "payments" and isinstance(args.get("allocations"), dict):
+        args = dict(args)
+        args["allocations"] = {
+            int(k): float(v) for k, v in args["allocations"].items() if str(k).lstrip("-").isdigit()
+        }
+    if service == "expenses" and "receipt_image" in args:
+        args = dict(args)
+        args["receipt_image"] = _decode_special(args.get("receipt_image"))
     return args
 
 
@@ -226,11 +295,14 @@ class _Handler(BaseHTTPRequestHandler):
         service = str(payload.get("service") or "")
         method = str(payload.get("method") or "")
         args = payload.get("args") or {}
+        arglist = payload.get("arglist") or []
         if not isinstance(args, dict):
             self._json({"ok": False, "error": "bad_args"}, 400)
             return
+        if not isinstance(arglist, list):
+            arglist = []
         try:
-            result = app.dispatch(service, method, args, session_token=self._session_token())
+            result = app.dispatch(service, method, args, arglist=arglist, session_token=self._session_token())
         except Unauthorized as exc:
             self._json({"ok": False, "error": str(exc)}, 401)
             return
@@ -283,7 +355,10 @@ class LanApiServer:
         self._lock = threading.Lock()
         self._sessions: dict[str, object] = {}
         self._sessions_lock = threading.Lock()
-        self._write_lock = threading.Lock()
+        # Re-entrant: dispatch() takes it for writes and _run() takes it for the
+        # whole call, so concurrent LAN clients can never interleave the shared
+        # AuthService session or the audit actor.
+        self._write_lock = threading.RLock()
 
     @property
     def running(self) -> bool:
@@ -321,12 +396,18 @@ class LanApiServer:
             supplied = (parse_qs(query or "").get("token") or [""])[0]
         return supplied == self._token
 
-    def dispatch(self, service: str, method: str, args: dict, *, session_token: str = ""):
+    def dispatch(self, service: str, method: str, args: dict, *, arglist=(), session_token: str = ""):
         key = f"{service}.{method}"
         if key in READ_METHODS:
             perm = READ_PERMISSIONS.get(key)
-            session = self._require_session(session_token, perm) if perm else None
-            return self._run(service, method, args, session=session)
+            if perm:
+                session = self._require_session(session_token, perm)
+            else:
+                # Attach the caller's session (when logged in) even though the
+                # read itself needs no permission: several services call
+                # ``auth.require``/``auth.current`` internally (e.g. stocktake).
+                session = self._session_for(session_token)
+            return self._run(service, method, args, arglist=arglist, session=session)
         perm = WRITE_METHODS.get(key)
         if perm is None:
             raise PermissionError(f"طريقة غير مسموحة: {key}")
@@ -334,7 +415,7 @@ class LanApiServer:
         # Serialise writes and stamp the audit actor for this thread only, so
         # concurrent clients can never attribute one user's write to another.
         with self._write_lock:
-            return self._run(service, method, args, session=session, write=True)
+            return self._run(service, method, args, arglist=arglist, session=session, write=True)
 
     def _require_session(self, token: str, permission: str | None):
         session = self._session_for(token)
@@ -344,22 +425,40 @@ class LanApiServer:
             raise PermissionError(f"لا تملك صلاحية «{permission}» لهذه العملية")
         return session
 
-    def _run(self, service: str, method: str, args: dict, *, session=None, write: bool = False):
-        call_args = _coerce_args(service, method, args or {})
+    def _run(self, service: str, method: str, args: dict, *, arglist=(), session=None, write: bool = False):
         ctx = self._ctx
-        actor = (
-            ctx.auth.as_actor(session)
-            if (session is not None and service == "auth")
-            else contextlib.nullcontext()
-        )
-        if write:
-            ctx.db.set_actor(session.id, session.username)
-        try:
-            with actor:
-                return self._transport.call(service, method, **call_args)
-        finally:
+        target = getattr(ctx, service, None)
+        if target is None:
+            raise AttributeError(f"unknown service: {service!r}")
+        func = getattr(target, method, None)
+        if not callable(func):
+            raise AttributeError(f"unknown method: {service}.{method}")
+        call_args = _coerce_args(service, method, dict(args or {}))
+        # Serialise the whole call: several services (stocktake, user admin)
+        # call ``auth.require`` / ``auth.current`` internally, so the remote
+        # user's session must be the active one for the duration -- and that
+        # state is shared, exactly like the audit actor.
+        with self._write_lock:
+            # ``as_actor(None)`` clears the shared session for the duration of
+            # an unauthenticated call, so a service can never accidentally run
+            # under a stale session left by a previous client's login.
+            actor = ctx.auth.as_actor(session)
             if write:
-                ctx.db.set_actor(None, None)
+                ctx.db.set_actor(session.id, session.username)
+            try:
+                with actor:
+                    if arglist:
+                        # Positional arguments arrive as a list; bind them to
+                        # the real method's signature (the UI still calls some
+                        # methods like ``items.get(item_id)`` positionally).
+                        import inspect
+
+                        bound = inspect.signature(func).bind(*arglist, **call_args)
+                        return func(*bound.args, **bound.kwargs)
+                    return func(**call_args)
+            finally:
+                if write:
+                    ctx.db.set_actor(None, None)
 
     def login(self, username: str, password: str) -> tuple[str, dict] | None:
         """Authenticate a remote user; returns ``(session_token, user_info)``."""

@@ -20,43 +20,67 @@ class _RemoteAio:
     """``service.aio.method(...)`` -> coroutine, off-loading the blocking HTTP
     call to a worker thread so the Flet event loop never freezes."""
 
-    def __init__(self, transport: RemoteTransport, name: str):
+    def __init__(self, transport: RemoteTransport, name: str, local_service=None, local_methods=()):
         self._transport = transport
         self._name = name
+        self._local_service = local_service
+        self._local_methods = set(local_methods or ())
 
     def __getattr__(self, method: str):
         if method.startswith("_"):
             raise AttributeError(method)
 
+        if self._local_service is not None and method in self._local_methods:
+            async def _local(*args: Any, **kwargs: Any) -> Any:
+                fn = getattr(self._local_service, method)
+                return await asyncio.to_thread(lambda: fn(*args, **kwargs))
+
+            return _local
+
         async def _call(*args: Any, **kwargs: Any) -> Any:
-            if args:
-                raise TypeError(f"{self._name}.aio.{method}() takes keyword arguments only")
-            return await asyncio.to_thread(self._transport.call, self._name, method, **kwargs)
+            return await asyncio.to_thread(self._transport.call, self._name, method, *args, **kwargs)
 
         return _call
 
 
 class RemoteService:
-    """Attribute access on this object yields a remote method caller."""
+    """Attribute access on this object yields a remote method caller.
 
-    def __init__(self, transport: RemoteTransport, name: str):
+    A few methods are device-local (native notification scheduling, backup
+    bookkeeping) and a couple of attributes are plain objects the UI reads off
+    the service (``notifications.settings``); those are routed to the local
+    service instance instead of the LAN so client mode cannot call a device
+    hook on the server (or crash on a non-callable attribute).
+    """
+
+    def __init__(
+        self,
+        transport: RemoteTransport,
+        name: str,
+        *,
+        local_service=None,
+        local_methods=(),
+        local_attrs=(),
+    ):
         self._transport = transport
         self._name = name
+        self._local_service = local_service
+        self._local_methods = set(local_methods or ())
+        self._local_attrs = set(local_attrs or ())
 
     @property
     def aio(self) -> _RemoteAio:
-        return _RemoteAio(self._transport, self._name)
+        return _RemoteAio(self._transport, self._name, self._local_service, self._local_methods)
 
     def __getattr__(self, method: str):
         if method.startswith("_"):
             raise AttributeError(method)
 
+        if self._local_service is not None and method in (self._local_methods | self._local_attrs):
+            return getattr(self._local_service, method)
+
         def _call(*args: Any, **kwargs: Any) -> Any:
-            if args:
-                raise TypeError(
-                    f"{self._name}.{method}() must be called with keyword arguments over the LAN"
-                )
-            return self._transport.call(self._name, method, **kwargs)
+            return self._transport.call(self._name, method, *args, **kwargs)
 
         return _call
 

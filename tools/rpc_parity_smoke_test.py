@@ -15,8 +15,9 @@ import asyncio
 from nano_offline.app_context import AppContext
 from nano_offline.core.fsutil import tempdir
 from nano_offline.core.transport import AttrDict, _wrap
-from nano_offline.services.lan_api_server import LanApiServer, _jsonable
+from nano_offline.services.lan_api_server import LanApiServer, _jsonable, READ_METHODS, WRITE_METHODS
 from nano_offline.services.remote_client import RemoteContext
+from nano_offline.services.hybrid_context import LOCAL_ATTRS, LOCAL_METHODS, REMOTE_SERVICES
 
 PASSWORD = "password123"
 
@@ -98,3 +99,46 @@ with tempdir(prefix="qeid-parity-") as td:
         server.stop()
 
 print("rpc_parity_smoke_test passed")
+
+# --- static coverage: every ctx.<svc>.<method> the UI calls must be exposed
+#     (or declared device-local in hybrid_context). This is the guard that
+#     stops the allow-list from drifting behind the views again. ---------------
+import ast  # noqa: E402
+
+_ALLOWED = set(READ_METHODS) | set(WRITE_METHODS)
+for _svc, _methods in LOCAL_METHODS.items():
+    _ALLOWED |= {f"{_svc}.{m}" for m in _methods}
+for _svc, _attrs in LOCAL_ATTRS.items():
+    _ALLOWED |= {f"{_svc}.{a}" for a in _attrs}
+
+_called: set[str] = set()
+from pathlib import Path as _Path  # noqa: E402
+
+for _p in (_Path(__file__).resolve().parents[1] / "src").rglob("*.py"):
+    try:
+        _tree = ast.parse(_p.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    for _node in ast.walk(_tree):
+        if not isinstance(_node, ast.Call):
+            continue
+        _f = _node.func
+        if not isinstance(_f, ast.Attribute):
+            continue
+        # ctx.<svc>.<method>(...)  OR  ctx.<svc>.aio.<method>(...)
+        _sa = _f.value
+        if isinstance(_sa, ast.Attribute) and _sa.attr == "aio" and isinstance(_sa.value, ast.Attribute):
+            _svc_attr = _sa.value
+        else:
+            _svc_attr = _sa
+        if not isinstance(_svc_attr, ast.Attribute) or _svc_attr.attr not in REMOTE_SERVICES:
+            continue
+        _base = _svc_attr.value
+        _base_name = _base.id if isinstance(_base, ast.Name) else (_base.attr if isinstance(_base, ast.Attribute) else "")
+        if _base_name not in {"ctx", "context"}:
+            continue
+        _called.add(f"{_svc_attr.attr}.{_f.attr}")
+
+_missing = sorted(_called - _ALLOWED)
+assert not _missing, "UI calls methods the LAN API does not expose: " + ", ".join(_missing)
+print(f"rpc_method_coverage passed ({len(_called)} UI calls, {len(_ALLOWED)} allowed)")

@@ -21,6 +21,7 @@ transport arrives together with the server.
 
 from typing import Any, Protocol, runtime_checkable
 
+import base64
 import json
 import urllib.error
 import urllib.request
@@ -73,6 +74,17 @@ class LocalTransport:
         return func(**kwargs)
 
 
+def _encode_for_json(value: Any) -> Any:
+    """Make a kwargs/args tree JSON-safe (bytes -> base64 envelope)."""
+    if isinstance(value, (bytes, bytearray)):
+        return {"__bytes__": base64.b64encode(bytes(value)).decode("ascii")}
+    if isinstance(value, dict):
+        return {str(k): _encode_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_encode_for_json(v) for v in value]
+    return value
+
+
 class RemoteTransport:
     """HTTP client implementing :class:`Transport` against a LAN API server.
 
@@ -87,8 +99,15 @@ class RemoteTransport:
         self.session = session or None
         self.timeout = float(timeout)
 
-    def call(self, service: str, method: str, **kwargs: Any) -> Any:
-        body = json.dumps({"service": service, "method": method, "args": kwargs}).encode("utf-8")
+    def call(self, service: str, method: str, *args: Any, **kwargs: Any) -> Any:
+        body = json.dumps(
+            {
+                "service": service,
+                "method": method,
+                "args": _encode_for_json(kwargs),
+                "arglist": _encode_for_json(list(args)),
+            }
+        ).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
