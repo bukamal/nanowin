@@ -13,6 +13,7 @@ from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmoun
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
+from nano_offline.components import sheets
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -591,7 +592,7 @@ class FinanceCenter:
         # detail treatment used for item detail (items_view.py) and
         # customer/supplier detail (parties_view.py): opened by tapping a
         # row in a list, no destructive action of its own.
-        detail_sheet = ft.BottomSheet(content=ft.Container(), enable_drag=True, maintain_bottom_view_insets_padding=True)
+        detail_sheet, sheet_w = sheets.new_desktop_sheet(self.page)
 
         def close(_=None): self.page.close(detail_sheet)
         def edit(_=None): close(); self.show_voucher_dialog(voucher_id)
@@ -625,33 +626,28 @@ class FinanceCenter:
                 preview_builder=lambda _layout, _width: voucher_document_html(),
             )
 
-        # Same explicit-height approach as the other converted detail
-        # sheets: outer Container height computed from the real screen
-        # height, scrollable body, fixed action footer (wraps onto a
-        # second line on narrow screens since this one has five actions).
-        page_h = self.page.height or 780
-        total_sheet_h = min(int(page_h * 0.55), 600)
-        header_reserved, footer_reserved, gaps = 70, 70, 24
-        body_area_height = max(160, total_sheet_h - header_reserved - footer_reserved - gaps)
+        # Wide desktop detail sheet: fixed comfortable height, scrollable
+        # body, pinned action footer.
+        sheet_h = sheets.sheet_height(self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=440, max_height=680)
 
-        detail_sheet.content = ft.Container(
+        detail_sheet.content = sheets.sheet_frame(
             ft.Column(
                 [
-                    ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                    sheets.sheet_handle(),
                     ft.Text(f"{title} #{voucher_id}", size=18, weight=ft.FontWeight.BOLD),
                     ft.Container(
                         ft.Column([
                             ft.Container(ft.Column([money_row(voucher.get("amount"), self.ctx.settings, size=28, weight=ft.FontWeight.BOLD, color=accent), ft.Text(title, size=11, color=Colors.TEXT_SECONDARY)], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2), padding=14, bgcolor=Colors.BACKGROUND, border_radius=16),
                             ft.ResponsiveRow([
-                                ft.Container(ft.Text(f"التاريخ: {voucher.get('voucher_date') or '—'}", size=11), col={"xs": 6}),
-                                ft.Container(ft.Text(f"الحساب: {voucher.get('party_name') or '—'}", size=11), col={"xs": 6}),
-                                ft.Container(ft.Text(f"المرجع: {voucher.get('reference') or '—'}", size=11), col={"xs": 6}),
-                                ft.Container(ft.Row([ft.Text("على الحساب: ", size=11), money_row(voucher.get("unallocated_amount"), self.ctx.settings, size=11)], spacing=2, tight=True), col={"xs": 6}),
+                                ft.Container(ft.Text(f"التاريخ: {voucher.get('voucher_date') or '—'}", size=11), col={"xs": 6, "md": 3}),
+                                ft.Container(ft.Text(f"الحساب: {voucher.get('party_name') or '—'}", size=11), col={"xs": 6, "md": 3}),
+                                ft.Container(ft.Text(f"المرجع: {voucher.get('reference') or '—'}", size=11), col={"xs": 6, "md": 3}),
+                                ft.Container(ft.Row([ft.Text("على الحساب: ", size=11), money_row(voucher.get("unallocated_amount"), self.ctx.settings, size=11)], spacing=2, tight=True), col={"xs": 6, "md": 3}),
                             ]),
                             ft.Text(voucher.get("notes") or "بدون ملاحظات", size=10, color=Colors.TEXT_SECONDARY),
                             ft.Divider(height=8), ft.Text("التوزيعات", size=13, weight=ft.FontWeight.BOLD), ft.Column(alloc_controls, spacing=5),
                         ], spacing=8, scroll=ft.ScrollMode.AUTO),
-                        height=body_area_height, padding=ft.padding.only(top=4),
+                        expand=True, padding=ft.padding.only(top=4),
                     ),
                     ft.Container(
                         ft.Row(
@@ -669,11 +665,8 @@ class FinanceCenter:
                 ],
                 spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
-            height=total_sheet_h,
-            padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
-            bgcolor=Colors.WHITE,
-            border_radius=ft.border_radius.only(top_left=28, top_right=28),
-            shadow=Shadow.LG,
+            width=sheet_w,
+            height=sheet_h,
         )
         self.page.open(detail_sheet)
 

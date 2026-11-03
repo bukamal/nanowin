@@ -12,6 +12,7 @@ from nano_offline.core import branding
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row
+from nano_offline.components import sheets
 from nano_offline.components.buttons import header_close_button, inline_icon_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
@@ -161,7 +162,7 @@ def _open_paged_sheet(
     is a :class:`_PagedSheetNav` the page uses to advance, go back, or
     close. Reuses the same drag-handle / rounded-top / shadow shell as
     every other sheet in this app (security_view._open_sheet, form_sheet.py)."""
-    sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+    sheet, paged_sheet_w = sheets.new_desktop_sheet(page)
     state = {"idx": 0, "count": page_count, "opened": False}
 
     subtitle_text = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
@@ -184,10 +185,10 @@ def _open_paged_sheet(
     nav = _PagedSheetNav(page, sheet, state, render)
 
     render()  # initial content, before the sheet is attached -- no .update() yet
-    sheet.content = ft.Container(
+    sheet.content = sheets.sheet_frame(
         ft.Column(
             [
-                ft.Row([ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10)], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
                 ft.Row(
                     [
                         _icon_bubble(icon, color=icon_color, bgcolor=icon_bg),
@@ -201,11 +202,9 @@ def _open_paged_sheet(
                 footer_holder,
             ],
             spacing=14, tight=True, scroll=ft.ScrollMode.AUTO,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         ),
-        padding=ft.padding.only(left=20, right=20, top=12, bottom=26),
-        bgcolor=Colors.WHITE,
-        border_radius=ft.border_radius.only(top_left=28, top_right=28),
-        shadow=Shadow.LG,
+        width=paged_sheet_w,
     )
     page.open(sheet)
     state["opened"] = True
@@ -628,7 +627,7 @@ class ItemsCenter:
         # enough to keep the item editor's dropdowns fresh — no full
         # self.show_center() reload needed.
         definitions_tab = {"value": "categories"}
-        definitions_sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+        definitions_sheet, _definitions_w = sheets.new_desktop_sheet(self.page)
 
         def sync_definitions_lists() -> None:
             nonlocal categories, units
@@ -819,10 +818,10 @@ class ItemsCenter:
                 padding=12, bgcolor=Colors.BACKGROUND_ALT, border_radius=Radius.MD,
             )
 
-            definitions_sheet.content = ft.Container(
+            definitions_sheet.content = sheets.sheet_frame(
                 ft.Column(
                     [
-                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        sheets.sheet_handle(),
                         ft.Row(
                             [
                                 _icon_bubble(ft.Icons.SELL_OUTLINED if is_categories else ft.Icons.STRAIGHTEN, color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG),
@@ -841,22 +840,10 @@ class ItemsCenter:
                         ft.Container(ft.Column(row_controls, spacing=8, scroll=ft.ScrollMode.AUTO), height=280),
                         add_card,
                     ],
-                    # tight + scroll (rather than a fixed pixel height on
-                    # the outer Container, as this used to have): combined
-                    # with the sheet's own is_scroll_controlled +
-                    # maintain_bottom_view_insets_padding above, this lets
-                    # the "تصنيف جديد…" field at the bottom rise above the
-                    # on-screen keyboard on its own -- no height math to
-                    # keep in sync here either. The 280px cap on the
-                    # category/unit list itself is unrelated and stays:
-                    # that one's just bounding a potentially long list, not
-                    # working around the keyboard.
                     spacing=12, tight=True, scroll=ft.ScrollMode.AUTO,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
-                bgcolor=Colors.WHITE,
-                border_radius=ft.border_radius.only(top_left=28, top_right=28),
-                shadow=Shadow.LG,
+                width=sheets.sheet_width(self.page),
             )
             page.update()
 
@@ -1921,7 +1908,7 @@ class ItemsCenter:
             # print, with "تحديد الكل" available for the (now opt-in) case
             # where that really is everything.
             selected: dict[int, bool] = {int(i["id"]): False for i in with_barcode}
-            sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+            sheet, _sheet_w = sheets.new_desktop_sheet(self.page)
 
             # Printer profile chosen here travels with the selection into
             # open_barcode_print_dialog() below -- the admin's saved default
@@ -2106,6 +2093,7 @@ class ItemsCenter:
                 border_radius=ft.border_radius.only(top_left=28, top_right=28),
                 shadow=Shadow.LG,
             )
+            sheet.content.width = _sheet_w
             page.open(sheet)
 
         def _bulk_apply_update(item_id: int, **overrides) -> None:
@@ -2147,7 +2135,7 @@ class ItemsCenter:
             selected: dict[int, bool] = {int(i["id"]): False for i in all_items}
             row_wrappers: dict[int, ft.Container] = {}
             checkboxes: dict[int, ft.Checkbox] = {}
-            sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+            sheet, _sheet_w = sheets.new_desktop_sheet(self.page)
 
             def close(_=None):
                 page.close(sheet)
@@ -2373,6 +2361,7 @@ class ItemsCenter:
                 border_radius=ft.border_radius.only(top_left=28, top_right=28),
                 shadow=Shadow.LG,
             )
+            sheet.content.width = _sheet_w
             page.open(sheet)
 
         def open_bulk_add_sheet(_=None) -> None:
@@ -2924,7 +2913,7 @@ class ItemsCenter:
             # than a modal box floating mid-screen. Reuses the exact
             # BottomSheet + drag-handle + rounded-top pattern already
             # proven in main.py's "المزيد" sheet — not a new, untested one.
-            detail_sheet = ft.BottomSheet(content=ft.Container(), enable_drag=True, maintain_bottom_view_insets_padding=True)
+            detail_sheet, sheet_w = sheets.new_desktop_sheet(page)
 
             def close(_=None): page.close(detail_sheet)
 
@@ -2963,15 +2952,12 @@ class ItemsCenter:
             # clip whatever exceeds its ~9/16-screen ceiling. The
             # طباعة/تعديل/إغلاق row is pulled out of the scrollable content
             # into a fixed footer so it's always reachable.
-            page_h = page.height or 780
-            total_sheet_h = min(int(page_h * 0.55), 600)
-            header_reserved, footer_reserved, gaps = 90, 140 if can_clear_opening else 100, 24
-            body_area_height = max(180, total_sheet_h - header_reserved - footer_reserved - gaps)
+            total_sheet_h = sheets.sheet_height(page, sheets.DETAIL_HEIGHT_RATIO, min_height=480, max_height=720)
 
-            detail_sheet.content = ft.Container(
+            detail_sheet.content = sheets.sheet_frame(
                 ft.Column(
                     [
-                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        sheets.sheet_handle(),
                         ft.Row([
                             ft.Container(ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, color=Colors.PRIMARY), width=42, height=42, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=14),
                             ft.Column([ft.Text(data["name"], size=18, weight=ft.FontWeight.BOLD), ft.Text(f"{data.get('item_type')} • {data.get('category_name') or 'بلا تصنيف'}", size=10, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
@@ -3002,7 +2988,7 @@ class ItemsCenter:
                                 ft.Text(f"آخر بيع: {stats.get('last_sale_date') or '—'}   •   آخر شراء: {stats.get('last_purchase_date') or '—'}", size=10, color=Colors.TEXT_SECONDARY),
                                 ft.Divider(height=8), ft.Text("آخر حركات المخزون", size=14, weight=ft.FontWeight.BOLD), ft.Column(move_cards, spacing=5),
                             ], spacing=9, scroll=ft.ScrollMode.AUTO),
-                            height=body_area_height, padding=ft.padding.only(top=8),
+                            expand=True, padding=ft.padding.only(top=8),
                         ),
                         ft.Container(
                             ft.Column(
@@ -3043,11 +3029,8 @@ class ItemsCenter:
                     ],
                     spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
+                width=sheet_w,
                 height=total_sheet_h,
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
-                bgcolor=Colors.WHITE,
-                border_radius=ft.border_radius.only(top_left=28, top_right=28),
-                shadow=Shadow.LG,
             )
             page.open(detail_sheet)
 

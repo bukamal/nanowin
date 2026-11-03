@@ -46,6 +46,14 @@ def render_form_sheet(
     """
     save_icon = save_icon or ft.Icons.SAVE_OUTLINED
 
+    # Every form sheet shares the desktop width so a form never opens as a
+    # narrow phone modal on a wide window. Height stays content-driven (the
+    # sheet grows with its fields / the on-screen keyboard).
+    from nano_offline.components.sheets import constrain_width, sheet_width
+
+    width = sheet_width(page)
+    constrain_width(sheet, width)
+
     sheet.content = ft.Container(
         ft.Column(
             [
@@ -69,6 +77,7 @@ def render_form_sheet(
             spacing=16, tight=True, scroll=ft.ScrollMode.AUTO,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         ),
+        width=width,
         padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
         bgcolor=Colors.WHITE,
         border_radius=ft.border_radius.only(top_left=28, top_right=28),

@@ -7,6 +7,7 @@ from nano_offline.core import branding
 from nano_offline.core import sound as sound_engine
 
 from nano_offline.components import PatternPad, SelectAllTextField, auth_scaffold
+from nano_offline.components import sheets
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import Colors, Radius, Shadow, STATUS_STYLES
 
@@ -341,12 +342,12 @@ class LoginGate:
         # top corners, icon bubble + title/subtitle, LG shadow) so quick
         # login uses the same modal language as the rest of the app instead
         # of a bare AlertDialog.
-        sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+        sheet, sheet_w = sheets.new_desktop_sheet(self.page)
         icon_bubble = ft.Container(ft.Icon(icon, color=icon_color, size=24), width=48, height=48, alignment=ft.alignment.center, bgcolor=icon_bg, border_radius=Radius.MD)
-        sheet.content = ft.Container(
+        sheet.content = sheets.sheet_frame(
             ft.Column(
                 [
-                    ft.Row([ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10)], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
                     ft.Row(
                         [icon_bubble, ft.Column([ft.Text(title, size=18, weight=ft.FontWeight.BOLD), ft.Text(subtitle, size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True)],
                         spacing=12,
@@ -359,11 +360,9 @@ class LoginGate:
                 spacing=16,
                 tight=True,
                 scroll=ft.ScrollMode.AUTO,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
-            padding=ft.padding.only(left=20, right=20, top=12, bottom=26),
-            bgcolor=Colors.WHITE,
-            border_radius=ft.border_radius.only(top_left=28, top_right=28),
-            shadow=Shadow.LG,
+            width=sheet_w,
         )
         self.page.open(sheet)
         return sheet

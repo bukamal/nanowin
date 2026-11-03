@@ -32,6 +32,7 @@ from nano_offline.components import (
 from nano_offline.services.invoice_service import InvoiceLineInput
 from nano_offline.components.buttons import stepper_icon_button, header_close_button
 from nano_offline.components.column_visibility import ColumnVisibility
+from nano_offline.components import sheets
 from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -326,28 +327,33 @@ class InvoiceCenter:
         # rounded top corners, icon bubble + title/subtitle, LG shadow) --
         # kept identical so every "more options" surface in the app looks
         # like one system instead of a mix of AlertDialogs and sheets.
-        sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+        sheet, sheet_w = sheets.new_desktop_sheet(self.page)
+        sheet_h = sheets.sheet_height(self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=420, max_height=700)
         icon_bubble = ft.Container(ft.Icon(icon, color=icon_color, size=24), width=48, height=48, alignment=ft.alignment.center, bgcolor=icon_bg, border_radius=14)
-        sheet.content = ft.Container(
+        header = ft.Column(
+            [
+                ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row(
+                    [icon_bubble, ft.Column([ft.Text(title, size=18, weight=ft.FontWeight.BOLD), ft.Text(subtitle, size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True)],
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+            ],
+            spacing=12,
+            tight=True,
+        )
+        sheet.content = sheets.sheet_frame(
             ft.Column(
                 [
-                    ft.Row([ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10)], alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Row(
-                        [icon_bubble, ft.Column([ft.Text(title, size=18, weight=ft.FontWeight.BOLD), ft.Text(subtitle, size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True)],
-                        spacing=12,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                    body,
+                    header,
+                    ft.Container(ft.Column([body], spacing=6, scroll=ft.ScrollMode.AUTO), expand=True),
                 ],
-                spacing=16,
-                tight=True,
-                scroll=ft.ScrollMode.AUTO,
+                spacing=12,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
-            padding=ft.padding.only(left=20, right=20, top=12, bottom=26),
-            bgcolor=Colors.WHITE,
-            border_radius=ft.border_radius.only(top_left=28, top_right=28),
-            shadow=Shadow.LG,
+            width=sheet_w,
+            height=sheet_h,
         )
         self.page.open(sheet)
         return sheet
@@ -3890,7 +3896,7 @@ class InvoiceCenter:
                 except Exception:
                     pass
 
-            sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+            sheet, bulk_lines_w = sheets.new_desktop_sheet(self.page)
             sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
 
             def close(_=None) -> None:
@@ -3899,10 +3905,11 @@ class InvoiceCenter:
                 # hand it back so the app's shortcuts keep working.
                 self.page.on_keyboard_event = previous_key_handler
 
-            sheet.content = ft.Container(
+            sheet_h = sheets.sheet_height(self.page, sheets.TABLE_HEIGHT_RATIO, min_height=480)
+            sheet.content = sheets.sheet_frame(
                 ft.Column(
                     [
-                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        sheets.sheet_handle(),
                         ft.Row(
                             [
                                 ft.Container(ft.Icon(ft.Icons.VIEW_LIST_OUTLINED, color=Colors.PRIMARY, size=20), width=40, height=40, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=12),
@@ -3924,7 +3931,7 @@ class InvoiceCenter:
                             ],
                             spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Container(bulk_grid, height=260, border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD),
+                        sheets.table_body(bulk_grid),
                         ft.Row(
                             [
                                 ft.Container(expand=True),
@@ -3933,13 +3940,10 @@ class InvoiceCenter:
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                     ],
-                    spacing=12, tight=True, scroll=ft.ScrollMode.AUTO,
-                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
-                bgcolor=Colors.WHITE,
-                border_radius=ft.border_radius.only(top_left=28, top_right=28),
-                shadow=Shadow.LG,
+                width=bulk_lines_w,
+                height=sheet_h,
             )
             self.page.open(sheet)
 

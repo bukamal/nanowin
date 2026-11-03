@@ -10,6 +10,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SelectAllTextField, SegmentedToggle, SegmentOption, empty_state
+from nano_offline.components import sheets
 from nano_offline.components.form_sheet import render_form_sheet
 from nano_offline.components.print_profile import (
     apply_print_profile,
@@ -1005,6 +1006,7 @@ class POSCenter:
             maintain_bottom_view_insets_padding=True,
         )
         self._payment_sheet = payment_sheet
+        sheets.constrain_width(payment_sheet, sheets.sheet_width(self.page))
         payment_sheet.on_dismiss = _resume_barcode_focus
 
         def confirm_payment(_=None):
@@ -1179,10 +1181,10 @@ class POSCenter:
             ]
             render_currency_toggle()
             render_customer_insight()
-            payment_sheet.content = ft.Container(
+            payment_sheet.content = sheets.sheet_frame(
                 ft.Column(
                     [
-                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
                         ft.Text("إتمام الدفع", size=18, weight=ft.FontWeight.BOLD),
                         body,
                     ],
@@ -1191,9 +1193,7 @@ class POSCenter:
                     tight=True,
                     scroll=ft.ScrollMode.AUTO,
                 ),
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=28),
-                bgcolor=Colors.WHITE,
-                border_radius=ft.border_radius.only(top_left=24, top_right=24),
+                width=sheets.sheet_width(self.page),
             )
             _mark_overlay_open()
             self.page.open(payment_sheet)

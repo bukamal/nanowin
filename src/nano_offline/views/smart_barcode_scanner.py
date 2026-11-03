@@ -45,6 +45,7 @@ import flet as ft
 
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.core.toast import toast
+from nano_offline.components import sheets
 
 
 # --------------------------------------------------------------------------- #
@@ -727,6 +728,9 @@ class SmartBarcodeScanner:
             ),
         )
         if self._page:
+            _w = sheets.sheet_width(self._page)
+            sheets.constrain_width(sheet, _w)
+            sheet.content.width = _w
             self._page.open(sheet)
 
     def _close_manual_sheet(self, value: str) -> None:
@@ -771,6 +775,9 @@ class SmartBarcodeScanner:
         )
         self._history_sheet = ft.BottomSheet(content=body)
         if self._page:
+            _hw = sheets.sheet_width(self._page)
+            sheets.constrain_width(self._history_sheet, _hw)
+            body.width = _hw
             self._page.open(self._history_sheet)
 
     # ------------------------------------------------------------------ #

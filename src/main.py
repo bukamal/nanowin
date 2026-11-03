@@ -29,6 +29,7 @@ from nano_offline.views.security_view import SecurityCenter
 from nano_offline.views.splash_view import SplashGate
 from nano_offline.views.stocktake_view import StocktakeCenter
 from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonMenu, RibbonTab  # noqa: F401
+from nano_offline.components import sheets
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
@@ -1351,6 +1352,10 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 shadow=Shadow.LG,
             )
         )
+        verify_sheet.is_scroll_controlled = True
+        verify_w = sheets.sheet_width(page)
+        sheets.constrain_width(verify_sheet, verify_w)
+        verify_sheet.content.width = verify_w
         page.open(verify_sheet)
 
     # The shell is desktop-only now: one ribbon navigation surface (CommandBar)

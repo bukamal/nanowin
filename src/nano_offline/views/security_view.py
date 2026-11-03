@@ -6,6 +6,7 @@ from nano_offline.core import branding
 from nano_offline.core.toast import toast
 
 from nano_offline.components import PatternPad, SelectAllTextField, kpi_card, metric_controls
+from nano_offline.components import sheets
 from nano_offline.core.theme import Colors, Radius, Shadow
 
 
@@ -45,12 +46,12 @@ class SecurityCenter:
         )
 
     def _open_sheet(self, *, icon: str, icon_color: str, icon_bg: str, title: str, subtitle: str, body: ft.Control, actions: list[ft.Control]) -> ft.BottomSheet:
-        sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
-        sheet.content = ft.Container(
+        sheet, sheet_w = sheets.new_desktop_sheet(self.page)
+        sheet.content = sheets.sheet_frame(
             ft.Column(
                 [
                     ft.Row(
-                        [ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10)],
+                        [sheets.sheet_handle()],
                         alignment=ft.MainAxisAlignment.CENTER,
                     ),
                     ft.Row(
@@ -75,11 +76,9 @@ class SecurityCenter:
                 spacing=16,
                 tight=True,
                 scroll=ft.ScrollMode.AUTO,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
-            padding=ft.padding.only(left=20, right=20, top=12, bottom=26),
-            bgcolor=Colors.WHITE,
-            border_radius=ft.border_radius.only(top_left=28, top_right=28),
-            shadow=Shadow.LG,
+            width=sheet_w,
         )
         self.page.open(sheet)
         return sheet

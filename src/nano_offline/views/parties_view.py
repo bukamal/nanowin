@@ -12,6 +12,7 @@ from nano_offline.core.party_reliability import grade_party
 
 from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.column_visibility import ColumnVisibility
+from nano_offline.components import sheets
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
@@ -339,7 +340,7 @@ class PartyCenter:
             # same BottomSheet + drag-handle + rounded-top treatment already
             # used for the item detail view in items_view.py, so customer/
             # supplier detail reads consistently with the rest of the app.
-            detail_sheet = ft.BottomSheet(content=ft.Container(), enable_drag=True, maintain_bottom_view_insets_padding=True)
+            detail_sheet, sheet_w = sheets.new_desktop_sheet(page)
 
             def close(_=None):
                 page.close(detail_sheet)
@@ -411,10 +412,7 @@ class PartyCenter:
             # with a scrollable stats/history body and a fixed footer row
             # for حذف/تعديل/إغلاق so the actions stay reachable regardless
             # of how many recent invoices are listed above them.
-            page_h = page.height or 780
-            total_sheet_h = min(int(page_h * 0.55), 600)
-            header_reserved, footer_reserved, gaps = 90, 60, 24
-            body_area_height = max(180, total_sheet_h - header_reserved - footer_reserved - gaps)
+            total_sheet_h = sheets.sheet_height(page, sheets.DETAIL_HEIGHT_RATIO, min_height=460, max_height=700)
 
             def _detail_actions():
                 actions = [
@@ -452,10 +450,10 @@ class PartyCenter:
                 actions.append(ft.FilledButton("إغلاق", on_click=close, expand=True))
                 return actions
 
-            detail_sheet.content = ft.Container(
+            detail_sheet.content = sheets.sheet_frame(
                 ft.Column(
                     [
-                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        sheets.sheet_handle(),
                         ft.Row(
                             [
                                 ft.Container(ft.Icon(ft.Icons.PERSON if is_customer else ft.Icons.LOCAL_SHIPPING_OUTLINED, color=Colors.PRIMARY), width=42, height=42, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=14),
@@ -491,7 +489,7 @@ class PartyCenter:
                                     ft.Column(recent, spacing=6),
                                 ], spacing=9, scroll=ft.ScrollMode.AUTO,
                             ),
-                            height=body_area_height, padding=ft.padding.only(top=8),
+                            expand=True, padding=ft.padding.only(top=8),
                         ),
                         ft.Container(
                             ft.Row(
@@ -503,11 +501,8 @@ class PartyCenter:
                     ],
                     spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
+                width=sheet_w,
                 height=total_sheet_h,
-                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
-                bgcolor=Colors.WHITE,
-                border_radius=ft.border_radius.only(top_left=28, top_right=28),
-                shadow=Shadow.LG,
             )
 
             page.open(detail_sheet)
