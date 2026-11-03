@@ -75,10 +75,17 @@ def _cart_line_price(row: dict) -> float:
     """
     price = row.get("unit_price")
     if price is not None:
-        return float(price)
-    item = row.get("item") or {}
-    factor = float(row.get("factor") or 1)
-    return float(item.get("selling_price") or 0) * factor
+        base = float(price)
+    else:
+        item = row.get("item") or {}
+        factor = float(row.get("factor") or 1)
+        base = float(item.get("selling_price") or 0) * factor
+    # Per-line discount (percent) reduces the effective unit price, so totals,
+    # margin checks and the created invoice all see the discounted price.
+    pct = float(row.get("discount_pct") or 0)
+    if pct:
+        base *= max(0.0, 1.0 - min(100.0, pct) / 100.0)
+    return base
 
 
 class POSCenter:
@@ -153,6 +160,12 @@ class POSCenter:
         # app's display currency; ``"USD"``/``"SYP"`` pin the other one so a
         # shop that prices in SYP can still take dollars without leaving POS.
         self._receive_currency: str | None = None
+        # Quantity multiplier (×N): when > 1, the next scan/tap adds N units at
+        # once, then resets. Classic counter-POS shortcut.
+        self._multiplier: int = 1
+        self._multiplier_field = None
+        # Cart-wide discount percent applied to every line (0 = none).
+        self._cart_discount_pct: float = 0.0
 
     def money(self, value: float) -> str:
         return currency.format_amount(value, self.ctx.settings)
@@ -556,7 +569,7 @@ class POSCenter:
         )
 
         received_display = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD)
-        change_text = ft.Text("الباقي: 0.00", size=13, color=Colors.SUCCESS_DARK)
+        change_text = ft.Text("الباقي: 0.00", size=16, weight=ft.FontWeight.BOLD, color=Colors.SUCCESS_DARK)
         auto_print_switch = ft.Switch(label="طباعة تلقائية بعد الدفع", value=pos_settings.auto_print_default(self.ctx.settings), scale=0.85)
         saved_layout, _saved_roll_width = saved_print_profile(self.ctx.settings, surface="pos")
         print_layout_toggle = SegmentedToggle(
@@ -807,9 +820,55 @@ class POSCenter:
             # A manual USD/SYP flip is per-sale: clear it with the cart so
             # the next sale starts on the app's display currency again.
             self._receive_currency = None
+            self._cart_discount_pct = 0.0
             if not keep_customer:
                 customer_dd.value = None
                 self.customer_id = None
+
+        def edit_cart_discount(_=None):
+            if not self.cart_order:
+                self.notify("السلة فارغة", kind="warning")
+                return
+            field = SelectAllTextField(
+                label="خصم على الفاتورة %",
+                value=self._qty(self._cart_discount_pct),
+                keyboard_type=ft.KeyboardType.NUMBER,
+                autofocus=True,
+            )
+
+            def apply(_=None):
+                try:
+                    pct = float((field.value or "0").replace(",", "."))
+                except Exception:
+                    self.notify("قيمة غير صالحة", kind="error")
+                    return
+                pct = max(0.0, min(100.0, pct))
+                self._cart_discount_pct = pct
+                for line in self.cart.values():
+                    line["discount_pct"] = pct
+                self.page.close(disc_sheet)
+                refresh_cart()
+                self.page.update()
+
+            disc_sheet = ft.BottomSheet(
+                content=ft.Container(),
+                is_scroll_controlled=True,
+                enable_drag=True,
+                maintain_bottom_view_insets_padding=True,
+            )
+            disc_sheet.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
+            render_form_sheet(
+                self.page,
+                disc_sheet,
+                title="خصم على الفاتورة",
+                fields=[field],
+                on_close=lambda _: self.page.close(disc_sheet),
+                on_save=apply,
+            )
+            mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
+            if callable(mark_overlay_open):
+                mark_overlay_open()
+            self.page.open(disc_sheet)
 
         def hold_cart(_=None):
             if not self.cart_order:
@@ -934,11 +993,17 @@ class POSCenter:
                 total = total_amount()
                 received = received_amount()
                 paid = min(received, total) if self.customer_id else total
+                discount_lines = [
+                    f"{r['item']['name']} {self._qty(r.get('discount_pct') or 0)}%"
+                    for r in rows_list if float(r.get("discount_pct") or 0) > 0
+                ]
+                sale_notes = ("خصومات — " + "، ".join(discount_lines[:8])) if discount_lines else None
                 invoice_id = self.ctx.invoices.create_invoice(
                     invoice_type="sale",
                     lines=lines,
                     customer_id=self.customer_id,
                     paid_amount=paid,
+                    notes=sale_notes,
                     allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
                 )
                 self._last_invoice_id = invoice_id
@@ -1026,6 +1091,53 @@ class POSCenter:
             def pick_recent_customer(cid: int):
                 customer_dd.value = str(cid)
                 customer_changed()
+
+            def create_customer(_=None):
+                name_field = SelectAllTextField(label="اسم العميل *", autofocus=True)
+                phone_field = SelectAllTextField(
+                    label="الهاتف (اختياري)", keyboard_type=ft.KeyboardType.NUMBER
+                )
+
+                def apply(_=None):
+                    name = (name_field.value or "").strip()
+                    if not name:
+                        self.notify("اسم العميل مطلوب", kind="error")
+                        return
+                    try:
+                        cid = int(self.ctx.customers.create(name, (phone_field.value or "").strip()))
+                        fresh = self.ctx.customers.get(cid)
+                    except Exception as exc:
+                        self.notify(str(exc), kind="error")
+                        return
+                    if fresh:
+                        customers.append(fresh)
+                        customer_map[cid] = fresh
+                    customer_dd.set_choices([(str(c["id"]), c["name"]) for c in customers])
+                    customer_dd.value = str(cid)
+                    self.page.close(new_sheet)
+                    customer_changed()
+                    render_customer_insight()
+                    self.page.update()
+
+                new_sheet = ft.BottomSheet(
+                    content=ft.Container(),
+                    is_scroll_controlled=True,
+                    enable_drag=True,
+                    maintain_bottom_view_insets_padding=True,
+                )
+                new_sheet.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
+                render_form_sheet(
+                    self.page,
+                    new_sheet,
+                    title="عميل جديد",
+                    fields=[name_field, phone_field],
+                    on_close=lambda _: self.page.close(new_sheet),
+                    on_save=apply,
+                )
+                mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
+                if callable(mark_overlay_open):
+                    mark_overlay_open()
+                self.page.open(new_sheet)
 
             def recent_customers_row() -> ft.Control:
                 # Phase C: "last 3 customers" quick-pick under the customer
@@ -1164,7 +1276,19 @@ class POSCenter:
                 ft.Divider(height=1, color=Colors.BORDER),
                 ft.Text("العميل (اختياري)", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
                 ft.Text("اتركه فارغًا للبيع النقدي السريع", size=11, color=Colors.TEXT_FAINT),
-                customer_dd,
+                ft.Row(
+                    [
+                        ft.Container(customer_dd, expand=True),
+                        ft.IconButton(
+                            icon=ft.Icons.PERSON_ADD_ALT_1_OUTLINED,
+                            tooltip="إضافة عميل جديد",
+                            on_click=create_customer,
+                            icon_color=Colors.PRIMARY,
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 customer_insight,
                 recent_customers_row(),
                 ft.Divider(height=1, color=Colors.BORDER),
@@ -1220,6 +1344,20 @@ class POSCenter:
         render_grid()
         refresh_cart()
 
+        multiplier_field = SelectAllTextField(
+            label="×",
+            value=str(self._multiplier),
+            width=64,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            tooltip="مضاعف: أضف N وحدات بالمسح/النقر التالي",
+        )
+
+        def _multiplier_changed(_=None):
+            self._set_multiplier(multiplier_field.value or "1")
+
+        multiplier_field.on_change = _multiplier_changed
+        self._multiplier_field = multiplier_field
+
         catalog_pane = ft.Column(
             [
                 ft.Container(
@@ -1236,6 +1374,7 @@ class POSCenter:
                             ft.Row(
                                 [
                                     barcode_field,
+                                    multiplier_field,
                                     ft.IconButton(
                                         icon=ft.Icons.CAMERA_ALT_OUTLINED,
                                         tooltip="مسح بالكاميرا",
@@ -1270,6 +1409,12 @@ class POSCenter:
         # this column stays short even with several lines in the cart.
         hold_btn = ft.IconButton(icon=ft.Icons.PAUSE_CIRCLE_OUTLINED, tooltip="تعليق الفاتورة", on_click=hold_cart, icon_size=IconSize.HEADER)
         undo_btn = ft.IconButton(icon=ft.Icons.UNDO, tooltip="تراجع عن آخر إضافة", on_click=undo_last, icon_size=IconSize.HEADER)
+        discount_cart_btn = ft.IconButton(
+            icon=ft.Icons.PERCENT,
+            tooltip="خصم على كل الفاتورة %",
+            on_click=edit_cart_discount,
+            icon_size=IconSize.HEADER,
+        )
         price_check_btn = ft.IconButton(
             icon=ft.Icons.PRICE_CHECK,
             tooltip="فحص السعر (F7) — امسح دون إضافة للسلة",
@@ -1332,6 +1477,7 @@ class POSCenter:
                     float(line.get("unit_price") or item["selling_price"]),
                     unit_id=int(unit_id) if unit_id is not None else None,
                     factor=factor,
+                    apply_multiplier=False,
                 )
                 added += 1
             if invoice.get("customer_id"):
@@ -1377,6 +1523,7 @@ class POSCenter:
                             ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD, expand=True),
                             count_text,
                             ft.Row([price_check_btn, recall_btn, print_last_btn], spacing=0, tight=True),
+                            discount_cart_btn,
                             hold_btn,
                             undo_btn,
                         ],
@@ -1438,6 +1585,49 @@ class POSCenter:
             except Exception:
                 pass
 
+        def show_pos_help(_=None):
+            shortcuts = [
+                ("F1", "هذه المساعدة"),
+                ("F2", "إتمام الدفع"),
+                ("F3", "بحث في الكتالوج"),
+                ("F4", "تعليق الفاتورة"),
+                ("F7", "وضع فحص السعر"),
+                ("F8", "تراجع عن آخر إزالة"),
+                ("F12", "طباعة آخر فاتورة"),
+                ("Esc مرتين", "تفريغ السلة"),
+                ("Ctrl+Enter", "إتمام الدفع"),
+            ]
+            dialog = ft.AlertDialog(modal=True)
+            dialog.title = ft.Row(
+                [
+                    ft.Icon(ft.Icons.KEYBOARD_ALT_OUTLINED, color=Colors.PRIMARY),
+                    ft.Text("اختصارات نقطة البيع", size=17, weight=ft.FontWeight.BOLD),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            dialog.content = ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Container(
+                                ft.Text(key, size=11, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                                width=92, padding=ft.padding.symmetric(horizontal=8, vertical=5),
+                                bgcolor=Colors.PRIMARY_BG, border_radius=8, alignment=ft.alignment.center,
+                            ),
+                            ft.Text(label, size=12, color=Colors.TEXT_PRIMARY),
+                        ],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                    for key, label in shortcuts
+                ],
+                spacing=6,
+                tight=True,
+            )
+            dialog.actions = [ft.FilledButton("إغلاق", on_click=lambda _: self.page.close(dialog))]
+            self.page.open(dialog)
+
         fs_btn = ft.IconButton(
             icon=ft.Icons.FULLSCREEN_EXIT,
             icon_size=IconSize.HEADER,
@@ -1472,6 +1662,12 @@ class POSCenter:
                     ft.Column(
                         [ft.Text("نقطة البيع", size=15, weight=ft.FontWeight.BOLD), today_summary_text],
                         spacing=0, expand=True,
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.HELP_OUTLINE,
+                        tooltip="اختصارات لوحة المفاتيح (F1)",
+                        icon_size=IconSize.HEADER,
+                        on_click=show_pos_help,
                     ),
                     fs_btn,
                 ],
@@ -1618,6 +1814,9 @@ class POSCenter:
                         self._esc_armed_at = now
                         self.notify("اضغط Esc مرة أخرى خلال 3 ثوانٍ لتفريغ السلة")
                     self.page.update()
+                    return
+                if k == "f1":
+                    show_pos_help()
                     return
                 if k == "f2":
                     checkout_btn.on_click(None)
@@ -1872,6 +2071,13 @@ class POSCenter:
         line_unit_price = _cart_line_price(row)
         line_total = line_unit_price * float(row["qty"])
         unit_label = self._cart_unit_label(row)
+        discount_pct = float(row.get("discount_pct") or 0)
+        _base_unit_price = row.get("unit_price")
+        _base_unit_price = (
+            float(_base_unit_price)
+            if _base_unit_price is not None
+            else float(item.get("selling_price") or 0) * float(row.get("factor") or 1)
+        )
 
         def edit_price(_=None) -> None:
             # v0.9.6: tap the price line of a cart row to override that
@@ -1929,6 +2135,45 @@ class POSCenter:
                 mark_overlay_open()
             self.page.open(price_sheet)
 
+        def edit_discount(_=None) -> None:
+            """Per-line discount percent (0-100); reduces the effective price."""
+            field = SelectAllTextField(
+                label="نسبة الخصم %",
+                value=self._qty(discount_pct),
+                keyboard_type=ft.KeyboardType.NUMBER,
+                autofocus=True,
+            )
+
+            def apply(_=None) -> None:
+                try:
+                    pct = float((field.value or "0").replace(",", "."))
+                except Exception:
+                    self.notify("قيمة غير صالحة", kind="error")
+                    return
+                row["discount_pct"] = max(0.0, min(100.0, pct))
+                self.page.close(disc_sheet)
+                on_change()
+
+            disc_sheet = ft.BottomSheet(
+                content=ft.Container(),
+                is_scroll_controlled=True,
+                enable_drag=True,
+                maintain_bottom_view_insets_padding=True,
+            )
+            disc_sheet.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
+            render_form_sheet(
+                self.page,
+                disc_sheet,
+                title=f"خصم {item['name']}",
+                fields=[field],
+                on_close=lambda _: self.page.close(disc_sheet),
+                on_save=apply,
+            )
+            mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
+            if callable(mark_overlay_open):
+                mark_overlay_open()
+            self.page.open(disc_sheet)
+
         # Advisory only: the strict guard lives in AccountingRebuilder, and
         # the admin can allow overselling per surface. The on-hand figure is
         # hidden by default so the cart never advertises stock levels.
@@ -1984,6 +2229,15 @@ class POSCenter:
                     border_radius=8,
                 )
             )
+        if discount_pct > 0:
+            badges.append(
+                ft.Container(
+                    ft.Text(f"خصم {self._qty(discount_pct)}%", size=9, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
+                    padding=ft.padding.symmetric(horizontal=7, vertical=2),
+                    bgcolor=Colors.SUCCESS_ALT,
+                    border_radius=8,
+                )
+            )
 
         name_row_controls = [
             ft.Text(item["name"], size=12, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
@@ -2024,7 +2278,8 @@ class POSCenter:
                                             [
                                                 ft.Icon(ft.Icons.EDIT_OUTLINED, size=11, color=Colors.TEXT_SECONDARY),
                                                 ft.Text(
-                                                    f"{self.money(line_unit_price)} × {self._qty(row['qty'])} = {self.money(line_total)}",
+                                                    f"{self.money(line_unit_price)} × {self._qty(row['qty'])} = {self.money(line_total)}"
+                                                    + (f"  · قبل الخصم {self.money(_base_unit_price)}" if discount_pct > 0 else ""),
                                                     size=11,
                                                     color=Colors.TEXT_SECONDARY,
                                                 ),
@@ -2045,6 +2300,7 @@ class POSCenter:
                                 on_click=edit_qty,
                             ),
                             stepper_icon_button(ft.Icons.ADD_CIRCLE_OUTLINE, lambda _: change_qty(1)),
+                            stepper_icon_button(ft.Icons.PERCENT, edit_discount),
                             stepper_icon_button(ft.Icons.CLOSE, remove, danger=True),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=2,
@@ -2081,10 +2337,14 @@ class POSCenter:
         *,
         unit_id: int | None = None,
         factor: float = 1.0,
+        apply_multiplier: bool = True,
     ) -> None:
         item = self.item_map.get(item_id)
         if item is None:
             return
+        if apply_multiplier and self._multiplier > 1:
+            qty_delta = float(qty_delta) * self._multiplier
+            self._set_multiplier(1)
         # Unit-aware identity: the same item sold by the piece and by the
         # carton are two distinct lines (different price per unit and
         # different stock factor), not one merged row.
@@ -2101,6 +2361,7 @@ class POSCenter:
                 "unit_price": unit_price,
                 "unit_id": unit_id,
                 "factor": float(factor or 1.0),
+                "discount_pct": float(self._cart_discount_pct or 0.0),
             }
             self.cart_order.append(key)
             new_qty = qty_delta
@@ -2113,6 +2374,20 @@ class POSCenter:
         self._refresh_cart()
         self._show_last_scan_card(item, new_qty, unit_price=unit_price, is_repeat=is_repeat)
         self.page.update()
+
+    def _set_multiplier(self, value: int) -> None:
+        """Set the ×N multiplier and reflect it in the toolbar field."""
+        try:
+            self._multiplier = max(1, min(999, int(value)))
+        except Exception:
+            self._multiplier = 1
+        field = self._multiplier_field
+        if field is not None:
+            try:
+                field.value = str(self._multiplier)
+                field.update()
+            except Exception:
+                pass
 
     def _cart_unit_label(self, row: dict) -> str | None:
         """«كرتونة ×12» for a non-base unit line; ``None`` for base units."""
