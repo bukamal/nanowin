@@ -30,6 +30,7 @@ from nano_offline.views.splash_view import SplashGate
 from nano_offline.views.stocktake_view import StocktakeCenter
 from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonMenu, RibbonTab  # noqa: F401
 from nano_offline.components import sheets
+from nano_offline.components.exit_backup import install_exit_backup
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
@@ -1362,6 +1363,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # above the section header -- no bottom bar / floating sale button.
     root = ft.Row([sidebar, body], expand=True, spacing=0)
     page.add(ft.SafeArea(root, expand=True))
+    # Desktop: intercept the window close and offer a smart backup prompt.
+    install_exit_backup(page, ctx, native_files=native_files)
 
     # In-app voice «call» session — survives section switches, not a true
     # OS background service. Floating banner + FAB hang over the shell.

@@ -1489,12 +1489,22 @@ class AdminCenter:
             ],
             value=str(backup_settings.retention_count(bkset)),
         )
+        backup_exit_ask_switch = ft.Switch(
+            label="السؤال عن إنشاء نسخة احتياطية عند إغلاق البرنامج",
+            value=backup_settings.exit_ask(bkset),
+        )
+        backup_exit_auto_switch = ft.Switch(
+            label="إنشاء نسخة احتياطية تلقائيًا عند الإغلاق (دون سؤال)",
+            value=backup_settings.exit_auto(bkset),
+        )
 
         def save_backup_settings(_):
             try:
                 self.ctx.settings.set_many({
                     backup_settings.AUTO_BACKUP_ENABLED_KEY: "1" if backup_auto_switch.value else "0",
                     backup_settings.RETENTION_COUNT_KEY: backup_retention_field.value or str(backup_settings.DEFAULT_RETENTION_COUNT),
+                    backup_settings.EXIT_ASK_KEY: "1" if backup_exit_ask_switch.value else "0",
+                    backup_settings.EXIT_AUTO_KEY: "1" if backup_exit_auto_switch.value else "0",
                 })
                 self._notify("تم حفظ إعدادات النسخ الاحتياطي")
                 self.page.update()
@@ -2606,6 +2616,8 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("إعدادات النسخ الاحتياطي", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                     backup_auto_switch,
+                    backup_exit_ask_switch,
+                    backup_exit_auto_switch,
                     ft.Text("الاحتفاظ بآخر عدد من النسخ محليًا (يُحذف الأقدم تلقائيًا)", size=12, color=Colors.TEXT_SECONDARY),
                     backup_retention_field,
                     ft.FilledButton("حفظ إعدادات النسخ الاحتياطي", icon=ft.Icons.SAVE_OUTLINED, on_click=save_backup_settings),

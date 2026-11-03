@@ -14,8 +14,17 @@ AUTO_BACKUP_ENABLED_KEY = "backup_auto_on_login"
 # --- Local retention -------------------------------------------------------#
 RETENTION_COUNT_KEY = "backup_retention_count"
 
+# --- On-exit backup prompt -------------------------------------------------#
+# Shown when the user closes the window (desktop). "ask" controls whether the
+# dialog appears at all; "auto" silently creates a backup then exits (skipping
+# the dialog) -- the "تذكّر" checkbox in the dialog flips "auto" on.
+EXIT_ASK_KEY = "backup_exit_ask"
+EXIT_AUTO_KEY = "backup_exit_auto"
+
 DEFAULT_AUTO_BACKUP_ENABLED = False
 DEFAULT_RETENTION_COUNT = 10  # 0 == keep every backup forever (no pruning)
+DEFAULT_EXIT_ASK = True
+DEFAULT_EXIT_AUTO = False
 
 VALID_RETENTION_COUNTS = (0, 5, 10, 20, 50)
 
@@ -47,8 +56,20 @@ def retention_count(settings) -> int:
     return value if value in VALID_RETENTION_COUNTS else DEFAULT_RETENTION_COUNT
 
 
+def exit_ask(settings) -> bool:
+    """Whether the on-exit backup dialog should appear when the window closes."""
+    return _flag(settings, EXIT_ASK_KEY, DEFAULT_EXIT_ASK)
+
+
+def exit_auto(settings) -> bool:
+    """Whether closing should silently create a backup first (no dialog)."""
+    return _flag(settings, EXIT_AUTO_KEY, DEFAULT_EXIT_AUTO)
+
+
 __all__ = [
-    "AUTO_BACKUP_ENABLED_KEY", "RETENTION_COUNT_KEY",
+    "AUTO_BACKUP_ENABLED_KEY", "RETENTION_COUNT_KEY", "EXIT_ASK_KEY", "EXIT_AUTO_KEY",
     "DEFAULT_AUTO_BACKUP_ENABLED", "DEFAULT_RETENTION_COUNT",
+    "DEFAULT_EXIT_ASK", "DEFAULT_EXIT_AUTO",
     "VALID_RETENTION_COUNTS", "auto_backup_enabled", "retention_count",
+    "exit_ask", "exit_auto",
 ]
