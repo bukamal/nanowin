@@ -2546,11 +2546,11 @@ class AdminCenter:
                     ft.Text("الخط وحجمه", size=12, weight=ft.FontWeight.W_600),
                     ft.Text(
                         "يُطبَّق خط الواجهة على كل الشاشات، ويُستخدم أيضًا في الطباعة وملفات PDF. "
-                        "الحجم الأساسي يضبط النصوص الافتراضية والمستندات المطبوعة.",
+                        "الحجم الأساسي يضبط حجم نصوص المستندات المطبوعة وملفات PDF.",
                         size=11, color=Colors.TEXT_FAINT,
                     ),
                     font_family_field,
-                    ft.Text("الحجم الأساسي", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Text("الحجم الأساسي (للطباعة)", size=11, color=Colors.TEXT_SECONDARY),
                     font_size_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     theme_schedule_switch,

@@ -74,28 +74,19 @@ def _resolve_and_set_theme(page: ft.Page, ctx: AppContext) -> str:
 
 
 def _apply_theme(page: ft.Page, ctx: AppContext) -> None:
-    """Set page.theme/dark_theme with the brand seed, mode, font family and size.
+    """Set page.theme/dark_theme with the brand seed and the chosen font family.
 
-    The admin's font family applies to every Flet control that doesn't pin its
-    own family (i.e. the whole UI), and the base size scales the Material text
-    theme so default-sized text tracks it too. Explicit ``size=`` on a control
-    still wins, by design.
+    Only the *family* is injected here. Replacing ``Theme.text_theme`` with
+    custom styles made several white-on-white sheets/fields lose their text
+    colour (the custom styles dropped the theme's resolved colour), so the UI
+    keeps Flutter's normal text theme and only the family (which is
+    colour-neutral) comes from the admin setting. The base size still applies
+    to printed documents via ``DocumentService``.
     """
     family = font_settings.ui_family(ctx.settings, APP_FONT_FAMILY)
-    scale = font_settings.font_size(ctx.settings) / float(font_settings.DEFAULT_SIZE)
-
-    def _style(size: float) -> ft.TextStyle:
-        return ft.TextStyle(size=round(size * scale, 2))
-
-    text_theme = ft.TextTheme(
-        body_large=_style(16), body_medium=_style(14), body_small=_style(12),
-        label_large=_style(14), label_medium=_style(12), label_small=_style(11),
-        title_large=_style(22), title_medium=_style(16), title_small=_style(14),
-        headline_small=_style(24),
-    )
     if APP_FONTS:
         page.fonts = APP_FONTS
-    page.theme = ft.Theme(color_scheme_seed=Colors.PRIMARY, font_family=family, text_theme=text_theme)
+    page.theme = ft.Theme(color_scheme_seed=Colors.PRIMARY, font_family=family)
     page.dark_theme = page.theme
     page.theme_mode = ft.ThemeMode.DARK if theme.is_dark() else ft.ThemeMode.LIGHT
 
