@@ -275,7 +275,7 @@ class DashboardCenter:
             self.ctx.settings.set_many({currency.EXCHANGE_RATE_KEY: str(rate_value)})
             close()
             self._notify("تم تحديث سعر الصرف — سيظهر في كل الشاشات والمستندات فورًا", kind="success", sound_kind="save")
-            self.show_center()
+            self._rerender_home()
 
         _refresh_preview()
         render_form_sheet(
@@ -315,6 +315,20 @@ class DashboardCenter:
             kind="success",
             sound_kind="save",
         )
+        self._rerender_home()
+
+    def _rerender_home(self) -> None:
+        """Refresh the current home instead of rendering the classic dashboard.
+
+        The classic dashboard is no longer the home (the units board is), so a
+        rate/currency change must not paint it into the shell content area.
+        """
+        if self.on_navigate is not None:
+            try:
+                self.on_navigate("dashboard")
+                return
+            except Exception:
+                pass
         self.show_center()
 
     def _rate_chip(self) -> ft.Container:

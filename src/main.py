@@ -429,14 +429,23 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             except Exception:
                 return "—"
 
-        # ---- quick inquiry (material by barcode or name) ----
-        qi_result = ft.Text("", size=12, color=Colors.TEXT_PRIMARY)
-        qi_field = ft.TextField(hint_text="باركود أو اسم مادة…", dense=True, expand=True)
+# ---- quick inquiry (material by barcode or name) ----
+        qi_result = ft.Column([], spacing=8)
+        qi_field = ft.TextField(hint_text="باركود أو اسم مادة...", dense=True, expand=True)
+
+        def _qi_metric(label: str, value: str, color=Colors.TEXT_PRIMARY) -> ft.Column:
+            return ft.Column(
+                [
+                    ft.Text(label, size=9, color=Colors.TEXT_SECONDARY),
+                    ft.Text(value, size=12, weight=ft.FontWeight.BOLD, color=color),
+                ],
+                spacing=0, tight=True,
+            )
 
         def _qi_run(_=None):
             query = (qi_field.value or "").strip()
             if not query:
-                qi_result.value = ""
+                qi_result.controls = []
             else:
                 try:
                     item = ctx.items.find_by_barcode(query)
@@ -444,14 +453,53 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                         found = ctx.items.list(search=query, limit=1)
                         item = found[0] if found else None
                     if item is None:
-                        qi_result.value = "لا يوجد منتج مطابق"
-                        qi_result.color = Colors.DANGER_DARK
+                        qi_result.controls = [ft.Text("لا يوجد منتج مطابق", size=12, color=Colors.DANGER_DARK)]
                     else:
-                        qi_result.value = f"{item.get('name')} — {_money(item.get('selling_price'))}"
-                        qi_result.color = Colors.TEXT_PRIMARY
+                        qty = float(item.get("quantity") or 0)
+                        unit = str(item.get("unit_name") or "").strip()
+                        qty_text = f"{qty:g}" + (f" {unit}" if unit else "")
+                        is_stock = str(item.get("item_type") or "مخزون") == "مخزون"
+                        low = is_stock and qty < 5
+                        qi_result.controls = [
+                            ft.Row(
+                                [
+                                    ft.Container(
+                                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=16, color=Colors.PRIMARY),
+                                        width=30, height=30, alignment=ft.alignment.center,
+                                        bgcolor=Colors.PRIMARY_BG, border_radius=9,
+                                    ),
+                                    ft.Column(
+                                        [
+                                            ft.Text(item.get("name") or "—", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                            ft.Text(
+                                                f"{item.get('category_name') or 'بلا تصنيف'} · {item.get('item_type') or 'مخزون'}",
+                                                size=10, color=Colors.TEXT_SECONDARY,
+                                            ),
+                                        ],
+                                        spacing=1, expand=True, tight=True,
+                                    ),
+                                    ft.Container(
+                                        ft.Text(qty_text if is_stock else "خدمة", size=10, weight=ft.FontWeight.W_600,
+                                                color=Colors.DANGER_DARK if low else Colors.SUCCESS_DARK),
+                                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                        bgcolor=Colors.DANGER_BG if low else Colors.SUCCESS_BG,
+                                        border_radius=10,
+                                    ),
+                                ],
+                                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Row(
+                                [
+                                    _qi_metric("سعر البيع", _private(item.get("selling_price")), Colors.SUCCESS_DARK),
+                                    _qi_metric("سعر الشراء", _private(item.get("purchase_price")), Colors.TEXT_PRIMARY),
+                                    _qi_metric("الكمية", qty_text if is_stock else "—", Colors.DANGER_DARK if low else Colors.PRIMARY),
+                                ],
+                                spacing=18, wrap=True,
+                            ),
+                            ft.Text(f"الباركود: {item.get('barcode') or '—'}", size=10, color=Colors.TEXT_FAINT),
+                        ]
                 except Exception as exc:
-                    qi_result.value = str(exc)
-                    qi_result.color = Colors.DANGER_DARK
+                    qi_result.controls = [ft.Text(str(exc), size=12, color=Colors.DANGER_DARK)]
             try:
                 qi_result.update()
             except Exception:

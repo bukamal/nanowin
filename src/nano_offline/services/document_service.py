@@ -46,9 +46,14 @@ class DocumentService:
         them -- the caller decides how to lay the two out.
         """
         if inv is not None and inv.get("invoice_exchange_rate") is not None:
-            rate = float(inv["invoice_exchange_rate"])
+            code = str(inv.get("invoice_currency_code") or "").strip().upper()
+            stored_rate = float(inv["invoice_exchange_rate"] or 0)
+            # The snapshot stores the real SYP-per-USD rate, but a USD invoice
+            # is displayed in USD (display == stored), so formatting must not
+            # multiply by it.
+            rate = 1.0 if code == currency.DISPLAY_CURRENCY_USD else (stored_rate if stored_rate > 0 else 1.0)
             symbol = inv.get("invoice_currency_symbol") or currency.DEFAULT_DISPLAY_SYMBOL
-            decimals = 2 if (inv.get("invoice_currency_code") == currency.DISPLAY_CURRENCY_USD) else 0
+            decimals = 2 if code == currency.DISPLAY_CURRENCY_USD else 0
             amount_text = currency.format_amount(value, rate=rate, symbol=symbol, decimals=decimals, with_symbol=False)
         else:
             settings = self._settings()
@@ -425,15 +430,24 @@ table th, table td {{ text-align:center; }}
         rate_html = ""
         rate = inv.get("invoice_exchange_rate")
         code = inv.get("invoice_currency_code")
-        has_fx = (
-            bool(print_options["show_exchange_rate"])
-            and rate is not None
-            and code == currency.DISPLAY_CURRENCY_SYP
-        )
+        try:
+            rate_value = float(rate or 0)
+        except (TypeError, ValueError):
+            rate_value = 0.0
+        show_rate = bool(print_options["show_exchange_rate"]) and rate is not None and rate_value > 0
+        has_fx = show_rate and code == currency.DISPLAY_CURRENCY_SYP
         if has_fx:
             rate_html = (
                 '<div class="rate-note">سعر صرف الدولار وقت إصدار الفاتورة: '
-                f'<b>1 $ = {float(rate):,.0f} {self._e(inv.get("invoice_currency_symbol") or "ل.س")}</b>'
+                f'<b>1 $ = {rate_value:,.0f} {self._e(inv.get("invoice_currency_symbol") or "ل.س")}</b>'
+                "</div>"
+            )
+        elif show_rate and code == currency.DISPLAY_CURRENCY_USD and rate_value > 1:
+            # USD invoice: still surface the rate that was in force at issuance
+            # (the amounts themselves stay in USD, printed without conversion).
+            rate_html = (
+                '<div class="rate-note">سعر الصرف المعتمد عند إصدار الفاتورة: '
+                f"<b>1 $ = {rate_value:,.0f} ل.س</b>"
                 "</div>"
             )
 

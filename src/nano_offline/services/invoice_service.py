@@ -169,7 +169,11 @@ class InvoiceService:
                     total,
                     paid_amount,
                     1 if (allow_negative_stock and invoice_type == "sale") else 0,
-                    currency.get_effective_rate(settings),
+                    # Record the *real* SYP-per-USD rate regardless of the
+                    # display currency at issuance, so a USD invoice still
+                    # stores (and prints) the configured rate instead of being
+                    # pinned to 1.0 when the admin later changes the rate.
+                    currency.get_exchange_rate(settings),
                     currency.get_display_currency(settings),
                     currency.get_display_symbol(settings),
                     print_snapshot,

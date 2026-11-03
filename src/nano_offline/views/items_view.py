@@ -29,13 +29,13 @@ from nano_offline.core.platform_capabilities import supports
 # quantity is derived from inventory movements (see ItemRepository.update,
 # which has no quantity parameter) and the rest are display-only.
 ITEM_GRID_COLUMNS = [
-    GridColumn("name", "الاسم", editable=True, tooltip="اسم المادة أو الخدمة — قابل للتعديل مباشرة"),
+    GridColumn("name", "الاسم", tooltip="اسم المادة أو الخدمة"),
     GridColumn("category_name", "التصنيف", width=120, tooltip="التصنيف المسجّل للمادة"),
     GridColumn("unit_name", "الوحدة", width=80, tooltip="الوحدة الأساسية للمادة"),
     GridColumn("item_type", "النوع", width=80, align="center", kind="badge", tooltip="مخزون (يُتابع) أو خدمة (لا مخزون)"),
     GridColumn("quantity", "الكمية", width=90, align="end", kind="number", tooltip="الكمية المتاحة حاليًا من حركات المخزون"),
-    GridColumn("purchase_price", "سعر الشراء", width=110, align="end", kind="money", editable=True, tooltip="آخر سعر شراء — قابل للتعديل"),
-    GridColumn("selling_price", "سعر البيع", width=110, align="end", kind="money", editable=True, tooltip="سعر البيع الحالي — قابل للتعديل"),
+    GridColumn("purchase_price", "سعر الشراء", width=110, align="end", kind="money", tooltip="آخر سعر شراء"),
+    GridColumn("selling_price", "سعر البيع", width=110, align="end", kind="money", tooltip="سعر البيع الحالي"),
     GridColumn("_status", "الحالة", width=100, align="center", kind="badge", sortable=False, tooltip="متوفر / منخفض / نفد / خدمة"),
 ]
 
@@ -541,7 +541,6 @@ class ItemsCenter:
             page=page,
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=columns_visibility.hidden_keys,
-            on_cell_commit=_grid_commit,
             on_row_activate=lambda row: show_item_detail(row),
             on_sort=apply_grid_sort,
             selectable=True,
@@ -557,8 +556,6 @@ class ItemsCenter:
             on_search_shortcut=focus_search,
             on_new_shortcut=lambda: open_item_editor(),
             formatter=_grid_formatter,
-            edit_formatter=lambda col, value, row: _edit_item_cell_text(col, value, row, ctx.settings),
-            parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
             boxed=True,
             center_cells=True,
         )
@@ -852,6 +849,11 @@ class ItemsCenter:
             page.open(definitions_sheet)
 
         def open_item_editor(item: dict | None = None, initial_barcode: str | None = None):
+            # Editing an existing material uses the modern table sheet (same
+            # surface as adding), pre-filled with that item's row.
+            if item is not None:
+                open_bulk_add_sheet(edit_item=item)
+                return
             name = SelectAllTextField(label="اسم المادة / الخدمة *", value=(item or {}).get("name", ""), autofocus=True)
             purchase = SmartAmountField(
                 label=currency.amount_field_label("سعر الشراء / تكلفة الخدمة", self.ctx.settings),
@@ -2364,8 +2366,12 @@ class ItemsCenter:
             sheet.content.width = _sheet_w
             page.open(sheet)
 
-        def open_bulk_add_sheet(_=None) -> None:
+        def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None) -> None:
             """Comprehensive multi-item entry: a full table in a wide sheet.
+
+            With ``edit_item`` it opens the same table pre-filled with that
+            item's row and saves an update instead of a create — so editing a
+            material uses the same modern table surface as adding one.
 
             Every column is editable per row (name, barcode, category, unit,
             type, prices, quantity) and the grid carries the table toolkit:
@@ -2668,6 +2674,7 @@ class ItemsCenter:
             def save_all(_=None) -> None:
                 type_default = type_sel.value or "مخزون"
                 created_indices: list[int] = []
+                updated_count = 0
                 errors: list[str] = []
                 warnings: list[str] = []
                 for index, row in enumerate(bulk_grid.rows):
@@ -2687,6 +2694,7 @@ class ItemsCenter:
                             bulk_grid.set_cell(index, "barcode", barcode, notify=False)
                         except Exception:
                             pass
+                    row_id = row.get("_id")
                     try:
                         alternate_unit_id = int(row["alternate_unit_id"]) if row.get("alternate_unit_id") else None
                         alternate_units = []
@@ -2697,18 +2705,24 @@ class ItemsCenter:
                                 "purchase_price": row.get("alternate_purchase_price") or None,
                                 "selling_price": row.get("alternate_selling_price") or None,
                             })
-                        item_id = ctx.items.create(
+                        fields = dict(
                             name=name,
                             category_id=int(row["category_id"]) if row.get("category_id") else None,
                             item_type=str(row.get("item_type") or type_default),
                             purchase_price=row.get("purchase_price") or 0,
                             selling_price=row.get("selling_price") or 0,
-                            quantity=row.get("quantity") or 0,
                             base_unit_id=int(row["base_unit_id"]) if row.get("base_unit_id") else None,
                             item_units=alternate_units,
                             barcode=barcode or None,
                         )
-                        created_indices.append(index)
+                        if row_id:
+                            # Edit mode: update the existing item in place.
+                            ctx.items.update(int(row_id), **fields)
+                            updated_count += 1
+                            item_id = int(row_id)
+                        else:
+                            item_id = ctx.items.create(quantity=row.get("quantity") or 0, **fields)
+                            created_indices.append(index)
                         alternate_barcode = str(row.get("alternate_barcode") or "").strip()
                         if alternate_barcode:
                             try:
@@ -2724,11 +2738,13 @@ class ItemsCenter:
                 for index in sorted(created_indices, reverse=True):
                     bulk_grid.remove_row(index)
                 refresh_bulk_footer()
-                if not created_indices and not errors:
+                if not created_indices and not updated_count and not errors:
                     notify("لا توجد صفوف للحفظ", kind="error")
                     return
                 if created_indices:
                     notify(f"تمت إضافة {len(created_indices)} مادة", sound_kind="success")
+                if updated_count and not created_indices:
+                    notify(f"تم تحديث {updated_count} مادة", sound_kind="success")
                 if errors:
                     notify(errors[0] if len(errors) == 1 else f"تعذّر حفظ بعض البيانات: {errors[0]}", kind="error")
                     page.update()
@@ -2755,8 +2771,38 @@ class ItemsCenter:
             for _selector in (type_sel, cat_sel, unit_sel):
                 _disarm_on_focus(_selector)
 
-            # One row with the current defaults, ready to type (as before).
-            bulk_grid.add_row(row_defaults())
+            # One row: the edited item (edit mode) or the current defaults.
+            if edit_item is not None:
+                try:
+                    _edit_id = int(edit_item["id"])
+                    _alt_units = ctx.items.units(_edit_id)
+                except Exception:
+                    _edit_id, _alt_units = int(edit_item.get("id") or 0), []
+                _alt = _alt_units[0] if _alt_units else {}
+                _prefill = {
+                    "name": edit_item.get("name") or "",
+                    "barcode": edit_item.get("barcode") or "",
+                    "category_id": edit_item.get("category_id") or "",
+                    "item_type": edit_item.get("item_type") or "مخزون",
+                    "base_unit_id": edit_item.get("base_unit_id") or "",
+                    "quantity": edit_item.get("quantity") or 0,
+                    "purchase_price": edit_item.get("purchase_price") or 0,
+                    "selling_price": edit_item.get("selling_price") or 0,
+                    "alternate_unit_id": _alt.get("unit_id") or "",
+                    "alternate_conversion_factor": _alt.get("conversion_factor") or 1.0,
+                    "alternate_purchase_price": _alt.get("purchase_price") or "",
+                    "alternate_selling_price": _alt.get("selling_price") or "",
+                    "alternate_barcode": "",
+                }
+                _idx = bulk_grid.add_row(_prefill)
+                if _idx is not None:
+                    # Keep the full prefill even for columns the user hid, so
+                    # saving an edit never blanks a hidden field.
+                    bulk_grid.rows[_idx].update(_prefill)
+                    bulk_grid.rows[_idx]["_id"] = _edit_id
+                    bulk_grid.set_rows(bulk_grid.rows)
+            else:
+                bulk_grid.add_row(row_defaults())
             refresh_bulk_footer()
 
             # A wide, tall sheet: the table is the point, so it gets the
@@ -2803,8 +2849,8 @@ class ItemsCenter:
                                 _icon_bubble(ft.Icons.VIEW_LIST_OUTLINED, color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG),
                                 ft.Column(
                                     [
-                                        ft.Text("مادة جديدة", size=17, weight=ft.FontWeight.BOLD),
-                                        ft.Text("أضف مادة أو أكثر في جدول متكامل: أعمدة قابلة للإظهار والترتيب والتصدير، وأسطر تُكرر أو تُحذف، ثم احفظ الكل دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
+                                        ft.Text("تعديل مادة" if edit_item else "مادة جديدة", size=17, weight=ft.FontWeight.BOLD),
+                                        ft.Text("عدّل بيانات المادة في الجدول ثم احفظ." if edit_item else "أضف مادة أو أكثر في جدول متكامل: أعمدة قابلة للإظهار والترتيب والتصدير، وأسطر تُكرر أو تُحذف، ثم احفظ الكل دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
                                     ],
                                     spacing=1, expand=True,
                                 ),
