@@ -85,9 +85,10 @@ omit = ["*/__pycache__/*"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-# Realistic floor: coverage only counts the (growing) unit/integration
-# surface, not the whole 35k-line app yet. Raise this as tests migrate.
-fail_under = 10
+# Realistic floor: coverage counts the unit/integration surface (incl. the
+# end-to-end lifecycle, backup/restore and LAN parity tests), not the UI views.
+# Measured ~32% on the full suite; keep a safety margin so CI stays stable.
+fail_under = 25
 
 [build-system]
 requires = ["setuptools>=65", "wheel"]
