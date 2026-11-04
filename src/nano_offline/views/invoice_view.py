@@ -1378,7 +1378,9 @@ class InvoiceCenter:
                 item_row = item_map.get(int(value))
                 return item_row["name"] if item_row else "—"
             if col.key == "price":
-                return currency.format_plain(value) if value else ""
+                return currency.format_display_value(value, settings, with_symbol=False) if value else ""
+            if col.key == "total":
+                return currency.format_display_value(value, settings, with_symbol=False) if value else ""
             return None
 
         line_columns = [
@@ -2116,13 +2118,15 @@ class InvoiceCenter:
                 )
                 return _unit_label(unit_row) if unit_row else None
             if col.key == "price":
-                return currency.format_plain(value) if value else ""
+                # Display-currency value: thousands separators + the display
+                # currency's own decimals (0 for SYP, 2 for USD), no symbol.
+                return currency.format_display_value(value, settings, with_symbol=False) if value else ""
             if col.key == "_total":
                 try:
                     total = float(row.get("qty") or 0) * float(row.get("price") or 0)
                 except (TypeError, ValueError):
                     total = 0.0
-                return currency.format_plain(round(total, 2)) if total else ""
+                return currency.format_display_value(round(total, 2), settings, with_symbol=False) if total else ""
             if col.key == "_status":
                 if not row.get("item") and not str(row.get("description") or "").strip():
                     return ("بلا مادة", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
