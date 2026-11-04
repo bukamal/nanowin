@@ -568,3 +568,29 @@ def test_escape_clears_selection_before_delegating():
     g._handle_key(FakeKey("Escape"))
     assert calls == []
     assert not g._checked
+
+
+def test_single_enter_does_not_double_advance():
+    # The editor's on_submit *and* the page keyboard handler both fire for one
+    # physical Enter; the duplicate must not skip the next column.
+    g = make_grid()
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("F2"))
+    g._edit_field.value = "دفتر"
+    g._edit_field.on_submit(None)     # editor submit
+    g._handle_key(FakeKey("Enter"))   # page handler, same physical press
+    assert g._rows[0]["name"] == "دفتر"
+    assert g.nav.cell == (0, 1)
+
+
+def test_enter_advances_once_after_guard_window():
+    import time
+
+    g = make_grid()
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("F2"))
+    g._edit_field.value = "دفتر"
+    g._edit_field.on_submit(None)
+    time.sleep(0.09)
+    g._handle_key(FakeKey("Enter"))
+    assert g.nav.cell == (0, 2)

@@ -28,6 +28,7 @@ import csv
 import io
 import logging
 import math
+import time
 from typing import Callable
 
 import flet as ft
@@ -185,6 +186,7 @@ class DataGrid(ft.Column):
         self._cell_boxes: dict[tuple[int, int], ft.Container] = {}
         self._row_boxes: list[ft.Container] = []
         self._edit_field: ft.TextField | None = None
+        self._last_commit_time = 0.0
         self._picker_control = None
         self._picker_values: dict[str, object] = {}
         # Inline picker state (search box + list rendered inside the grid body).
@@ -285,6 +287,17 @@ class DataGrid(ft.Column):
             return
 
         key = _norm_key(e.key)
+        if (
+            self._edit_field is None
+            and key in ("enter", "tab")
+            and (time.monotonic() - self._last_commit_time) < 0.08
+        ):
+            # A single physical Enter/Tab can reach us twice: once through the
+            # cell editor's on_submit and once through the page keyboard
+            # handler. Swallow the duplicate so the cursor advances one cell,
+            # not two (which skipped the next column, e.g. سعر البيع).
+            self._last_commit_time = 0.0
+            return
         if getattr(e, "ctrl", False) and key == "k":
             opener = getattr(self._page, "_nano_open_command_palette", None)
             if callable(opener):
@@ -1541,6 +1554,10 @@ class DataGrid(ft.Column):
         self._safe_update(self._body)
         # Enter/Tab commit and advance to the next cell (wrapping to the next
         # row, appending a row at the end); Shift+Tab steps backwards.
+        if move in ("next", "prev"):
+            # Arm the duplicate-press guard: the same physical key also comes
+            # back through the page keyboard handler (see _handle_key).
+            self._last_commit_time = time.monotonic()
         if move == "next":
             self._advance_forward()
         elif move == "prev":
