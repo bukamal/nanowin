@@ -30,7 +30,7 @@ from nano_offline.components import (
 )
 
 from nano_offline.services.invoice_service import InvoiceLineInput
-from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, wire_busy
+from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, danger_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
 from nano_offline.components.money_text import money_row
@@ -926,7 +926,7 @@ class InvoiceCenter:
                 )
                 dialog.actions = [
                     ft.TextButton("إلغاء", on_click=no),
-                    ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+                    danger_button("حذف", on_click=yes),
                 ]
                 self.page.open(dialog)
 

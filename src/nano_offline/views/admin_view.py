@@ -14,6 +14,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField
 from nano_offline.components.command_bar import RibbonAction
+from nano_offline.components.buttons import danger_button
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -280,7 +281,7 @@ class AdminCenter:
                     content=ft.Text(f"سيتم حذف {path.name} نهائيًا من هذا الجهاز. لا يمكن التراجع."),
                     actions=[
                         ft.TextButton("إلغاء", on_click=lambda _: self.page.close(confirm_dialog)),
-                        ft.FilledButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_delete),
+                        danger_button("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_delete),
                     ],
                 )
                 self.page.open(confirm_dialog)

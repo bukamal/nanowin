@@ -12,6 +12,7 @@ from nano_offline.core.party_reliability import grade_party
 
 from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.column_visibility import ColumnVisibility
+from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components import sheets
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
@@ -275,7 +276,7 @@ class PartyCenter:
 
             confirm.title = ft.Text(f"حذف {singular}")
             confirm.content = ft.Text(f"هل تريد حذف «{party['name']}»؟ لن يسمح بالحذف إذا كانت هناك حركات مالية مرتبطة.")
-            confirm.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
+            confirm.actions = [ft.TextButton("إلغاء", on_click=close), danger_button("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
             page.open(confirm)
 
         def show_detail(party: dict):
@@ -417,7 +418,7 @@ class PartyCenter:
             def _detail_actions():
                 actions = [
                     ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _: confirm_delete(data, detail_sheet), expand=True),
-                    ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
+                    secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
                 ]
                 bal = abs(float(data.get("balance") or 0))
                 if title == "العملاء" and self.on_open_receipt and bal > 1e-9:
@@ -428,7 +429,7 @@ class PartyCenter:
                             amount=max(0.0, float(data.get("balance") or 0)),
                         )
                     actions.append(
-                        ft.FilledButton("سند قبض", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_receipt, expand=True)
+                        primary_button("سند قبض", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_receipt, expand=True)
                     )
                 elif title == "الموردون" and self.on_open_payment and bal > 1e-9:
                     def _pay(_=None):
@@ -438,16 +439,16 @@ class PartyCenter:
                             amount=max(0.0, float(data.get("balance") or 0)),
                         )
                     actions.append(
-                        ft.FilledButton("سند صرف", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_pay, expand=True)
+                        primary_button("سند صرف", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_pay, expand=True)
                     )
                 if self.on_open_statement is not None:
                     def _statement(_=None):
                         close()
                         self.on_open_statement(party_type, int(data["id"]))
                     actions.append(
-                        ft.OutlinedButton("كشف الحساب", icon=ft.Icons.DESCRIPTION_OUTLINED, on_click=_statement, expand=True)
+                        secondary_button("كشف الحساب", icon=ft.Icons.DESCRIPTION_OUTLINED, on_click=_statement, expand=True)
                     )
-                actions.append(ft.FilledButton("إغلاق", on_click=close, expand=True))
+                actions.append(primary_button("إغلاق", on_click=close, expand=True))
                 return actions
 
             detail_sheet.content = sheets.sheet_frame(
@@ -584,7 +585,7 @@ class PartyCenter:
             dialog.content = ft.Text(f"سيتم حذف {len(chosen)} من {title}. من لديه حركات مالية مرتبطة لن يُحذف.")
             dialog.actions = [
                 ft.TextButton("إلغاء", on_click=no),
-                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+                danger_button("حذف", on_click=yes),
             ]
             page.open(dialog)
 

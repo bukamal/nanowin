@@ -200,14 +200,27 @@ def footer_actions(
     return ft.Row(controls, spacing=spacing, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
 
-def danger_button(text: str, *, icon: str | None = None, on_click: Callable | None = None, **kwargs) -> ft.FilledButton:
+def danger_button(
+    text: str,
+    *,
+    icon: str | None = None,
+    on_click: Callable | None = None,
+    width: int | None = None,
+    size: str = "lg",
+    expand: bool = False,
+    **kwargs,
+) -> ft.FilledButton:
     """A destructive-action ``FilledButton`` (delete/remove/deactivate/etc.)
 
     Same shape as every other filled button in the app, just recolored to
     the danger token, so a "حذف" button looks the same whether it's in the
     items list, the security screen, or anywhere else.
     """
-    kwargs.setdefault("height", kwargs.pop("height", None) or BTN_HEIGHT_LG)
+    kwargs.setdefault("height", _button_height(size))
+    if expand:
+        kwargs["expand"] = True
+    elif width is not None:
+        kwargs.setdefault("width", width)
     return ft.FilledButton(
         text,
         icon=icon,

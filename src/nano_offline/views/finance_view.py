@@ -12,6 +12,7 @@ from nano_offline.core.toast import toast
 from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
+from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components.money_text import money_row
 from nano_offline.components import sheets
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
@@ -359,7 +360,7 @@ class FinanceCenter:
             dialog.content = ft.Text(f"سيتم حذف {len(chosen)} سند وتوزيعاتها وإعادة احتساب الذمم. هل تريد المتابعة؟")
             dialog.actions = [
                 ft.TextButton("إلغاء", on_click=no),
-                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+                danger_button("حذف", on_click=yes),
             ]
             self.page.open(dialog)
 
@@ -654,9 +655,9 @@ class FinanceCenter:
                             [
                                 ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _: (close(), self.confirm_delete_voucher(voucher_id))),
                                 ft.TextButton("تكرار", icon=ft.Icons.CONTENT_COPY, on_click=duplicate),
-                                ft.OutlinedButton("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=print_voucher),
-                                ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit),
-                                ft.FilledButton("إغلاق", on_click=close),
+                                secondary_button("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=print_voucher, width=None, size="md"),
+                                secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, width=None, size="md"),
+                                primary_button("إغلاق", on_click=close, width=None, size="md"),
                             ],
                             spacing=8, run_spacing=8, wrap=True,
                         ),
@@ -878,7 +879,7 @@ class FinanceCenter:
 
         dialog.title = ft.Text("حذف السند")
         dialog.content = ft.Text("سيتم حذف السند وتوزيعاته وإعادة احتساب الذمم والفواتير. هل تريد المتابعة؟")
-        dialog.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=delete)]
+        dialog.actions = [ft.TextButton("إلغاء", on_click=close), danger_button("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=delete)]
         self.page.open(dialog)
 
     def show_expenses(self) -> None:
@@ -1037,7 +1038,7 @@ class FinanceCenter:
             dialog.content = ft.Text(f"سيتم حذف {len(chosen)} مصروف. هل تريد المتابعة؟")
             dialog.actions = [
                 ft.TextButton("إلغاء", on_click=no),
-                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+                danger_button("حذف", on_click=yes),
             ]
             self.page.open(dialog)
 
@@ -1390,7 +1391,7 @@ class FinanceCenter:
 
         dialog.title = ft.Text("حذف المصروف")
         dialog.content = ft.Text("سيتم حذف المصروف وعكس أثره على الصندوق والأرباح.")
-        dialog.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حذف", on_click=delete)]
+        dialog.actions = [ft.TextButton("إلغاء", on_click=close), danger_button("حذف", on_click=delete)]
         self.page.open(dialog)
 
     def show_statements(self, party_type: str, party_id: int | None = None) -> None:

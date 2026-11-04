@@ -13,7 +13,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row, wire_enter_navigation
 from nano_offline.components import sheets
-from nano_offline.components.buttons import header_close_button, inline_icon_button, primary_button, secondary_button
+from nano_offline.components.buttons import header_close_button, inline_icon_button, primary_button, secondary_button, danger_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
@@ -525,7 +525,7 @@ class ItemsCenter:
             )
             dialog.actions = [
                 ft.TextButton("إلغاء", on_click=no),
-                ft.FilledButton("حذف", on_click=yes, style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE)),
+                danger_button("حذف", on_click=yes),
             ]
             page.open(dialog)
 
@@ -723,7 +723,7 @@ class ItemsCenter:
 
             confirm.title = ft.Text(f"حذف {label}")
             confirm.content = ft.Text(f"هل تريد حذف «{entry['name']}»؟")
-            confirm.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
+            confirm.actions = [ft.TextButton("إلغاء", on_click=close), danger_button("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
             page.open(confirm)
 
         def render_definitions_sheet() -> None:
@@ -1363,8 +1363,8 @@ class ItemsCenter:
                         spacing=9, tight=True,
                     )
                     footer = [
-                        ft.TextButton("إلغاء", on_click=lambda _: nav.close()),
-                        ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next()),
+                        secondary_button("إلغاء", on_click=lambda _: nav.close(), size="md"),
+                        primary_button("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next(), width=None, size="md"),
                     ]
                     return step_label, body, footer
 
@@ -1374,8 +1374,8 @@ class ItemsCenter:
                         spacing=9, tight=True,
                     )
                     footer = [
-                        ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back()),
-                        ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next()),
+                        secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back(), size="md"),
+                        primary_button("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next(), width=None, size="md"),
                     ]
                     return step_label, body, footer
 
@@ -1393,8 +1393,8 @@ class ItemsCenter:
                         spacing=9, tight=True,
                     )
                     footer = [
-                        ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back()),
-                        ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next()),
+                        secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back(), size="md"),
+                        primary_button("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next(), width=None, size="md"),
                     ]
                     return step_label, body, footer
 
@@ -1691,8 +1691,8 @@ class ItemsCenter:
                         spacing=6, tight=True,
                     )
                     footer = [
-                        ft.TextButton("إلغاء", on_click=lambda _: nav.close()),
-                        ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next()),
+                        secondary_button("إلغاء", on_click=lambda _: nav.close(), size="md"),
+                        primary_button("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: nav.next(), width=None, size="md"),
                     ]
                     return "الخطوة ١ من ٢ — اختيار البيانات", body, footer
 
@@ -1738,7 +1738,7 @@ class ItemsCenter:
                     spacing=10, tight=True,
                 )
                 footer = [
-                    ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back()),
+                    secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back(), size="md"),
                     ft.OutlinedButton("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=do_print),
                     ft.FilledButton("مشاركة PDF", icon=ft.Icons.IOS_SHARE_ROUNDED, on_click=do_pdf),
                 ]
@@ -1846,7 +1846,7 @@ class ItemsCenter:
                         ],
                         spacing=12, tight=True,
                     )
-                    footer = [ft.TextButton("إلغاء", on_click=lambda _: nav.close())]
+                    footer = [secondary_button("إلغاء", on_click=lambda _: nav.close(), size="md")]
                     return "الخطوة ١ من ٢ — المسح", body, footer
 
                 parsed = state["parsed"] or {}
@@ -3080,15 +3080,15 @@ class ItemsCenter:
                                 [
                                     ft.Row(
                                         (
-                                            [ft.OutlinedButton("طباعة الباركود", icon=ft.Icons.QR_CODE_2, on_click=lambda _, i=data: (close(), open_barcode_with_profile([(i, 1)])), expand=True)]
+                                            [secondary_button("طباعة الباركود", icon=ft.Icons.QR_CODE_2, on_click=lambda _, i=data: (close(), open_barcode_with_profile([(i, 1)])), expand=True)]
                                             if str(data.get("barcode") or "").strip() else []
-                                        ) + [ft.OutlinedButton("بطاقة QR", icon=ft.Icons.SHARE_ROUNDED, on_click=lambda _, i=data: (close(), open_item_card_sheet(i)), expand=True)],
+                                        ) + [secondary_button("بطاقة QR", icon=ft.Icons.SHARE_ROUNDED, on_click=lambda _, i=data: (close(), open_item_card_sheet(i)), expand=True)],
                                         spacing=10,
                                     ),
                                     ft.Row(
                                         [
-                                            ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
-                                            ft.FilledButton("إغلاق", on_click=close, expand=True),
+                                            secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
+                                            primary_button("إغلاق", on_click=close, expand=True),
                                         ] + (
                                             [ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=delete_it)]
                                             if can_delete else []
@@ -3143,7 +3143,7 @@ class ItemsCenter:
 
             confirm.title = ft.Text("حذف المادة")
             confirm.content = ft.Text(f"هل تريد حذف «{item['name']}»؟ لن يُسمح بالحذف إذا استُخدمت المادة لاحقًا.")
-            confirm.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
+            confirm.actions = [ft.TextButton("إلغاء", on_click=close), danger_button("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
             page.open(confirm)
 
         def confirm_clear_opening(item: dict) -> None:
@@ -3170,7 +3170,7 @@ class ItemsCenter:
             )
             confirm.actions = [
                 ft.TextButton("إلغاء", on_click=close),
-                ft.FilledButton("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=do_clear),
+                danger_button("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=do_clear),
             ]
             page.open(confirm)
 
