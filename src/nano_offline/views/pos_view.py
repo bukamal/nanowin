@@ -167,8 +167,8 @@ class POSCenter:
         # Cart-wide discount percent applied to every line (0 = none).
         self._cart_discount_pct: float = 0.0
 
-    def money(self, value: float) -> str:
-        return currency.format_amount(value, self.ctx.settings)
+    def money(self, value: float, field: str = "total") -> str:
+        return currency.format_amount(value, self.ctx.settings, field=field)
 
     def _receive_settings_obj(self):
         """Settings view whose display currency is the cash-entry currency."""
@@ -185,15 +185,13 @@ class POSCenter:
             settings,
         )
 
-    @staticmethod
-    def _qty(value) -> str:
+    def _qty(self, value) -> str:
         """Plain (non-currency) number formatting -- quantities.
 
-        No thousands separators and no forced decimals, so quantities never
-        render with commas.
+        No thousands separators; honors the admin qty-decimals setting, else
+        strips trailing zeros so quantities never render with commas.
         """
-        v = float(value or 0)
-        return str(int(v)) if v == int(v) else f"{v:.3f}".rstrip("0").rstrip(".")
+        return currency.format_qty(value, self.ctx.settings)
 
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
@@ -1927,7 +1925,7 @@ class POSCenter:
                     ft.Column(
                         [
                             ft.Text(item["name"], size=11.5, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                            ft.Text(self.money(item["selling_price"]), size=11, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                            ft.Text(self.money(item["selling_price"], field="price"), size=11, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                         ],
                         spacing=0, expand=True, alignment=ft.MainAxisAlignment.CENTER,
                     ),
@@ -1964,7 +1962,7 @@ class POSCenter:
                         width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND_ALT, border_radius=12,
                     ),
                     ft.Text(item["name"], size=12, weight=ft.FontWeight.W_600, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER),
-                    ft.Text(self.money(item["selling_price"]), size=13, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                    ft.Text(self.money(item["selling_price"], field="price"), size=13, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                     qty_badge or ft.Container(height=1),
                 ],
                 spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -2278,8 +2276,8 @@ class POSCenter:
                                             [
                                                 ft.Icon(ft.Icons.EDIT_OUTLINED, size=11, color=Colors.TEXT_SECONDARY),
                                                 ft.Text(
-                                                    f"{self.money(line_unit_price)} × {self._qty(row['qty'])} = {self.money(line_total)}"
-                                                    + (f"  · قبل الخصم {self.money(_base_unit_price)}" if discount_pct > 0 else ""),
+                                                    f"{self.money(line_unit_price, field='price')} × {self._qty(row['qty'])} = {self.money(line_total)}"
+                                                    + (f"  · قبل الخصم {self.money(_base_unit_price, field='price')}" if discount_pct > 0 else ""),
                                                     size=11,
                                                     color=Colors.TEXT_SECONDARY,
                                                 ),
@@ -2541,7 +2539,7 @@ class POSCenter:
         overlay = getattr(self, "_last_scan_overlay", None)
         price = float(unit_price if unit_price is not None else item.get("selling_price") or 0)
         stock = item.get("quantity")
-        subtitle_bits = [self.money(price)]
+        subtitle_bits = [self.money(price, field="price")]
         if unit_id is not None and factor != 1:
             try:
                 unit = next(
@@ -2612,7 +2610,7 @@ class POSCenter:
         self._last_scan_token += 1
         token = self._last_scan_token
         name = str(item.get("name") or "")
-        price = self.money(float(unit_price) if unit_price is not None else float(item.get("selling_price") or 0))
+        price = self.money(float(unit_price) if unit_price is not None else float(item.get("selling_price") or 0), field="price")
         qty_label = f"×{self._qty(qty).rstrip('0').rstrip('.')}" if qty != 1 else ""
         subtitle = f"{price}  {qty_label}".strip()
         if is_repeat and qty > 1:

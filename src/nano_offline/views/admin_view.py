@@ -21,6 +21,7 @@ from nano_offline.core.theme import BRAND_PRESETS, Colors, Radius, Shadow, norma
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import font_settings
+from nano_offline.core import precision_settings
 from nano_offline.core import barcode_settings
 from nano_offline.core import branding
 from nano_offline.core import business_profile
@@ -790,6 +791,19 @@ class AdminCenter:
             hint_text="مثال: 13500",
             visible=display_currency_value == currency.DISPLAY_CURRENCY_SYP,
         )
+
+        def _decimals_dropdown(label: str, field: str) -> ft.Dropdown:
+            return ft.Dropdown(
+                label=label,
+                value=precision_settings.raw(brand_settings, field),
+                options=[ft.dropdown.Option(key, text) for key, text in precision_settings.CHOICES],
+                filled=True,
+                bgcolor=Colors.BACKGROUND_ALT,
+            )
+
+        price_decimals_field = _decimals_dropdown("مراتب الكسر — سعر الوحدة", "price")
+        qty_decimals_field = _decimals_dropdown("مراتب الكسر — الكمية", "qty")
+        total_decimals_field = _decimals_dropdown("مراتب الكسر — الإجمالي", "total")
         business_type_field = ft.Dropdown(
             label="نوع النشاط",
             value=business_profile.business_type(brand_settings),
@@ -942,6 +956,9 @@ class AdminCenter:
                     currency.EXCHANGE_RATE_KEY: str(rate_value),
                     currency.DISPLAY_SYMBOL_KEY: currency.DEFAULT_DISPLAY_SYMBOL,
                     currency.USD_DISPLAY_SYMBOL_KEY: currency.DEFAULT_USD_DISPLAY_SYMBOL,
+                    precision_settings.SETTING_PRICE: price_decimals_field.value or precision_settings.AUTO,
+                    precision_settings.SETTING_QTY: qty_decimals_field.value or precision_settings.AUTO,
+                    precision_settings.SETTING_TOTAL: total_decimals_field.value or precision_settings.AUTO,
                     "invoice_color": brand_state["color"],
                     "company_logo": brand_state["logo"] or None,
                     business_profile.BUSINESS_TYPE_KEY: (
@@ -2713,6 +2730,9 @@ class AdminCenter:
                             ft.Container(currency_field, col={"xs": 12, "md": 6}),
                             ft.Container(display_currency_group, col={"xs": 12, "md": 6}),
                             ft.Container(exchange_rate_field, col={"xs": 12, "md": 6}),
+                            ft.Container(price_decimals_field, col={"xs": 12, "md": 4}),
+                            ft.Container(qty_decimals_field, col={"xs": 12, "md": 4}),
+                            ft.Container(total_decimals_field, col={"xs": 12, "md": 4}),
                         ]
                     ),
                     ft.Text(

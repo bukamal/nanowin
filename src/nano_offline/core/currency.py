@@ -26,6 +26,8 @@ exactly what is stored, just formatted with 2 decimal places instead of 0
 
 from __future__ import annotations
 
+from nano_offline.core import precision_settings
+
 STORED_CURRENCY_CODE = "USD"
 DISPLAY_CURRENCY_CODE = "SYP"  # kept for backward compatibility; prefer get_display_currency()
 
@@ -190,6 +192,16 @@ def _default_decimals(settings) -> int:
     return _DEFAULT_DECIMALS_BY_CURRENCY.get(get_display_currency(settings), 0)
 
 
+def decimals_for(settings, field: str = "total") -> int:
+    """Decimal places to show for ``field`` ("price"/"qty"/"total").
+
+    The admin precision setting wins; ``auto`` falls back to the display
+    currency's own convention (0 for SYP, 2 for USD).
+    """
+    explicit = precision_settings.decimals(settings, field)
+    return _default_decimals(settings) if explicit is None else explicit
+
+
 def get_display_symbol(settings) -> str:
     """Return the symbol/label to print after amounts, for whichever
     currency is currently displayed (each currency remembers its own
@@ -245,19 +257,20 @@ def format_amount(
     symbol: str | None = None,
     with_symbol: bool = True,
     decimals: int | None = None,
+    field: str = "total",
 ) -> str:
     """Format a *stored* USD amount as text in the currently displayed currency.
 
-    ``decimals`` defaults to 0 for SYP (amounts are large, so fractional
-    pounds carry no useful meaning) and 2 for USD (cents matter). Pass an
-    explicit value to override either way.
+    ``decimals`` defaults to the admin precision setting for ``field``
+    ("price"/"qty"/"total"); an ``auto`` setting falls back to 0 for SYP and
+    2 for USD. Pass an explicit number to override either way.
     """
     if rate is None:
         rate = get_effective_rate(settings)
     if symbol is None:
         symbol = get_display_symbol(settings)
     if decimals is None:
-        decimals = _default_decimals(settings)
+        decimals = decimals_for(settings, field)
     value = to_display(amount_usd, rate)
     text = f"{value:,.{decimals}f}"
     return _amount_with_symbol(text, symbol) if with_symbol else text
@@ -277,6 +290,16 @@ def to_input_text(amount_usd: float | int | None, settings=None, *, rate: float 
     return _round_for_input(value)
 
 
+def format_qty(value: float | int | None, settings=None) -> str:
+    """Quantity formatting: admin qty-decimals when set, else strip trailing
+    zeros (no thousands separators, no forced decimals)."""
+    v = float(value or 0)
+    decimals = precision_settings.decimals(settings, "qty")
+    if decimals is None:
+        return str(int(v)) if v == int(v) else f"{v:.3f}".rstrip("0").rstrip(".")
+    return f"{v:.{decimals}f}"
+
+
 def format_plain(value: float | int | None) -> str:
     """Format a value that is *already* in the display currency -- no conversion, no symbol.
 
@@ -287,12 +310,15 @@ def format_plain(value: float | int | None) -> str:
     return _round_for_input(float(value or 0))
 
 
-def format_display_value(value: float | int | None, settings=None, *, symbol: str | None = None, with_symbol: bool = True, decimals: int | None = None) -> str:
-    """Format a value that is *already* in the display currency, with thousands separators."""
+def format_display_value(value: float | int | None, settings=None, *, symbol: str | None = None, with_symbol: bool = True, decimals: int | None = None, field: str = "total") -> str:
+    """Format a value that is *already* in the display currency, with thousands separators.
+
+    ``decimals`` defaults to the admin precision setting for ``field``.
+    """
     if symbol is None:
         symbol = get_display_symbol(settings)
     if decimals is None:
-        decimals = _default_decimals(settings)
+        decimals = decimals_for(settings, field)
     text = f"{float(value or 0):,.{decimals}f}"
     return _amount_with_symbol(text, symbol) if with_symbol else text
 
@@ -351,8 +377,10 @@ __all__ = [
     "to_display",
     "to_stored",
     "amount_field_label",
+    "decimals_for",
     "format_amount",
     "format_plain",
+    "format_qty",
     "format_display_value",
     "to_input_text",
     "parse_display_input",

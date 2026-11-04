@@ -1378,7 +1378,7 @@ class InvoiceCenter:
                 item_row = item_map.get(int(value))
                 return item_row["name"] if item_row else "—"
             if col.key == "price":
-                return currency.format_display_value(value, settings, with_symbol=False) if value else ""
+                return currency.format_display_value(value, settings, with_symbol=False, field="price") if value else ""
             if col.key == "total":
                 return currency.format_display_value(value, settings, with_symbol=False) if value else ""
             return None
@@ -2083,7 +2083,7 @@ class InvoiceCenter:
                     avg_cost = float((item_row or {}).get("average_cost") or 0)
                 except (TypeError, ValueError):
                     avg_cost = 0.0
-                return currency.format_amount(avg_cost, settings) if avg_cost else ""
+                return currency.format_amount(avg_cost, settings, field="price") if avg_cost else ""
             if col.key in ("_extra_cost", "_extra_total"):
                 try:
                     qty = float(row.get("qty") or 0)
@@ -2120,7 +2120,7 @@ class InvoiceCenter:
             if col.key == "price":
                 # Display-currency value: thousands separators + the display
                 # currency's own decimals (0 for SYP, 2 for USD), no symbol.
-                return currency.format_display_value(value, settings, with_symbol=False) if value else ""
+                return currency.format_display_value(value, settings, with_symbol=False, field="price") if value else ""
             if col.key == "_total":
                 try:
                     total = float(row.get("qty") or 0) * float(row.get("price") or 0)

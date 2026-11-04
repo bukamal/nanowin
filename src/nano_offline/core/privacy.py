@@ -79,18 +79,18 @@ def hidden(ctx) -> bool:
     return effective_safe_mode(getattr(ctx, "settings", None), role_of(ctx))
 
 
-def money(value, settings=None, role=None) -> str:
+def money(value, settings=None, role=None, field: str = "total") -> str:
     """Format ``value`` (stored USD) or return the mask in safe mode."""
     if effective_safe_mode(settings, role):
         return MASK_TEXT
     try:
-        return currency.format_amount(value, settings)
+        return currency.format_amount(value, settings, field=field)
     except Exception:
         return MASK_TEXT
 
 
-def money_ctx(value, ctx) -> str:
-    return money(value, getattr(ctx, "settings", None), role_of(ctx))
+def money_ctx(value, ctx, field: str = "total") -> str:
+    return money(value, getattr(ctx, "settings", None), role_of(ctx), field=field)
 
 
 __all__ = [

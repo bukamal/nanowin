@@ -53,7 +53,7 @@ class DocumentService:
             # multiply by it.
             rate = 1.0 if code == currency.DISPLAY_CURRENCY_USD else (stored_rate if stored_rate > 0 else 1.0)
             symbol = inv.get("invoice_currency_symbol") or currency.DEFAULT_DISPLAY_SYMBOL
-            decimals = 2 if code == currency.DISPLAY_CURRENCY_USD else 0
+            decimals = currency.decimals_for(self._settings(), "total")
             amount_text = currency.format_amount(value, rate=rate, symbol=symbol, decimals=decimals, with_symbol=False)
         else:
             settings = self._settings()
@@ -99,13 +99,9 @@ class DocumentService:
             f'{amount_text}</span><span class="sym">{self._e(symbol)}</span></span>'
         )
 
-    @staticmethod
-    def _qty(value: float | int | None) -> str:
-        """Quantity formatting without thousands separators or forced decimals."""
-        v = float(value or 0)
-        if v == int(v):
-            return str(int(v))
-        return f"{v:.3f}".rstrip("0").rstrip(".")
+    def _qty(self, value: float | int | None) -> str:
+        """Quantity formatting honoring the admin quantity-decimals setting."""
+        return currency.format_qty(value, self._settings())
 
     @staticmethod
     def _e(value) -> str:

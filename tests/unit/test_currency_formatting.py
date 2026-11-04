@@ -55,3 +55,40 @@ def test_parse_display_input_round_trips_with_separators():
     assert currency.parse_display_input("1,234.50", usd) == 1234.5
     # 13,500 ل.س -> 1.00 USD at the configured 13500 rate.
     assert currency.parse_display_input("13,500", syp) == 1.0
+
+
+def _with(s: dict, **extra) -> dict:
+    out = dict(s)
+    out.update(extra)
+    return out
+
+
+def test_explicit_price_decimals_win_over_currency_default():
+    from nano_offline.core import precision_settings as p
+
+    usd = _settings("USD")
+    s = _with(usd, **{p.SETTING_PRICE: "3"})
+
+    assert currency.format_amount(1.5, s, field="price") == "1.500 $"
+    assert currency.format_display_value(1.5, s, field="price", with_symbol=False) == "1.500"
+    # total stays on the currency default (USD -> 2)
+    assert currency.format_amount(1.5, s, field="total") == "1.50 $"
+
+
+def test_explicit_total_decimals_apply_to_generic_amounts():
+    from nano_offline.core import precision_settings as p
+
+    usd = _with(_settings("USD"), **{p.SETTING_TOTAL: "0"})
+    assert currency.format_amount(126.0, usd) == "126 $"
+
+
+def test_format_qty_honors_setting_else_strips_zeros():
+    from nano_offline.core import precision_settings as p
+
+    syp = _settings("SYP")
+    assert currency.format_qty(2.0, syp) == "2"
+    assert currency.format_qty(2.5, syp) == "2.5"
+
+    fixed = _with(syp, **{p.SETTING_QTY: "2"})
+    assert currency.format_qty(2.0, fixed) == "2.00"
+    assert currency.format_qty(2.5, fixed) == "2.50"

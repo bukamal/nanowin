@@ -232,22 +232,20 @@ class ItemsCenter:
         if self.on_title_change:
             self.on_title_change(title, subtitle)
 
-    def money(self, value) -> str:
-        return currency.format_amount(value, self.ctx.settings)
+    def money(self, value, field: str = "total") -> str:
+        return currency.format_amount(value, self.ctx.settings, field=field)
 
-    def private_money(self, value) -> str:
+    def private_money(self, value, field: str = "price") -> str:
         # Cost/profit figures: masked under safe mode (selling prices stay).
-        return privacy.money_ctx(value, self.ctx)
+        return privacy.money_ctx(value, self.ctx, field=field)
 
-    @staticmethod
-    def _qty(value) -> str:
+    def _qty(self, value) -> str:
         """Plain (non-currency) number formatting -- quantities, counts.
 
-        No thousands separators and no forced decimals, so quantities never
-        render with commas.
+        No thousands separators; honors the admin qty-decimals setting, else
+        strips trailing zeros.
         """
-        v = float(value or 0)
-        return str(int(v)) if v == int(v) else f"{v:.3f}".rstrip("0").rstrip(".")
+        return currency.format_qty(value, self.ctx.settings)
 
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
@@ -317,7 +315,7 @@ class ItemsCenter:
                 sym = str(ctx.settings.get(currency.DISPLAY_SYMBOL_KEY) or currency.DEFAULT_DISPLAY_SYMBOL)
                 return currency.format_amount(stock_value, rate=rate, symbol=sym, decimals=0)
             if col.kind == "money":
-                return money(value)
+                return money(value, field="price")
             return None  # text columns: default rendering
 
         def _grid_commit(row_index: int, key: str, value) -> None:
@@ -1706,7 +1704,7 @@ class ItemsCenter:
                         ft.Row(
                             [
                                 ft.Text("سعر البيع: ", size=11, color=Colors.TEXT_SECONDARY),
-                                ft.Text(self.money(item.get("selling_price")), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                                ft.Text(self.money(item.get("selling_price"), field="price"), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                             ],
                             spacing=0, tight=True,
                         )
@@ -1866,7 +1864,7 @@ class ItemsCenter:
                         ft.Row(
                             [
                                 ft.Text("سعر البيع: ", size=11, color=Colors.TEXT_SECONDARY),
-                                ft.Text(self.money(parsed["selling_price"]), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                                ft.Text(self.money(parsed["selling_price"], field="price"), size=11, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                             ],
                             spacing=0, tight=True,
                         )
