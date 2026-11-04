@@ -2424,14 +2424,15 @@ class InvoiceCenter:
         paid = SmartAmountField(
             label=currency.amount_field_label("الدفعة الأولى", settings),
             value=currency.to_input_text(paid_initial, settings),
+            text_size=13,
             on_change=lambda e: refresh_summary(),
         )
         total_text = ft.Text(
-            "0", size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY,
+            "0", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY,
             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
         remaining_text = ft.Text(
-            "0", size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY,
+            "0", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY,
             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
         )
 
@@ -2759,15 +2760,14 @@ class InvoiceCenter:
                         clip_behavior=ft.ClipBehavior.HARD_EDGE,
                     ),
                     # Pinned bottom bar (like the reference app): the date and
-                    # payment on one line, then the big totals, then the quick
-                    # pay chips and the save action.
+                    # payment on one line, then the totals and the save action.
                     ft.Container(
                         ft.Column(
                             [
                                 ft.Row(
                                     [
-                                        ft.Container(party_dd, width=260),
-                                        ft.Container(invoice_date, width=200),
+                                        ft.Container(party_dd, width=250),
+                                        ft.Container(invoice_date, width=190),
                                         ft.Container(expand=True),
                                         ft.Container(
                                             ft.Column(
@@ -2777,7 +2777,7 @@ class InvoiceCenter:
                                                 ],
                                                 spacing=0, tight=True,
                                             ),
-                                            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                                            padding=ft.padding.symmetric(horizontal=8, vertical=4),
                                             bgcolor=Colors.BACKGROUND, border_radius=Radius.SM,
                                         ),
                                         ft.Container(
@@ -2788,48 +2788,46 @@ class InvoiceCenter:
                                                 ],
                                                 spacing=0, tight=True,
                                             ),
-                                            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                                            padding=ft.padding.symmetric(horizontal=8, vertical=4),
                                             bgcolor=Colors.BACKGROUND, border_radius=Radius.SM,
                                         ),
-                                        ft.Container(paid, width=220),
+                                        ft.Container(paid, width=170),
                                     ],
                                     spacing=10,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
-                                ft.Row(
-                                    [quick_chips, cash_note],
-                                    spacing=10,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                ),
-                                ft.Row(
+                                # One compact action row: quick-pay chips paint
+                                # behind a centred, wide (not square) save button.
+                                ft.Stack(
                                     [
-                                        ft.Container(
-                                            ft.Column(
-                                                [
-                                                    ft.Icon(ft.Icons.SAVE_OUTLINED, size=26, color=Colors.WHITE),
-                                                    ft.Text(
-                                                        "تحديث" if invoice_id else "حفظ",
-                                                        size=12, weight=ft.FontWeight.BOLD,
-                                                        color=Colors.WHITE, text_align=ft.TextAlign.CENTER,
+                                        ft.Row(
+                                            [quick_chips, cash_note],
+                                            spacing=8,
+                                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        ),
+                                        ft.Row(
+                                            [
+                                                ft.FilledButton(
+                                                    "تحديث" if invoice_id else "حفظ الفاتورة",
+                                                    icon=ft.Icons.SAVE_OUTLINED,
+                                                    on_click=save,
+                                                    width=320,
+                                                    height=44,
+                                                    style=ft.ButtonStyle(
+                                                        shape=ft.RoundedRectangleBorder(radius=12),
+                                                        text_style=ft.TextStyle(size=15, weight=ft.FontWeight.BOLD),
                                                     ),
-                                                ],
-                                                spacing=2, tight=True,
-                                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                                alignment=ft.MainAxisAlignment.CENTER,
-                                            ),
-                                            width=96, height=96,
-                                            alignment=ft.alignment.center,
-                                            bgcolor=Colors.PRIMARY, border_radius=Radius.MD,
-                                            ink=True, on_click=save,
-                                            tooltip="حفظ التعديلات" if invoice_id else "حفظ الفاتورة",
+                                                ),
+                                            ],
+                                            alignment=ft.MainAxisAlignment.CENTER,
                                         ),
                                     ],
-                                    alignment=ft.MainAxisAlignment.CENTER,
+                                    height=46,
                                 ),
                             ],
-                            spacing=10, tight=True,
+                            spacing=8, tight=True,
                         ),
-                        padding=ft.padding.only(top=12),
+                        padding=ft.padding.only(top=8),
                         border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
                     ),
                 ],
