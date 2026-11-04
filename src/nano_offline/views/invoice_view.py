@@ -881,11 +881,7 @@ class InvoiceCenter:
                         [
                             ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                             ft.Text(f"تم تحديد {len(rows)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                            ft.FilledButton(
-                                "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
-                                style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
-                                on_click=confirm_bulk_delete,
-                            ),
+                            danger_button("حذف المحدد", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_bulk_delete, size="md"),
                             ft.TextButton("إلغاء التحديد", on_click=lambda _: invoice_grid.clear_selection()),
                         ],
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -2359,12 +2355,8 @@ class InvoiceCenter:
                     [
                         ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                         ft.Text(f"تم تحديد {len(rows)} سطر", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                        ft.OutlinedButton("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows))),
-                        ft.OutlinedButton(
-                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
-                            style=ft.ButtonStyle(color=Colors.DANGER),
-                            on_click=lambda _=None: remove_selected_rows(),
-                        ),
+                        secondary_button("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows)), width=None, size="md"),
+                        danger_outline_button("حذف المحدد", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _=None: remove_selected_rows(), width=None, size="md"),
                         ft.TextButton("إلغاء التحديد", on_click=lambda _=None: lines_grid.clear_selection()),
                     ],
                     spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,

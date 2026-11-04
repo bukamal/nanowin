@@ -13,7 +13,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row, wire_enter_navigation
 from nano_offline.components import sheets
-from nano_offline.components.buttons import header_close_button, inline_icon_button, primary_button, secondary_button, danger_button
+from nano_offline.components.buttons import header_close_button, inline_icon_button, primary_button, secondary_button, danger_button, danger_outline_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
@@ -478,12 +478,8 @@ class ItemsCenter:
                     [
                         ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                         ft.Text(f"تم تحديد {len(rows)}", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                        ft.OutlinedButton("طباعة باركود", icon=ft.Icons.QR_CODE_2, on_click=print_selected_barcodes),
-                        ft.FilledButton(
-                            "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
-                            style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
-                            on_click=confirm_bulk_delete,
-                        ),
+                        secondary_button("طباعة باركود", icon=ft.Icons.QR_CODE_2, on_click=print_selected_barcodes, width=None, size="md"),
+                        danger_button("حذف المحدد", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_bulk_delete, size="md"),
                         ft.TextButton("إلغاء التحديد", on_click=lambda _: grid.clear_selection()),
                     ],
                     spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -2600,12 +2596,8 @@ class ItemsCenter:
                         [
                             ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
                             ft.Text(f"تم تحديد {len(rows)} صف", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
-                            ft.OutlinedButton("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows))),
-                            ft.OutlinedButton(
-                                "حذف المحدد", icon=ft.Icons.DELETE_OUTLINE,
-                                style=ft.ButtonStyle(color=Colors.DANGER),
-                                on_click=lambda _=None: remove_selected_rows(),
-                            ),
+                            secondary_button("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows)), width=None, size="md"),
+                            danger_outline_button("حذف المحدد", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _=None: remove_selected_rows(), width=None, size="md"),
                             ft.TextButton("إلغاء التحديد", on_click=lambda _=None: bulk_grid.clear_selection()),
                         ],
                         spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
