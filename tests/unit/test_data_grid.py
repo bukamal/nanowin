@@ -594,3 +594,17 @@ def test_enter_advances_once_after_guard_window():
     time.sleep(0.09)
     g._handle_key(FakeKey("Enter"))
     assert g.nav.cell == (0, 2)
+
+
+def test_enter_after_arrow_navigation_continues_from_that_cell():
+    # Moving with arrows must disarm the duplicate-press guard, so the next
+    # Enter navigates from where the arrows stopped, not from a stale cell.
+    g = make_grid()
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("F2"))
+    g._edit_field.value = "دفتر"
+    g._handle_key(FakeKey("Enter"))       # commit -> (0, 1)
+    g._handle_key(FakeKey("Arrow Left"))  # -> (0, 0)
+    assert g.nav.cell == (0, 0)
+    g._handle_key(FakeKey("Enter"))       # continue from arrow position
+    assert g.nav.cell == (0, 1)

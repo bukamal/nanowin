@@ -287,6 +287,11 @@ class DataGrid(ft.Column):
             return
 
         key = _norm_key(e.key)
+        if key not in ("enter", "tab"):
+            # Any other key (arrows, typing, ...) means the commit's duplicate
+            # press is long gone -- disarm the guard so the next Enter/Tab
+            # navigates from wherever the user moved to.
+            self._last_commit_time = 0.0
         if (
             self._edit_field is None
             and key in ("enter", "tab")
@@ -1276,6 +1281,7 @@ class DataGrid(ft.Column):
 
     # ------------------------------------------------------------- selection
     def _on_cell_click(self, r: int, c: int) -> None:
+        self._last_commit_time = 0.0  # a click is fresh intent, not a duplicate
         if self._picker_control is not None and self.nav.cell != (r, c):
             self._cancel_picker()
         had_range = self._range_anchor is not None
