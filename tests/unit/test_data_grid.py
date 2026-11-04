@@ -584,14 +584,15 @@ def test_single_enter_does_not_double_advance():
 
 
 def test_enter_advances_once_after_guard_window():
-    import time
-
+    # Deterministic: don't depend on wall-clock sleep. A commit arms the
+    # duplicate-press guard; once that window has elapsed (timestamp in the
+    # past) the next Enter must advance normally.
     g = make_grid()
     g._on_cell_click(0, 0)
     g._handle_key(FakeKey("F2"))
     g._edit_field.value = "دفتر"
-    g._edit_field.on_submit(None)
-    time.sleep(0.09)
+    g._edit_field.on_submit(None)   # commit -> (0, 1), arms the guard
+    g._last_commit_time = 0.0       # simulate the guard window expiring
     g._handle_key(FakeKey("Enter"))
     assert g.nav.cell == (0, 2)
 
