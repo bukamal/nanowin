@@ -65,6 +65,77 @@ def _visible_bottom(page: ft.Page) -> float:
     return _EDGE_MARGIN
 
 
+def _host_controls(host):
+    return host if isinstance(host, list) else host.controls
+
+
+def _host_update(host) -> None:
+    if isinstance(host, list):
+        return
+    try:
+        host.update()
+    except Exception:
+        pass
+
+
+_MODAL_TYPES = tuple(
+    t for t in (ft.BottomSheet, getattr(ft, "AlertDialog", None), getattr(ft, "CupertinoAlertDialog", None)) if t is not None
+)
+
+
+def register_modal(page: ft.Page, control) -> None:
+    """Enable toasts *inside* an open sheet/dialog.
+
+    Flet 0.28 pushes bottom sheets and dialogs as Navigator routes above the
+    page's overlay, so a toast appended to ``page.overlay`` is hidden behind
+    them. Wrap the modal's content in a ``Stack`` and remember it, so
+    :func:`toast` can mount the pill inside the top-most open modal instead.
+    """
+    if not isinstance(control, _MODAL_TYPES):
+        return
+    content = getattr(control, "content", None)
+    if content is None:
+        return
+    if getattr(control, "_nano_toast_stack", None) is None:
+        try:
+            stack = ft.Stack([content], fit=ft.StackFit.LOOSE)
+            stack.rtl = True
+            # Preserve an expanding content's fill behaviour.
+            expand = getattr(content, "expand", None)
+            if expand:
+                stack.expand = expand
+            control.content = stack
+            control._nano_toast_stack = stack
+        except Exception:
+            return
+    stack_list = getattr(page, "_nano_modal_stack", None)
+    if stack_list is None:
+        stack_list = []
+        page._nano_modal_stack = stack_list
+    if control not in stack_list:
+        stack_list.append(control)
+
+
+def unregister_modal(page: ft.Page, control) -> None:
+    stack_list = getattr(page, "_nano_modal_stack", None)
+    if stack_list and control in stack_list:
+        stack_list.remove(control)
+
+
+def _active_toast_host(page: ft.Page):
+    """The stack of the top-most *open* sheet/dialog, else the page overlay."""
+    stack_list = getattr(page, "_nano_modal_stack", None)
+    if stack_list:
+        # Walk newest -> oldest without mutating: a modal is registered just
+        # before it is opened, so entries may legitimately still be closed.
+        for control in reversed(stack_list):
+            if getattr(control, "open", False):
+                host = getattr(control, "_nano_toast_stack", None)
+                if host is not None:
+                    return host
+    return page.overlay
+
+
 def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int = 2600, sound_kind: str | None = None) -> None:
     """Show a floating toast pill at the bottom of the window.
 
@@ -119,14 +190,25 @@ def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int
         animate_opacity=_ANIM,
     )
 
-    # Reuse one overlay slot per page: a fresh call while a toast is still
+    # Reuse one toast slot per page: a fresh call while a toast is still
     # showing removes the previous one immediately instead of letting two
-    # pills stack on top of each other.
+    # pills stack on top of each other. Mount it inside the top-most open
+    # sheet when there is one (page.overlay sits *below* sheet routes), else
+    # in the page overlay.
     previous = getattr(page, "_nano_toast", None)
-    if previous is not None and previous in page.overlay:
-        page.overlay.remove(previous)
+    if previous is not None:
+        prev_host = getattr(previous, "_nano_host", page.overlay)
+        prev_controls = _host_controls(prev_host)
+        if previous in prev_controls:
+            prev_controls.remove(previous)
+            _host_update(prev_host)
+
+    host = _active_toast_host(page)
+    controls = _host_controls(host)
+    wrapper._nano_host = host
     page._nano_toast = wrapper
-    page.overlay.append(wrapper)
+    controls.append(wrapper)
+    _host_update(host)
     page.update()
 
     wrapper.bottom = _visible_bottom(page)
@@ -141,8 +223,11 @@ def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int
         wrapper.opacity = 0
         page.update()
         await asyncio.sleep(_ANIM.duration / 1000)
-        if wrapper in page.overlay:
-            page.overlay.remove(wrapper)
+        host = getattr(wrapper, "_nano_host", page.overlay)
+        controls = _host_controls(host)
+        if wrapper in controls:
+            controls.remove(wrapper)
+            _host_update(host)
             page.update()
         if getattr(page, "_nano_toast", None) is wrapper:
             page._nano_toast = None
@@ -150,4 +235,4 @@ def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int
     page.run_task(_auto_dismiss)
 
 
-__all__ = ["toast", "ToastKind"]
+__all__ = ["toast", "ToastKind", "register_modal", "unregister_modal"]

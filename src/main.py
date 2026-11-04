@@ -13,7 +13,7 @@ from nano_offline.core import backup_settings
 from nano_offline.core import branding
 from nano_offline.core import sound
 from nano_offline.core.paths import database_path, migrate_legacy_database
-from nano_offline.core.toast import toast
+from nano_offline.core.toast import toast, register_modal, unregister_modal
 from nano_offline.views.activation_view import ActivationGate
 from nano_offline.views.admin_view import AdminCenter
 from nano_offline.views.dashboard_view import DashboardCenter
@@ -111,14 +111,27 @@ def _apply_rtl_to_sheets(page: ft.Page) -> None:
     sheets that replace ``content`` at open time are covered too.
     """
     original_open = page.open
+    original_close = page.close
 
     def open_sheet(control):
         content = getattr(control, "content", None)
         if isinstance(control, ft.BottomSheet) and content is not None:
             content.rtl = True
+        try:
+            register_modal(page, control)
+        except Exception:
+            pass
         return original_open(control)
 
+    def close_control(control):
+        try:
+            unregister_modal(page, control)
+        except Exception:
+            pass
+        return original_close(control)
+
     page.open = open_sheet
+    page.close = close_control
 
 
 def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: PlatformNativeFiles, on_theme_changed):
