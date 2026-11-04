@@ -8,6 +8,49 @@ from nano_offline.components.buttons import header_close_button
 from nano_offline.core.theme import Colors, Shadow
 
 
+_LAYOUT_TYPES = tuple(
+    t for t in (ft.Row, ft.Column, ft.Container, getattr(ft, "ResponsiveRow", None)) if t is not None
+)
+
+
+def _iter_text_fields(control):
+    """Yield the text fields inside a control (depth-first, reading order).
+
+    Only *plain* layout containers are traversed; composite widgets (e.g.
+    ``SearchSelect``, a ``Column`` subclass with its own internal field) are
+    treated as leaves so their keys keep their own behaviour.
+    """
+    if isinstance(control, ft.TextField):
+        yield control
+        return
+    if type(control) not in _LAYOUT_TYPES:
+        return
+    for child in getattr(control, "controls", None) or ():
+        yield from _iter_text_fields(child)
+    content = getattr(control, "content", None)
+    if content is not None:
+        yield from _iter_text_fields(content)
+
+
+def wire_enter_navigation(fields: Iterable[ft.Control], on_last_submit: Callable) -> None:
+    """Make Enter step through a form's text fields.
+
+    Enter on a field focuses the next text field; Enter on the last one runs
+    ``on_last_submit(None)`` (save/confirm). A field that already declares its
+    own ``on_submit`` is left untouched. This keeps keyboard entry uniform with
+    the editable grids: advance one field at a time, commit on the last.
+    """
+    text_fields = [field for control in fields for field in _iter_text_fields(control)]
+    for index, field in enumerate(text_fields):
+        if getattr(field, "on_submit", None) is not None:
+            continue
+        if index + 1 < len(text_fields):
+            target = text_fields[index + 1]
+            field.on_submit = lambda _e, target=target: target.focus()
+        else:
+            field.on_submit = lambda _e, callback=on_last_submit: callback(None)
+
+
 def render_form_sheet(
     page: ft.Page,
     sheet: ft.BottomSheet,
@@ -45,6 +88,9 @@ def render_form_sheet(
     security_view.py sheets, which already worked this way.
     """
     save_icon = save_icon or ft.Icons.SAVE_OUTLINED
+    field_controls = list(fields)
+    # Enter advances field-by-field and saves from the last field.
+    wire_enter_navigation(field_controls, on_save)
 
     # Every form sheet shares the desktop width so a form never opens as a
     # narrow phone modal on a wide window. Height stays content-driven (the
@@ -65,7 +111,7 @@ def render_form_sheet(
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                ft.Column(list(fields), spacing=9),
+                ft.Column(field_controls, spacing=9),
                 ft.Row(
                     [
                         ft.OutlinedButton("إلغاء", on_click=on_close, expand=True),
@@ -102,4 +148,4 @@ def new_form_sheet() -> ft.BottomSheet:
     )
 
 
-__all__ = ["render_form_sheet", "new_form_sheet"]
+__all__ = ["render_form_sheet", "new_form_sheet", "wire_enter_navigation"]

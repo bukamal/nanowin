@@ -11,7 +11,7 @@ import flet as ft
 from nano_offline.core import branding
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row
+from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row, wire_enter_navigation
 from nano_offline.components import sheets
 from nano_offline.components.buttons import header_close_button, inline_icon_button
 from nano_offline.components.command_bar import RibbonAction
@@ -1174,6 +1174,14 @@ class ItemsCenter:
                         alt_status.color = Colors.DANGER
                         alt_status.update()
 
+                def _alt_row_continue(_=None) -> None:
+                    # Enter on the last field of a filled row starts the next
+                    # unit row, so adding several sub-units is all-keyboard.
+                    if unit_sel.value or price_f.value or purchase_price_f.value or bc_field.value:
+                        _add_alt_row()
+                        alt_rows_column.update()
+
+                wire_enter_navigation([factor_f, price_f, purchase_price_f, bc_field], _alt_row_continue)
                 state: dict = {"unit": unit_sel, "factor": factor_f, "price": price_f, "purchase_price": purchase_price_f, "barcode": bc_field, "checksum": cs_text}
                 card = ft.Container(
                     content=ft.Column(

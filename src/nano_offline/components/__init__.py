@@ -7,7 +7,7 @@ from .kpi_card import kpi_card
 from .pattern_pad import PatternPad
 from .search_select import SearchSelect
 from .segmented_toggle import SegmentedToggle, SegmentOption
-from .form_sheet import render_form_sheet, new_form_sheet
+from .form_sheet import render_form_sheet, new_form_sheet, wire_enter_navigation
 from .status_pill import status_pill
 from .text_field import SelectAllTextField
 from .owner_pulse_card import build_owner_pulse_card
@@ -16,7 +16,7 @@ from .auth_layout import auth_scaffold
 
 __all__ = [
     "SearchSelect", "PatternPad", "empty_state", "SegmentedToggle", "SegmentOption",
-    "render_form_sheet", "new_form_sheet", "SelectAllTextField",
+    "render_form_sheet", "new_form_sheet", "wire_enter_navigation", "SelectAllTextField",
     "SmartAmountField", "SmartDateField", "kpi_card", "status_pill",
     "build_owner_pulse_card",
     "DataGrid", "GridColumn", "GridNavigator",

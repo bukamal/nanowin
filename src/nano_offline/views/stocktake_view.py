@@ -5,7 +5,7 @@ import time
 import flet as ft
 
 from nano_offline.core.toast import toast
-from nano_offline.components import SelectAllTextField, SearchSelect, SmartAmountField, empty_state
+from nano_offline.components import SelectAllTextField, SearchSelect, SmartAmountField, empty_state, wire_enter_navigation
 from nano_offline.components.buttons import inline_icon_button
 from nano_offline.core.theme import Colors
 from nano_offline.core import barcode_settings
@@ -324,6 +324,7 @@ class StocktakeCenter:
                 ft.TextButton("إلغاء", on_click=cancel),
                 ft.FilledButton("إضافة ومتابعة المسح", icon=ft.Icons.ADD, on_click=save),
             ]
+            wire_enter_navigation([name_field, price_field, sell_field], save)
             page.open(dialog)
 
         def handle_code(code: str) -> None:
@@ -539,6 +540,7 @@ class StocktakeCenter:
         def cancel(_=None):
             page.close(dialog)
 
+        wire_enter_navigation([field], save)
         dialog.content = field
         dialog.actions = [ft.TextButton("إلغاء", on_click=cancel), ft.FilledButton("حفظ", on_click=save)]
         page.open(dialog)
