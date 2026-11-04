@@ -156,6 +156,35 @@ def secondary_button(
     )
 
 
+def danger_outline_button(
+    text: str,
+    *,
+    icon: str | None = None,
+    on_click: Callable | None = None,
+    width: int | None = None,
+    size: str = "lg",
+    expand: bool = False,
+    **kwargs,
+) -> ft.OutlinedButton:
+    """A destructive secondary action (outlined, danger-colored)."""
+    kwargs.setdefault("height", _button_height(size))
+    if expand:
+        kwargs["expand"] = True
+    elif width is not None:
+        kwargs.setdefault("width", width)
+    return ft.OutlinedButton(
+        text,
+        icon=icon,
+        on_click=on_click,
+        style=ft.ButtonStyle(
+            color=Colors.DANGER,
+            shape=ft.RoundedRectangleBorder(radius=BTN_RADIUS),
+            padding=ft.padding.symmetric(horizontal=18),
+        ),
+        **kwargs,
+    )
+
+
 def footer_actions(
     primary: ft.Control | None = None,
     secondary: list[ft.Control] | None = None,
@@ -238,6 +267,6 @@ def inline_icon_button(icon: str, on_click: Callable, *, tooltip: str | None = N
 
 __all__ = [
     "danger_button", "hero_button", "stepper_icon_button", "header_close_button", "inline_icon_button",
-    "primary_button", "secondary_button", "footer_actions", "set_button_busy", "wire_busy",
+    "primary_button", "secondary_button", "danger_outline_button", "footer_actions", "set_button_busy", "wire_busy",
     "BTN_HEIGHT_SM", "BTN_HEIGHT_MD", "BTN_HEIGHT_LG", "BTN_RADIUS", "WIDE_WIDTH",
 ]

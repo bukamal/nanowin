@@ -51,3 +51,10 @@ def test_wire_busy_wraps_the_callback():
     handler(None)
     assert calls == [True]
     assert btn.disabled is False  # reset after the call
+
+
+def test_danger_outline_button_geometry_and_color():
+    btn = B.danger_outline_button("حذف", icon=ft.Icons.DELETE_OUTLINE, size="md", width=None)
+    assert btn.height == B.BTN_HEIGHT_MD
+    assert btn.width is None
+    assert btn.style.color is not None

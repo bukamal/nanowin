@@ -30,7 +30,7 @@ from nano_offline.components import (
 )
 
 from nano_offline.services.invoice_service import InvoiceLineInput
-from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, wire_busy
+from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
 from nano_offline.components.money_text import money_row
@@ -1807,8 +1807,8 @@ class InvoiceCenter:
             [
                 ft.Row(
                     [
-                        ft.FilledButton("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank),
-                        ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
+                        primary_button("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank, width=None, size="md"),
+                        secondary_button("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan"), width=None, size="md"),
                         line_columns_button,
                     ],
                     spacing=8, wrap=True,
@@ -2764,7 +2764,7 @@ class InvoiceCenter:
                     ),
                     ft.Row(
                         [
-                            ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
+                            secondary_button("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan"), width=None, size="md"),
                             ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
                             ft.Row(
@@ -3114,15 +3114,18 @@ class InvoiceCenter:
                             weight=ft.FontWeight.W_600,
                             color=Colors.PRIMARY_DARK,
                         ),
-                        ft.OutlinedButton(
+                        secondary_button(
                             "تكرار المحدد",
                             icon=ft.Icons.CONTENT_COPY_OUTLINED,
+                            width=None,
+                            size="md",
                             on_click=lambda _=None: duplicate_editor_lines(list(rows)),
                         ),
-                        ft.OutlinedButton(
+                        danger_outline_button(
                             "حذف المحدد",
                             icon=ft.Icons.DELETE_OUTLINE,
-                            style=ft.ButtonStyle(color=Colors.DANGER),
+                            width=None,
+                            size="md",
                             on_click=lambda _=None: remove_selected_editor_lines(),
                         ),
                         ft.TextButton("إلغاء التحديد", on_click=lambda _=None: lines_grid.clear_selection()),
