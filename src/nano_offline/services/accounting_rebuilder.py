@@ -46,7 +46,11 @@ class AccountingRebuilder:
             "SELECT id,opening_quantity,opening_unit_cost FROM items WHERE item_type='مخزون'"
         ).fetchall():
             qty = float(item["opening_quantity"] or 0)
-            avg = float(item["opening_unit_cost"] or 0) if qty > EPSILON else 0.0
+            # A negative baseline (e.g. a stocktake shrink shifted opening
+            # quantity below zero) still carries a cost: using it keeps the
+            # baseline's value correct. Zeroing it made every rebuild inflate
+            # average_cost/COGS and disagree with the dashboard valuation.
+            avg = float(item["opening_unit_cost"] or 0) if abs(qty) > EPSILON else 0.0
             state[int(item["id"])] = {"qty": qty, "avg": avg}
             conn.execute(
                 # Preserve a manually set purchase_price (only seed it from the

@@ -152,10 +152,24 @@ class StocktakeRepository(Offloadable):
                        VALUES(?,?,?,?,?,?)""",
                     (item_id, "adjustment", diff, unit_cost, diff * unit_cost, today),
                 )
+                # Shift the opening *baseline* by the diff AND preserve its
+                # total value, otherwise the report's closing value (which is
+                # opening_value + invoice movements) ignores the shrink while
+                # items.average_cost * quantity includes it -- the dashboard
+                # and the inventory report then disagree after every stocktake.
+                current = conn.execute(
+                    "SELECT opening_quantity,opening_unit_cost FROM items WHERE id=?",
+                    (item_id,),
+                ).fetchone()
+                old_qty = float(current["opening_quantity"] or 0) if current else 0.0
+                old_cost = float(current["opening_unit_cost"] or 0) if current else 0.0
+                new_qty = old_qty + diff
+                new_value = old_qty * old_cost + diff * unit_cost
+                new_cost = (new_value / new_qty) if abs(new_qty) > 1e-9 else unit_cost
                 conn.execute(
-                    """UPDATE items SET quantity=quantity+?, opening_quantity=opening_quantity+?,
-                           updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                    (diff, diff, item_id),
+                    """UPDATE items SET quantity=quantity+?, opening_quantity=?,
+                           opening_unit_cost=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (diff, new_qty, new_cost, item_id),
                 )
 
             conn.execute(
