@@ -2073,6 +2073,15 @@ class InvoiceCenter:
             return _usd_text(amount_usd)
 
         def row_formatter(col, value, row):
+            if col.key == "_avg_cost":
+                # The item's real weighted average cost (from its purchases and
+                # opening balance), read-only, shown in the display currency.
+                item_row = item_map.get(int(row["item"])) if row.get("item") else None
+                try:
+                    avg_cost = float((item_row or {}).get("average_cost") or 0)
+                except (TypeError, ValueError):
+                    avg_cost = 0.0
+                return currency.format_amount(avg_cost, settings) if avg_cost else ""
             if col.key in ("_extra_cost", "_extra_total"):
                 try:
                     qty = float(row.get("qty") or 0)
@@ -2141,6 +2150,7 @@ class InvoiceCenter:
             GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
             GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
             GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
+            GridColumn("_avg_cost", "التكلفة الوسطية", width=135, align="end", sortable=False, tooltip="متوسط تكلفة المادة الحقيقي (المشتريات + الرصيد الافتتاحي) بعملة العرض"),
             GridColumn("_extra_cost", "التكلفة", width=130, align="end", sortable=False, tooltip="تكلفة الوحدة بالعملة الإضافية (بدّل $/ل.س من الشريط)"),
             GridColumn("_extra_total", "الإجمالي", width=140, align="end", sortable=False, tooltip="إجمالي البند بالعملة الإضافية"),
             GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
