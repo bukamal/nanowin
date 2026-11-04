@@ -14,7 +14,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField
 from nano_offline.components.command_bar import RibbonAction
-from nano_offline.components.buttons import danger_button
+from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -75,7 +75,7 @@ class AdminCenter:
             modal=True,
             title=ft.Text("تعذّر تنفيذ العملية"),
             content=ft.Text(text),
-            actions=[ft.FilledButton("حسنًا", on_click=lambda _: self.page.close(error_dialog))],
+            actions=[primary_button("حسنًا", on_click=lambda _: self.page.close(error_dialog), width=None, size="md")],
         )
         self.page.open(error_dialog)
 
@@ -584,10 +584,7 @@ class AdminCenter:
                             title="تم الاسترجاع بنجاح",
                             content=ft.Text(f"نسخة الأمان: {Path(safety).name}"),
                             actions=[
-                                ft.FilledButton(
-                                    "متابعة",
-                                    on_click=lambda _: (self.page.close(dialog), self.on_logout()),
-                                ),
+                                primary_button("متابعة", on_click=lambda _: (self.page.close(dialog), self.on_logout()), width=None, size="md"),
                             ],
                         )
                         log("5: success state shown, waiting for user to continue")
@@ -597,7 +594,7 @@ class AdminCenter:
                         set_dialog(
                             title="تعذّر تنفيذ الاسترجاع",
                             content=ft.Text(str(exc), color=Colors.DANGER),
-                            actions=[ft.FilledButton("حسنًا", on_click=lambda _: self.page.close(dialog))],
+                            actions=[primary_button("حسنًا", on_click=lambda _: self.page.close(dialog), width=None, size="md")],
                         )
 
                 dialog = ft.AlertDialog(
@@ -609,7 +606,7 @@ class AdminCenter:
                     ),
                     actions=[
                         ft.TextButton("إلغاء", on_click=lambda _: self.page.close(dialog)),
-                        ft.FilledButton("استرجاع", icon=ft.Icons.RESTORE, on_click=confirm),
+                        primary_button("استرجاع", icon=ft.Icons.RESTORE, on_click=confirm, width=None, size="md"),
                     ],
                 )
                 log("dialog built, opening")
@@ -660,7 +657,7 @@ class AdminCenter:
         license_days = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
         license_device = ft.Text("", size=11, color=Colors.TEXT_SECONDARY, selectable=False)
         activation_progress = ft.ProgressBar(visible=False)
-        activation_button = ft.FilledButton("تفعيل الترخيص", icon=ft.Icons.VERIFIED_USER)
+        activation_button = primary_button("تفعيل الترخيص", icon=ft.Icons.VERIFIED_USER, width=None, size="md")
 
         _license_raw = {"device": ""}
         _license_reveal = {"on": False}
@@ -1504,7 +1501,7 @@ class AdminCenter:
                     # second AlertDialog on top -- see the "never open a
                     # second AlertDialog" note elsewhere in this file.
                     ft.TextButton("إعادة الفحص", on_click=lambda e: self.page.run_task(refresh_diagnosis, body, True)),
-                    ft.FilledButton("حسنًا", on_click=lambda e: self.page.close(diag_dialog)),
+                    primary_button("حسنًا", on_click=lambda e: self.page.close(diag_dialog), width=None, size="md"),
                 ],
             )
             self.page.open(diag_dialog)
@@ -1603,12 +1600,7 @@ class AdminCenter:
             )
             confirm.actions = [
                 ft.TextButton("إلغاء", on_click=lambda _: self.page.close(confirm)),
-                ft.FilledButton(
-                    "تصفير الإعدادات",
-                    icon=ft.Icons.RESTART_ALT,
-                    style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
-                    on_click=do_confirm,
-                ),
+                danger_button("تصفير الإعدادات", icon=ft.Icons.RESTART_ALT, on_click=do_confirm),
             ]
             self.page.open(confirm)
 
@@ -1617,11 +1609,7 @@ class AdminCenter:
                 label="كلمة مرور المدير", password=True, can_reveal_password=True, autofocus=True
             )
             status_line = ft.Text("", size=11, color=Colors.DANGER_DARKER)
-            initialize_button = ft.FilledButton(
-                "تهيئة قاعدة البيانات",
-                icon=ft.Icons.RESTART_ALT,
-                style=ft.ButtonStyle(bgcolor=Colors.DANGER, color=Colors.WHITE),
-            )
+            initialize_button = danger_button("تهيئة قاعدة البيانات", icon=ft.Icons.RESTART_ALT)
             confirm = ft.AlertDialog(
                 modal=True,
                 title=ft.Text("تهيئة قاعدة البيانات"),
@@ -1659,10 +1647,7 @@ class AdminCenter:
                         width=380,
                     )
                     confirm.actions = [
-                        ft.FilledButton(
-                            "متابعة",
-                            on_click=lambda _: (self.page.close(confirm), self.on_logout()),
-                        )
+                        primary_button("متابعة", on_click=lambda _: (self.page.close(confirm), self.on_logout()), width=None, size="md")
                     ]
                     self.page.update()
                 except Exception as exc:
@@ -2312,7 +2297,7 @@ class AdminCenter:
                         content=ft.Column([phrase_field, act_dd, target_field], spacing=10, tight=True),
                         actions=[
                             ft.TextButton("إلغاء", on_click=lambda _: self.page.close(dlg2)),
-                            ft.FilledButton("حفظ الأمر", on_click=_confirm_promote),
+                            primary_button("حفظ الأمر", on_click=_confirm_promote, width=None, size="md"),
                         ],
                     )
                     self.page.open(dlg2)
@@ -2367,7 +2352,7 @@ class AdminCenter:
                 content=ft.Text("سيُحذف كل ما تعلّمه المساعد على هذا الجهاز (عبارات وأسماء بديلة)."),
                 actions=[
                     ft.TextButton("إلغاء", on_click=lambda _: self.page.close(dlg)),
-                    ft.FilledButton("مسح الكل", on_click=confirm),
+                    danger_button("مسح الكل", on_click=confirm),
                 ],
             )
             self.page.open(dlg)
@@ -2603,7 +2588,7 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     theme_schedule_switch,
                     theme_schedule_row,
-                    ft.FilledButton("حفظ إعدادات المظهر", icon=ft.Icons.SAVE_OUTLINED, on_click=save_theme_settings),
+                    primary_button("حفظ إعدادات المظهر", icon=ft.Icons.SAVE_OUTLINED, on_click=save_theme_settings, width=None, size="md"),
                 ],
             ),
             "users": self._section(
@@ -2617,7 +2602,7 @@ class AdminCenter:
                             ft.Container(role, col={"xs": 12, "md": 3}),
                         ]
                     ),
-                    ft.FilledButton("إنشاء مستخدم", icon=ft.Icons.PERSON_ADD, on_click=create_user),
+                    primary_button("إنشاء مستخدم", icon=ft.Icons.PERSON_ADD, on_click=create_user, width=None, size="md"),
                     users_list,
                 ],
             ),
@@ -2630,24 +2615,16 @@ class AdminCenter:
                         [
                             ft.Container(backup_name, col={"xs": 12, "md": 5}),
                             ft.Container(
-                                ft.FilledButton(
-                                    "إنشاء ومشاركة نسخة",
-                                    icon=ft.Icons.BACKUP,
-                                    on_click=make_and_share_backup,
-                                ),
+                                primary_button("إنشاء ومشاركة نسخة", icon=ft.Icons.BACKUP, on_click=make_and_share_backup, width=None, size="md"),
                                 col={"xs": 12, "md": 4},
                             ),
                             ft.Container(
-                                ft.OutlinedButton("إنشاء محليًا", icon=ft.Icons.SAVE_OUTLINED, on_click=make_backup),
+                                secondary_button("إنشاء محليًا", icon=ft.Icons.SAVE_OUTLINED, on_click=make_backup, width=None, size="md"),
                                 col={"xs": 12, "md": 3},
                             ),
                         ]
                     ),
-                    ft.FilledButton(
-                        "استيراد نسخة من الجهاز",
-                        icon=ft.Icons.UPLOAD_FILE,
-                        on_click=import_external_backup,
-                    ),
+                    primary_button("استيراد نسخة من الجهاز", icon=ft.Icons.UPLOAD_FILE, on_click=import_external_backup, width=None, size="md"),
                     ft.Text("النسخ المحفوظة", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
                     backup_cards,
                     backup_info,
@@ -2658,7 +2635,7 @@ class AdminCenter:
                     backup_exit_auto_switch,
                     ft.Text("الاحتفاظ بآخر عدد من النسخ محليًا (يُحذف الأقدم تلقائيًا)", size=12, color=Colors.TEXT_SECONDARY),
                     backup_retention_field,
-                    ft.FilledButton("حفظ إعدادات النسخ الاحتياطي", icon=ft.Icons.SAVE_OUTLINED, on_click=save_backup_settings),
+                    primary_button("حفظ إعدادات النسخ الاحتياطي", icon=ft.Icons.SAVE_OUTLINED, on_click=save_backup_settings, width=None, size="md"),
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("منطقة الخطر", size=13, weight=ft.FontWeight.BOLD, color=Colors.DANGER_DARKER),
                     ft.Text(
@@ -2822,7 +2799,7 @@ class AdminCenter:
                         border=ft.border.all(1, Colors.BORDER),
                         border_radius=Radius.LG,
                     ),
-                    ft.FilledButton("حفظ الهوية", icon=ft.Icons.SAVE_OUTLINED, on_click=save_branding),
+                    primary_button("حفظ الهوية", icon=ft.Icons.SAVE_OUTLINED, on_click=save_branding, width=None, size="md"),
                 ],
             ),
             "audit": self._section(
@@ -2889,7 +2866,7 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("تنبيه المسح في نقطة البيع", size=12, weight=ft.FontWeight.W_600),
                     barcode_scan_feedback_field,
-                    ft.FilledButton("حفظ إعدادات الباركود", icon=ft.Icons.SAVE_OUTLINED, on_click=save_barcode_settings),
+                    primary_button("حفظ إعدادات الباركود", icon=ft.Icons.SAVE_OUTLINED, on_click=save_barcode_settings, width=None, size="md"),
                 ],
             ),
             "invoice": self._section(
@@ -2925,7 +2902,7 @@ class AdminCenter:
                     invoice_negative_stock_switch,
                     invoice_show_stock_badge_switch,
                     ft.Text("يُحفظ إذن المخزون السالب مع كل فاتورة، فلا تتأثر الفواتير القديمة بتغيير الإعداد لاحقًا.", size=11, color=Colors.TEXT_SECONDARY),
-                    ft.FilledButton("حفظ إعدادات الفواتير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_invoice_settings),
+                    primary_button("حفظ إعدادات الفواتير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_invoice_settings, width=None, size="md"),
                 ],
             ),
             "pos": self._section(
@@ -2943,7 +2920,7 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("اختصارات لوحة المفاتيح", size=12, weight=ft.FontWeight.W_600),
                     pos_f12_print_switch,
-                    ft.FilledButton("حفظ إعدادات نقطة البيع", icon=ft.Icons.SAVE_OUTLINED, on_click=save_pos_settings),
+                    primary_button("حفظ إعدادات نقطة البيع", icon=ft.Icons.SAVE_OUTLINED, on_click=save_pos_settings, width=None, size="md"),
                 ],
             ),
             "stocktake": self._section(
@@ -2954,7 +2931,7 @@ class AdminCenter:
                     stocktake_cooldown_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     stocktake_sound_switch,
-                    ft.FilledButton("حفظ إعدادات الجرد", icon=ft.Icons.SAVE_OUTLINED, on_click=save_stocktake_settings),
+                    primary_button("حفظ إعدادات الجرد", icon=ft.Icons.SAVE_OUTLINED, on_click=save_stocktake_settings, width=None, size="md"),
                 ],
             ),
             "sound": self._section(
@@ -3008,7 +2985,7 @@ class AdminCenter:
                     ),
                     ft.Row(
                         [
-                            ft.FilledButton("حفظ إعدادات الصوت", icon=ft.Icons.SAVE_OUTLINED, on_click=save_sound_settings),
+                            primary_button("حفظ إعدادات الصوت", icon=ft.Icons.SAVE_OUTLINED, on_click=save_sound_settings, width=None, size="md"),
                             ft.OutlinedButton("تشخيص المشكلة", icon=ft.Icons.HEALTH_AND_SAFETY_OUTLINED, on_click=open_sound_diagnosis),
                         ],
                         spacing=8, wrap=True,
@@ -3023,7 +3000,7 @@ class AdminCenter:
                     reports_default_type_field,
                     ft.Text("المدى الزمني الافتراضي", size=12, weight=ft.FontWeight.W_600),
                     reports_default_range_field,
-                    ft.FilledButton("حفظ إعدادات التقارير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_reporting_settings),
+                    primary_button("حفظ إعدادات التقارير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_reporting_settings, width=None, size="md"),
                 ],
             ),
 
@@ -3091,7 +3068,7 @@ class AdminCenter:
                     lan_https_switch,
                     ft.Row(
                         [
-                            ft.FilledButton("حفظ وتشغيل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_lan_settings),
+                            primary_button("حفظ وتشغيل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_lan_settings, width=None, size="md"),
                         ],
                     ),
                     lan_status_text,
@@ -3117,7 +3094,7 @@ class AdminCenter:
                         wrap=True,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.FilledButton("حفظ وتشغيل الخادم", icon=ft.Icons.SAVE_OUTLINED, on_click=save_api_settings),
+                    primary_button("حفظ وتشغيل الخادم", icon=ft.Icons.SAVE_OUTLINED, on_click=save_api_settings, width=None, size="md"),
                     api_status_text,
                     api_url_text,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
