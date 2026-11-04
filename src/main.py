@@ -1634,6 +1634,19 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     )
     open_command_palette = command_palette.open
 
+    def _escape_home() -> bool:
+        """ESC: go to the home screen unless a modal/overlay is open."""
+        try:
+            if any(bool(getattr(control, "open", False)) for control in getattr(page, "overlay", ())):
+                return False
+        except Exception:
+            pass
+        try:
+            navigate("dashboard")
+        except Exception:
+            return False
+        return True
+
     def _shell_key(e: ft.KeyboardEvent) -> None:
         norm = (e.key or "").strip().lower().replace(" ", "")
         if command_palette.handle_key(norm):
@@ -1642,14 +1655,18 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             open_command_palette()
             return
         if norm in {"escape", "esc"}:
-            if any(bool(getattr(control, "open", False)) for control in getattr(page, "overlay", ())):
-                return
-            navigate("dashboard")
+            _escape_home()
 
     # Expose the palette to the DataGrid (it reads this off the page so its
     # own key handler can honour Ctrl+K without importing the shell).
     try:
         page._nano_open_command_palette = open_command_palette
+    except Exception:
+        pass
+    # Expose ESC-to-home so the DataGrid (which takes over the page keyboard
+    # handler) can delegate an ESC it did not consume instead of swallowing it.
+    try:
+        page._nano_shell_escape = _escape_home
     except Exception:
         pass
 

@@ -2167,7 +2167,7 @@ class InvoiceCenter:
         def _extra_currency_changed(_=None):
             extra_currency["value"] = extra_currency_toggle.value or currency.DISPLAY_CURRENCY_USD
             try:
-                lines_grid.set_rows(list(lines_grid.rows))
+                lines_grid.refresh_display()
             except Exception:
                 pass
             self.page.update()
@@ -2745,7 +2745,14 @@ class InvoiceCenter:
                             ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan")),
                             ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
-                            ft.Container(extra_currency_toggle, width=130),
+                            ft.Row(
+                                [
+                                    ft.Text("عملة الأعمدة الإضافية", size=10, color=Colors.TEXT_SECONDARY),
+                                    ft.Container(extra_currency_toggle, width=120),
+                                ],
+                                spacing=6, tight=True,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
                             density_button,
                             export_button,
                         ],

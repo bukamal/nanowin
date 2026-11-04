@@ -298,13 +298,23 @@ class DataGrid(ft.Column):
         if self._shortcuts_enabled and getattr(e, "ctrl", False) and key == "n" and self._on_new_shortcut is not None:
             self._on_new_shortcut()
             return
-        if key in ("escape", "esc") and self._checked:
-            # Works even when the grid was only "checked" (not cell-armed).
-            self.clear_selection()
-            return
-        if key in ("escape", "esc") and self._range_anchor is not None:
-            self._range_anchor = None
-            self._paint_selection()
+        if key in ("escape", "esc"):
+            # Consume ESC for the grid's own transient states first; otherwise
+            # delegate to the shell's ESC-to-home hook so ESC still leaves the
+            # section from any grid (the grid owns the page keyboard handler).
+            if self._checked:
+                self.clear_selection()
+                return
+            if self._range_anchor is not None:
+                self._range_anchor = None
+                self._paint_selection()
+                return
+            hook = getattr(self._page, "_nano_shell_escape", None)
+            if callable(hook):
+                try:
+                    hook()
+                except Exception:
+                    pass
             return
         if not self._armed:
             return
@@ -1097,6 +1107,18 @@ class DataGrid(ft.Column):
         self._row_height = max(28, int(height))
         self._render_body()
         self._safe_update(self._body)
+
+    def refresh_display(self) -> None:
+        """Re-render cells for the current rows without changing the data.
+
+        ``set_rows`` skips work when the data is unchanged, but a view may still
+        need a repaint when external display state changes (e.g. the currency a
+        formatter uses). Rebuilds the body and repaints the selection, leaving
+        row data, history and selection intact.
+        """
+        self._render_body()
+        self._safe_update(self._body)
+        self._paint_selection()
 
     @property
     def rows(self) -> list[dict]:

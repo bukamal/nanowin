@@ -550,3 +550,21 @@ def test_type_to_edit_maps_latin_first_key_to_arabic():
     g._handle_key(FakeKey("a"))      # latin 'a' -> standard Arabic 'ش'
     assert g._edit_field is not None
     assert g._edit_field.value == "ش"
+
+
+def test_escape_delegates_to_shell_home_hook_when_not_consumed():
+    calls = []
+    page = SimpleNamespace(_nano_shell_escape=lambda: calls.append(True))
+    g = DataGrid(columns=COLS, rows=ROWS, page=page)
+    g._handle_key(FakeKey("Escape"))
+    assert calls == [True]
+
+
+def test_escape_clears_selection_before_delegating():
+    calls = []
+    page = SimpleNamespace(_nano_shell_escape=lambda: calls.append(True))
+    g = DataGrid(columns=COLS, rows=ROWS, page=page)
+    g._checked.add(1)
+    g._handle_key(FakeKey("Escape"))
+    assert calls == []
+    assert not g._checked
