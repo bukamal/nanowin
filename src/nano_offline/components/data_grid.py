@@ -811,8 +811,25 @@ class DataGrid(ft.Column):
                     if before.get(key) != after.get(key)
                 )
             self._record_history(recorded)
-        self._render_body()
-        self._safe_update(self._body)
+        # Fast path: an ordinary cell edit only changes its own row. Rebuilding
+        # the entire body made every keystroke/Enter O(rows) (hundreds of ms on
+        # long invoices); repaint just the touched row(s) instead. Grouping is
+        # the one case that can move a row between banners, so fall back there.
+        changed_rows = sorted({row for row, _, _ in changes})
+        if self._group_by is None and self._cell_boxes and changed_rows:
+            changed_set = set(changed_rows)
+            for r in changed_rows:
+                self._render_row(r)
+            # A view's row_bg hook can depend on other rows (e.g. duplicate
+            # barcode detection); refresh those cheap attributes in one update.
+            if self._row_bg is not None:
+                for r, box in enumerate(self._row_boxes):
+                    if r not in changed_set:
+                        box.bgcolor = self._row_bg_for(r)
+            self._safe_update(self._body)
+        else:
+            self._render_body()
+            self._safe_update(self._body)
         return True
 
     def _restore_rows(self, snapshots: dict[int, dict]) -> None:

@@ -654,3 +654,40 @@ def test_picker_scrolls_panel_and_highlighted_result_into_view():
     g._picker_list = results
     g._picker_move(1)
     assert any(call.get("key") == f"{g._uid}-pk1" for call in results.calls)
+
+
+def test_single_cell_commit_repaints_only_its_row():
+    # Perf regression guard: editing one cell must not rebuild the whole body
+    # (which made commits O(rows) and the table feel sluggish on long lists).
+    g = make_grid()
+    calls = {"body": 0, "row": 0}
+    orig_body, orig_row = g._render_body, g._render_row
+
+    def counting_body():
+        calls["body"] += 1
+        orig_body()
+
+    def counting_row(r):
+        calls["row"] += 1
+        orig_row(r)
+
+    g._render_body = counting_body
+    g._render_row = counting_row
+    g._apply_user_changes([(0, "name", "قلم جديد")], record_history=False)
+
+    assert calls == {"body": 0, "row": 1}
+
+
+def test_grouped_grid_commit_falls_back_to_full_rebuild():
+    g = make_grid()
+    g.set_group_by(lambda row: row.get("category"))
+    calls = {"body": 0}
+    orig_body = g._render_body
+
+    def counting_body():
+        calls["body"] += 1
+        orig_body()
+
+    g._render_body = counting_body
+    g._apply_user_changes([(0, "name", "قلم جديد")], record_history=False)
+    assert calls["body"] == 1
