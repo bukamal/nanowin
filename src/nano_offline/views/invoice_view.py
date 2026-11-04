@@ -37,6 +37,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
+from nano_offline.core import sound
 from nano_offline.core.margin_guard import check_sale_margin
 from nano_offline.core import invoice_settings
 from nano_offline.core import barcode_settings
@@ -1419,6 +1420,7 @@ class InvoiceCenter:
 
         def add_blank(_=None) -> None:
             lines_grid.add_row({"qty": 1})
+            sound.play(self.page, "line_add")
 
         def add_or_bump_row(item_id: int) -> str:
             for index, row in enumerate(lines_grid.rows):
@@ -1543,6 +1545,7 @@ class InvoiceCenter:
 
         def commit_sheet_line_cell(index: int, key: str, value) -> None:
             if key == "item" and value:
+                sound.play(self.page, "pick")
                 row = lines_grid.row_at(index) or {}
                 if not row.get("price"):
                     item_row = item_map.get(int(value))
@@ -2244,6 +2247,7 @@ class InvoiceCenter:
 
         def commit_line_cell(index: int, key: str, value) -> None:
             if key == "item" and value:
+                sound.play(self.page, "pick")
                 fill_line_defaults(index, int(value))
             elif key == "unit" and value:
                 row = lines_grid.row_at(index) or {}
@@ -2260,6 +2264,7 @@ class InvoiceCenter:
         def add_blank(_=None) -> None:
             lines_grid.add_row({"qty": 1})
             refresh_summary()
+            sound.play(self.page, "line_add")
 
         def add_or_bump_row(item_id: int) -> str:
             for index, row in enumerate(lines_grid.rows):
@@ -3143,6 +3148,7 @@ class InvoiceCenter:
                 return
             state = self.lines[index]
             if key == "item" and value:
+                sound.play(self.page, "pick")
                 state["item"].value = str(int(value))
                 item_changed(state)
             elif key == "description":
@@ -3928,6 +3934,7 @@ class InvoiceCenter:
 
             def add_blank(_=None) -> None:
                 bulk_grid.add_row({"qty": 1})
+                sound.play(self.page, "line_add")
 
             def apply_lines(_=None) -> None:
                 added = 0

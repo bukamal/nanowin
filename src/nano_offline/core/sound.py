@@ -100,7 +100,7 @@ from nano_offline.core import sound_settings
 
 SoundKind = Literal[
     "success", "error", "warning", "info", "scan", "save", "delete",
-    "login", "notify", "barcode_error",
+    "login", "notify", "barcode_error", "line_add", "pick",
 ]
 
 # Kept here (rather than only in sound_pool.dart) as the single source of
@@ -121,8 +121,14 @@ SoundKind = Literal[
 # cashier mid-scan hears "no match" as a distinct, shorter cue rather than
 # the same tone a database/validation failure would produce).
 _SOUND_KINDS: frozenset[str] = frozenset(
-    {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error"}
+    {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error", "line_add", "pick"}
 )
+
+# Logical event kinds that reuse an existing bundled asset. ``line_add`` (a
+# line/row appended in an invoice) and ``pick`` (a material chosen from the
+# inline picker) are separate enable-toggles in settings but borrow the short
+# ``scan`` blip rather than shipping a new .wav.
+_ASSET_FOR: dict[str, str] = {"line_add": "scan", "pick": "scan"}
 
 _CTX_ATTR = "_nano_ctx"
 _NATIVE_FILES_ATTR = "_nano_native_files"
@@ -218,7 +224,7 @@ def play(page: ft.Page, kind: SoundKind | str) -> None:
         return
     jitter = 1.0 + random.uniform(-_VOLUME_JITTER, _VOLUME_JITTER)
     volume = max(0.0, min(1.0, base_volume * jitter))
-    page.run_task(_play_async, native_files, kind, volume)
+    page.run_task(_play_async, native_files, _ASSET_FOR.get(kind, kind), volume)
 
 
 def play_preview(page: ft.Page, kind: SoundKind, volume_percent: int) -> None:
@@ -231,7 +237,7 @@ def play_preview(page: ft.Page, kind: SoundKind, volume_percent: int) -> None:
     if native_files is None or kind not in _SOUND_KINDS:
         return
     volume = max(0.0, min(1.0, volume_percent / 100.0))
-    page.run_task(_play_async, native_files, kind, volume)
+    page.run_task(_play_async, native_files, _ASSET_FOR.get(kind, kind), volume)
 
 
 __all__ = ["SoundKind", "attach_context", "play", "play_preview"]

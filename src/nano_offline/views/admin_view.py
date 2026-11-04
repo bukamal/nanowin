@@ -1384,6 +1384,14 @@ class AdminCenter:
             label="صوت عند مسح باركود غير موجود (نغمة مختلفة عن الخطأ العام)",
             value=sound_settings.kind_enabled(sset, "barcode_error"),
         )
+        sound_kind_line_add_switch = ft.Switch(
+            label="صوت عند إضافة بند/صف في الفواتير",
+            value=sound_settings.kind_enabled(sset, "line_add"),
+        )
+        sound_kind_pick_switch = ft.Switch(
+            label="صوت عند اختيار مادة من المنتقي",
+            value=sound_settings.kind_enabled(sset, "pick"),
+        )
 
         def preview_sound(kind: str):
             # Plays directly at whatever the volume slider is set to right
@@ -1410,6 +1418,8 @@ class AdminCenter:
                     sound_settings.KIND_LOGIN_KEY: "1" if sound_kind_login_switch.value else "0",
                     sound_settings.KIND_NOTIFY_KEY: "1" if sound_kind_notify_switch.value else "0",
                     sound_settings.KIND_BARCODE_ERROR_KEY: "1" if sound_kind_barcode_error_switch.value else "0",
+                    sound_settings.KIND_LINE_ADD_KEY: "1" if sound_kind_line_add_switch.value else "0",
+                    sound_settings.KIND_PICK_KEY: "1" if sound_kind_pick_switch.value else "0",
                 })
                 self._notify("تم حفظ إعدادات الصوت — تُطبَّق فورًا في كل أنحاء التطبيق")
                 self.page.update()
@@ -2974,6 +2984,8 @@ class AdminCenter:
                     sound_kind_login_switch,
                     sound_kind_notify_switch,
                     sound_kind_barcode_error_switch,
+                    sound_kind_line_add_switch,
+                    sound_kind_pick_switch,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("معاينة", size=12, weight=ft.FontWeight.W_600),
                     ft.Row(
@@ -2988,6 +3000,8 @@ class AdminCenter:
                             ft.OutlinedButton("تسجيل دخول", icon=ft.Icons.LOGIN_ROUNDED, on_click=preview_sound("login")),
                             ft.OutlinedButton("تنبيه جديد", icon=ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED, on_click=preview_sound("notify")),
                             ft.OutlinedButton("باركود غير موجود", icon=ft.Icons.QR_CODE_2_OUTLINED, on_click=preview_sound("barcode_error")),
+                            ft.OutlinedButton("إضافة بند", icon=ft.Icons.PLAYLIST_ADD, on_click=preview_sound("line_add")),
+                            ft.OutlinedButton("اختيار مادة", icon=ft.Icons.CHECKLIST, on_click=preview_sound("pick")),
                         ],
                         spacing=8, wrap=True,
                     ),

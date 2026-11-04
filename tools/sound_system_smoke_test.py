@@ -29,6 +29,8 @@ with tempdir(prefix="nano-sound-") as td:
     assert sound_settings.kind_enabled(settings, "login") is True
     assert sound_settings.kind_enabled(settings, "notify") is True
     assert sound_settings.kind_enabled(settings, "barcode_error") is True
+    assert sound_settings.kind_enabled(settings, "line_add") is True
+    assert sound_settings.kind_enabled(settings, "pick") is True
     # An unknown kind is never enabled -- fails closed, not open.
     assert sound_settings.kind_enabled(settings, "bogus") is False
 
@@ -87,7 +89,7 @@ with tempdir(prefix="nano-sound-") as td:
         print(f"sound_system_smoke_test: skipped core/sound.py import check ({exc})")
     else:
         assert sound_engine._SOUND_KINDS == frozenset(
-            {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error"}
+            {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error", "line_add", "pick"}
         )
         # attach_context()'s signature changed when sound playback moved off
         # flet-audio onto the native AudioPool bridge (see sound.py's module
