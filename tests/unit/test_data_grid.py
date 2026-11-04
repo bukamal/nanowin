@@ -691,3 +691,28 @@ def test_grouped_grid_commit_falls_back_to_full_rebuild():
     g._render_body = counting_body
     g._apply_user_changes([(0, "name", "قلم جديد")], record_history=False)
     assert calls["body"] == 1
+
+
+def test_large_grid_switches_to_on_demand_building():
+    from nano_offline.components.data_grid import _ON_DEMAND_THRESHOLD
+
+    assert make_grid()._body.build_controls_on_demand is False
+    n = _ON_DEMAND_THRESHOLD + 1
+    big = DataGrid(columns=COLS, rows=[dict(ROWS[0]) for _ in range(n)], page=None)
+    assert big._body.build_controls_on_demand is True
+
+
+def test_large_grid_scrolls_by_offset_not_stale_key():
+    from nano_offline.components.data_grid import _ON_DEMAND_THRESHOLD
+
+    page = SimpleNamespace(on_keyboard_event=None)
+    n = _ON_DEMAND_THRESHOLD + 20
+    big = DataGrid(columns=COLS, rows=[dict(ROWS[0]) for _ in range(n)], page=page)
+    viewport = _FakeScrollable()
+    big._viewport = viewport
+
+    big._scroll_row_into_view(n - 1)
+
+    expected = max(0, (n - 1) * big._row_height - 2 * big._row_height)
+    assert viewport.calls[-1].get("offset") == expected
+    assert "key" not in viewport.calls[-1]

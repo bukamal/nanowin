@@ -47,6 +47,9 @@ def _norm_key(key: str | None) -> str:
 _UP, _DOWN, _LEFT, _RIGHT = "arrowup", "arrowdown", "arrowleft", "arrowright"
 _PAGE_UP, _PAGE_DOWN = "pageup", "pagedown"
 _HISTORY_LIMIT = 100
+# Above this many rows, the body switches its ListView to on-demand widget
+# building so scrolling stays smooth; smaller grids stay eager as before.
+_ON_DEMAND_THRESHOLD = 150
 
 # Standard Arabic (Windows 101) keyboard: physical latin key -> Arabic letter.
 # Used ONLY to seed the first character of a type-to-edit when the runtime
@@ -209,7 +212,10 @@ class DataGrid(ft.Column):
         # cell editor). The view calls disarm() when its own fields focus.
         self._armed = False
         self._shortcuts_enabled = True
-        self._body = ft.Column(spacing=0)
+        # A ListView (not a bare Column) so large tables can build their
+        # Flutter widgets on demand -- scrolling thousands of rows stays
+        # smooth. Small grids behave exactly as before (eager, all visible).
+        self._body = ft.ListView(spacing=0, padding=0, expand=True)
         # Stable per-instance prefix so row/picker keys stay unique across the
         # page when several grids coexist (used for scroll-into-view).
         self._uid = f"dg{id(self)}"
@@ -218,11 +224,11 @@ class DataGrid(ft.Column):
         # rows. It shares the header's column geometry, so cells line up.
         self._footer_slot = ft.Container(visible=False)
 
-        # Header and footer stay pinned; only the body scrolls. All three live
-        # inside one rounded, clipped card so the tinted header's top corners
-        # and the last row's bottom corners follow the table's radius instead
-        # of squaring off against it.
-        self._viewport = ft.Column([self._body], scroll=ft.ScrollMode.AUTO, expand=True)
+        # Header and footer stay pinned; only the body (the ListView) scrolls.
+        # All three live inside one rounded, clipped card so the tinted
+        # header's top corners and the last row's bottom corners follow the
+        # table's radius instead of squaring off against it.
+        self._viewport = self._body
         card = ft.Container(
             ft.Column(
                 [
@@ -475,8 +481,21 @@ class DataGrid(ft.Column):
             pass
 
     def _scroll_row_into_view(self, r: int, *, duration: int = 120) -> None:
-        if 0 <= int(r) < len(self._rows):
-            self._scroll_to_key(f"{self._uid}-r{int(r)}", duration=duration)
+        r = int(r)
+        if not (0 <= r < len(self._rows)):
+            return
+        if len(self._rows) > _ON_DEMAND_THRESHOLD:
+            # On-demand ListView: the target row may not be built yet, so a
+            # key lookup would miss -- scroll by offset instead (rows are
+            # fixed-height here) and keep it a couple of rows off the top.
+            offset = max(0, r * self._row_height - 2 * self._row_height)
+            if self._page is not None:
+                try:
+                    self._viewport.scroll_to(offset=offset, duration=duration)
+                except Exception:
+                    pass
+            return
+        self._scroll_to_key(f"{self._uid}-r{r}", duration=duration)
 
     def _scroll_list_key(self, key: str) -> None:
         if self._page is None or self._picker_list is None:
@@ -1131,6 +1150,10 @@ class DataGrid(ft.Column):
                                 border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
                             )
                         )
+        try:
+            self._body.build_controls_on_demand = len(self._rows) > _ON_DEMAND_THRESHOLD
+        except Exception:
+            pass
         self._body.controls = controls
         self._painted_selection = self._selection_cells() if self._cell_boxes else set()
         self._prev_cell = self.nav.cell if self._cell_boxes else None
