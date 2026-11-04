@@ -26,18 +26,29 @@ FAMILIES: list[tuple[str, str]] = [
     ("Tahoma", "Tahoma"),
     ("Arial", "Arial"),
     ("Calibri", "Calibri"),
+    ("Verdana", "Verdana"),
+    ("Georgia", "Georgia"),
+    ("Candara", "Candara"),
+    ("Corbel", "Corbel"),
     ("Times New Roman", "Times New Roman"),
     ("Courier New", "Courier New"),
+    # Arabic-capable families that ship with Windows.
+    ("Dubai", "Dubai"),
+    ("Sakkal Majalla", "Sakkal Majalla"),
+    ("Simplified Arabic", "Simplified Arabic"),
+    ("Traditional Arabic", "Traditional Arabic"),
 ]
 _FAMILY_LABELS = dict(FAMILIES)
 
 # (base point size, label). The same base drives the UI theme and the printed
 # document body so screen and paper stay in step.
 SIZES: list[tuple[int, str]] = [
+    (9, "صغير جدًا"),
     (11, "صغير"),
     (13, "عادي"),
     (15, "كبير"),
     (17, "كبير جدًا"),
+    (19, "ضخم"),
 ]
 _SIZE_VALUES = {px for px, _ in SIZES}
 _SIZE_LABELS = dict(SIZES)
@@ -57,6 +68,11 @@ def font_size(settings) -> int:
     except Exception:
         return DEFAULT_SIZE
     return value if value in _SIZE_VALUES else DEFAULT_SIZE
+
+
+def ui_scale_factor(settings) -> float:
+    """Multiplier for on-screen text relative to the default size."""
+    return font_size(settings) / float(DEFAULT_SIZE)
 
 
 def ui_family(settings, bundled: str | None) -> str | None:
@@ -82,6 +98,6 @@ def label_for_size(px: int) -> str:
 
 __all__ = [
     "SETTING_FAMILY", "SETTING_SIZE", "DEFAULT_FAMILY", "DEFAULT_SIZE",
-    "FAMILIES", "SIZES", "family", "font_size", "ui_family", "print_family",
+    "FAMILIES", "SIZES", "family", "font_size", "ui_scale_factor", "ui_family", "print_family",
     "label_for_family", "label_for_size",
 ]

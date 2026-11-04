@@ -35,6 +35,7 @@ from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core import font_settings
+from nano_offline.core import ui_scale
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
@@ -88,6 +89,11 @@ def _apply_theme(page: ft.Page, ctx: AppContext) -> None:
     family = font_settings.ui_family(ctx.settings, APP_FONT_FAMILY)
     if APP_FONTS:
         page.fonts = APP_FONTS
+    # Scale every size-bearing control created from here on (installed once)
+    # so the admin font-size setting actually resizes the on-screen UI, not
+    # just the printed documents.
+    ui_scale.set_scale(font_settings.ui_scale_factor(ctx.settings))
+    ui_scale.install()
     page.theme = ft.Theme(color_scheme_seed=Colors.PRIMARY, font_family=family)
     page.dark_theme = page.theme
     page.theme_mode = ft.ThemeMode.DARK if theme.is_dark() else ft.ThemeMode.LIGHT
