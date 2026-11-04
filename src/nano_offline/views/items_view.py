@@ -13,7 +13,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, SmartAmountField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row, wire_enter_navigation
 from nano_offline.components import sheets
-from nano_offline.components.buttons import header_close_button, inline_icon_button
+from nano_offline.components.buttons import header_close_button, inline_icon_button, primary_button, secondary_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.money_text import money_row
@@ -691,7 +691,7 @@ class ItemsCenter:
             dialog.title = ft.Text(f"تعديل {'التصنيف' if is_category else 'الوحدة'}")
             field_list: list[ft.Control] = [name_field] + ([abbr_field] if abbr_field else [])
             dialog.content = ft.Container(ft.Column(field_list, spacing=10, tight=True), width=380)
-            dialog.actions = [ft.TextButton("إلغاء", on_click=close), ft.FilledButton("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save)]
+            dialog.actions = [secondary_button("إلغاء", on_click=close, size="md"), primary_button("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save, width=None, size="md")]
             page.open(dialog)
 
         def confirm_delete_definition(entry: dict, is_category: bool) -> None:
@@ -1414,8 +1414,8 @@ class ItemsCenter:
                     spacing=9, tight=True,
                 )
                 footer = [
-                    ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back()),
-                    ft.FilledButton("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                    secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.back(), size="md"),
+                    primary_button("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save, width=None, size="md"),
                 ]
                 return step_label, body, footer
 
@@ -1913,8 +1913,8 @@ class ItemsCenter:
                     spacing=10, tight=True,
                 )
                 footer = [
-                    ft.TextButton("رجوع للمسح", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.goto(0)),
-                    ft.FilledButton("حفظ", icon=ft.Icons.CHECK_ROUNDED, on_click=lambda _: do_save(nav)),
+                    secondary_button("رجوع للمسح", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: nav.goto(0), size="md"),
+                    primary_button("حفظ", icon=ft.Icons.CHECK_ROUNDED, on_click=lambda _: do_save(nav), width=None, size="md"),
                 ]
                 return "الخطوة ٢ من ٢ — المعاينة والحفظ", body, footer
 
@@ -2927,7 +2927,7 @@ class ItemsCenter:
                                         color=Colors.TEXT_SECONDARY,
                                         expand=True,
                                     ),
-                                    ft.FilledButton("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all),
+                                    primary_button("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all, width=None),
                                 ],
                                 spacing=8,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,

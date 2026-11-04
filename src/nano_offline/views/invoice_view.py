@@ -30,7 +30,7 @@ from nano_offline.components import (
 )
 
 from nano_offline.services.invoice_service import InvoiceLineInput
-from nano_offline.components.buttons import stepper_icon_button, header_close_button
+from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
 from nano_offline.components.money_text import money_row
@@ -1872,18 +1872,18 @@ class InvoiceCenter:
             ]
             if idx == 0:
                 footer_holder.controls = [
-                    ft.TextButton("إلغاء", on_click=close),
-                    ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: go(1)),
+                    secondary_button("إلغاء", on_click=close, size="md"),
+                    primary_button("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: go(1), width=None, size="md"),
                 ]
             elif idx < len(steps) - 1:
                 footer_holder.controls = [
-                    ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1)),
-                    ft.FilledButton("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: go(1)),
+                    secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1), size="md"),
+                    primary_button("التالي", icon=ft.Icons.ARROW_BACK_ROUNDED, on_click=lambda _: go(1), width=None, size="md"),
                 ]
             else:
                 footer_holder.controls = [
-                    ft.TextButton("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1)),
-                    ft.FilledButton("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                    secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1), size="md"),
+                    primary_button("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save, width=None, size="md"),
                 ]
 
         def go(delta: int) -> None:
@@ -2632,6 +2632,9 @@ class InvoiceCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
 
+        save_button = primary_button("تحديث" if invoice_id else "حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED)
+        save_button.on_click = wire_busy(save_button, save)
+
         def type_changed(_=None) -> None:
             self.invoice_type = type_dd.value or "sale"
             party_options()
@@ -2832,19 +2835,7 @@ class InvoiceCenter:
                                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                         ),
                                         ft.Row(
-                                            [
-                                                ft.FilledButton(
-                                                    "تحديث" if invoice_id else "حفظ الفاتورة",
-                                                    icon=ft.Icons.SAVE_OUTLINED,
-                                                    on_click=save,
-                                                    width=320,
-                                                    height=44,
-                                                    style=ft.ButtonStyle(
-                                                        shape=ft.RoundedRectangleBorder(radius=12),
-                                                        text_style=ft.TextStyle(size=15, weight=ft.FontWeight.BOLD),
-                                                    ),
-                                                ),
-                                            ],
+                                            [save_button],
                                             alignment=ft.MainAxisAlignment.CENTER,
                                         ),
                                     ],

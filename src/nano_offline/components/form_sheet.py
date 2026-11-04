@@ -4,7 +4,13 @@ from typing import Callable, Iterable
 
 import flet as ft
 
-from nano_offline.components.buttons import header_close_button
+from nano_offline.components.buttons import (
+    footer_actions,
+    header_close_button,
+    primary_button,
+    secondary_button,
+    wire_busy,
+)
 from nano_offline.core.theme import Colors, Shadow
 
 
@@ -89,8 +95,16 @@ def render_form_sheet(
     """
     save_icon = save_icon or ft.Icons.SAVE_OUTLINED
     field_controls = list(fields)
+
+    save_button = primary_button(save_label, icon=save_icon)
+
+    def submit(_=None):
+        on_save(_)
+
+    save_button.on_click = wire_busy(save_button, submit)
+    cancel_button = secondary_button("إلغاء", icon=ft.Icons.CLOSE, on_click=on_close)
     # Enter advances field-by-field and saves from the last field.
-    wire_enter_navigation(field_controls, on_save)
+    wire_enter_navigation(field_controls, save_button.on_click)
 
     # Every form sheet shares the desktop width so a form never opens as a
     # narrow phone modal on a wide window. Height stays content-driven (the
@@ -112,13 +126,7 @@ def render_form_sheet(
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Column(field_controls, spacing=9),
-                ft.Row(
-                    [
-                        ft.OutlinedButton("إلغاء", on_click=on_close, expand=True),
-                        ft.FilledButton(save_label, icon=save_icon, on_click=on_save, expand=True),
-                    ],
-                    spacing=10,
-                ),
+                footer_actions(save_button, [cancel_button]),
             ],
             spacing=16, tight=True, scroll=ft.ScrollMode.AUTO,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
