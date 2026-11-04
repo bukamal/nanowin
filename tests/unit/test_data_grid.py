@@ -608,3 +608,48 @@ def test_enter_after_arrow_navigation_continues_from_that_cell():
     assert g.nav.cell == (0, 0)
     g._handle_key(FakeKey("Enter"))       # continue from arrow position
     assert g.nav.cell == (0, 1)
+
+
+class _FakeScrollable:
+    def __init__(self):
+        self.calls = []
+        self.controls = []
+
+    def scroll_to(self, **kwargs):
+        self.calls.append(kwargs)
+
+    def update(self):
+        pass
+
+
+def test_arrow_navigation_scrolls_active_row_into_view():
+    page = SimpleNamespace(on_keyboard_event=None)
+    g = DataGrid(columns=COLS, rows=ROWS, page=page)
+    viewport = _FakeScrollable()
+    g._viewport = viewport
+
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("Arrow Down"))
+
+    assert any(call.get("key") == f"{g._uid}-r1" for call in viewport.calls)
+
+
+def test_picker_scrolls_panel_and_highlighted_result_into_view():
+    page = SimpleNamespace(on_keyboard_event=None)
+    cols = [GridColumn("item", "المادة", editable=True, kind="picker")]
+    rows = [{"item": 1}, {"item": 2}]
+    g = DataGrid(
+        columns=cols, rows=rows, page=page,
+        picker_options=lambda col, row: [(1, "أ"), (2, "ب")],
+    )
+    viewport = _FakeScrollable()
+    g._viewport = viewport
+    g._on_cell_click(0, 0)
+    g._begin_edit()  # opens the inline picker
+
+    assert any(call.get("key") == f"{g._uid}-picker" for call in viewport.calls)
+
+    results = _FakeScrollable()
+    g._picker_list = results
+    g._picker_move(1)
+    assert any(call.get("key") == f"{g._uid}-pk1" for call in results.calls)

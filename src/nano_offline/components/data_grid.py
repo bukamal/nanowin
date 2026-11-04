@@ -210,6 +210,9 @@ class DataGrid(ft.Column):
         self._armed = False
         self._shortcuts_enabled = True
         self._body = ft.Column(spacing=0)
+        # Stable per-instance prefix so row/picker keys stay unique across the
+        # page when several grids coexist (used for scroll-into-view).
+        self._uid = f"dg{id(self)}"
         # Footer (e.g. invoice totals) lives outside the scrolling body so it
         # stays pinned at the bottom of the table instead of drifting with the
         # rows. It shares the header's column geometry, so cells line up.
@@ -219,11 +222,12 @@ class DataGrid(ft.Column):
         # inside one rounded, clipped card so the tinted header's top corners
         # and the last row's bottom corners follow the table's radius instead
         # of squaring off against it.
+        self._viewport = ft.Column([self._body], scroll=ft.ScrollMode.AUTO, expand=True)
         card = ft.Container(
             ft.Column(
                 [
                     self._build_header(),
-                    ft.Column([self._body], scroll=ft.ScrollMode.AUTO, expand=True),
+                    self._viewport,
                     self._footer_slot,
                 ],
                 spacing=0,
@@ -460,6 +464,27 @@ class DataGrid(ft.Column):
         if height:
             return max(1, int(height // self._row_height) - 4)
         return 12
+
+    def _scroll_to_key(self, key: str, *, duration: int = 120) -> None:
+        """Scroll the body viewport so the control with ``key`` is visible."""
+        if self._page is None:
+            return
+        try:
+            self._viewport.scroll_to(key=key, duration=duration)
+        except Exception:
+            pass
+
+    def _scroll_row_into_view(self, r: int, *, duration: int = 120) -> None:
+        if 0 <= int(r) < len(self._rows):
+            self._scroll_to_key(f"{self._uid}-r{int(r)}", duration=duration)
+
+    def _scroll_list_key(self, key: str) -> None:
+        if self._page is None or self._picker_list is None:
+            return
+        try:
+            self._picker_list.scroll_to(key=key, duration=80)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ build
     def _col_align(self, col: GridColumn):
@@ -947,6 +972,7 @@ class DataGrid(ft.Column):
             )
         box = ft.Container(
             ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            key=f"{self._uid}-r{r}",
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
             bgcolor=self._row_bg_for(r),
             on_hover=lambda e, rr=r: self._on_row_hover(e, rr),
@@ -1177,6 +1203,7 @@ class DataGrid(ft.Column):
         self._prev_cell = None
         self._render_body()
         self._safe_update(self._body)
+        self._scroll_row_into_view(index)
         return index
 
     def remove_row(self, index: int) -> None:
@@ -1329,6 +1356,9 @@ class DataGrid(ft.Column):
             self._safe_update(box)
         self._painted_selection = selected
         self._prev_cell = self.nav.cell
+        # Keyboard navigation must never leave the active cell past the
+        # viewport's bottom edge -- follow it with the scroll.
+        self._scroll_row_into_view(self.nav.row)
 
     def _selection_cells(self) -> set[tuple[int, int]]:
         if self._range_anchor is None:
@@ -1436,6 +1466,7 @@ class DataGrid(ft.Column):
         )
         self._picker_panel = ft.Container(
             ft.Column([self._picker_search, self._picker_list], spacing=6, tight=True),
+            key=f"{self._uid}-picker",
             padding=ft.padding.only(left=52, right=14, top=6, bottom=8),
             bgcolor=Colors.PRIMARY_BG,
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.PRIMARY_BORDER)),
@@ -1444,6 +1475,8 @@ class DataGrid(ft.Column):
         self._picker_filter("")
         self._render_body()
         self._safe_update(self._body)
+        # Bring the just-opened panel into view (it is appended below the row).
+        self._scroll_to_key(f"{self._uid}-picker", duration=120)
         try:
             self._picker_search.focus()
         except Exception:
@@ -1475,6 +1508,7 @@ class DataGrid(ft.Column):
                         ],
                         spacing=6,
                     ),
+                    key=f"{self._uid}-pk{i}",
                     padding=ft.padding.symmetric(horizontal=10, vertical=8),
                     bgcolor=Colors.WHITE if selected else None,
                     border_radius=Radius.SM,
@@ -1489,6 +1523,8 @@ class DataGrid(ft.Column):
             self._picker_list.update()
         except Exception:
             pass
+        # Keep the keyboard highlight inside the results viewport.
+        self._scroll_list_key(f"{self._uid}-pk{self._picker_highlight}")
 
     def _picker_move(self, delta: int) -> None:
         total = len(self._picker_visible)
