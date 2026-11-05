@@ -86,9 +86,9 @@ omit = ["*/__pycache__/*"]
 show_missing = true
 skip_covered = false
 # Realistic floor: coverage counts the unit/integration surface (incl. the
-# end-to-end lifecycle, backup/restore and LAN parity tests), not the UI views.
-# Measured ~32% on the full suite; keep a safety margin so CI stays stable.
-fail_under = 25
+# end-to-end lifecycle, backup/restore, LAN parity and headless UI build
+# smoke), not the UI views. Measured ~38% on the full suite; keep a margin.
+fail_under = 32
 
 [build-system]
 requires = ["setuptools>=65", "wheel"]
