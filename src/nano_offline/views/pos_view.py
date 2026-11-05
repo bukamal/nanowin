@@ -1513,20 +1513,36 @@ class POSCenter:
         )
         checkout_btn.expand = True
 
+        # Cart header: the title is centred at the top of the cart container,
+        # with the count/actions pinned to the sides behind it (Stack so the
+        # centred title sits over the empty middle of the controls row).
+        cart_header = ft.Stack(
+            [
+                ft.Row(
+                    [ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD)],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Row(
+                    [
+                        count_text,
+                        ft.Row([price_check_btn, recall_btn, print_last_btn], spacing=0, tight=True),
+                        ft.Container(expand=True),
+                        discount_cart_btn,
+                        hold_btn,
+                        undo_btn,
+                    ],
+                    left=0,
+                    right=0,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            alignment=ft.alignment.center,
+        )
         cart_pane = ft.Container(
             ft.Column(
                 [
-                    ft.Row(
-                        [
-                            ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD, expand=True),
-                            count_text,
-                            ft.Row([price_check_btn, recall_btn, print_last_btn], spacing=0, tight=True),
-                            discount_cart_btn,
-                            hold_btn,
-                            undo_btn,
-                        ],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
+                    cart_header,
                     held_row,
                     cart_column,
                     cart_footer,
