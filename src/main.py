@@ -999,8 +999,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 content.content = hit[0]
                 route_coordinator.render(router, page, content, key, kwargs, skip_render=True)
                 try:
-                    header_title.value, header_subtitle.value = hit[3], hit[4]
-                    command_bar.set_actions(hit[2] if hit[2] else _section_actions(key))
+                    if key == "dashboard":
+                        # Home is the base surface: no tab, no command strip.
+                        header_title.value, header_subtitle.value = hit[3], hit[4]
+                        command_bar.set_active(None)
+                        command_bar.set_actions([])
+                    else:
+                        header_title.value, header_subtitle.value = hit[3], hit[4]
+                        command_bar.set_actions(hit[2] if hit[2] else _section_actions(key))
                 except NameError:
                     pass
                 return
