@@ -16,6 +16,12 @@ def _has_module(name: str) -> bool:
     return subprocess.run([sys.executable, "-c", f"import {name}"], cwd=ROOT, capture_output=True).returncode == 0
 
 
+# One curated list, shared with the pytest wrapper (tests/contract) so the two
+# runners can never drift apart.
+sys.path.insert(0, str(ROOT / "tools"))
+from smoke_scripts import SMOKE_SCRIPTS  # noqa: E402
+
+
 print("▶ compileall", flush=True)
 subprocess.run([sys.executable, "-m", "compileall", "-q", "src", "tools", "tests", "extensions/flet_native_files/src"], check=True, cwd=ROOT)
 
@@ -26,9 +32,13 @@ subprocess.run([sys.executable, "-m", "compileall", "-q", "src", "tools", "tests
 # ---------------------------------------------------------------------------
 if _has_module("pytest"):
     print("▶ pytest", flush=True)
-    args = [sys.executable, "-m", "pytest", "-q"]
+    # Explicit paths: unit + integration, and the wrapper that runs the curated
+    # smoke/contract scripts (tests/contract/test_smoke_scripts_wrapped.py) so
+    # they get per-script reporting instead of a second hand-rolled loop.
+    pytest_targets = ["tests/unit", "tests/integration", "tests/contract/test_smoke_scripts_wrapped.py"]
+    args = [sys.executable, "-m", "pytest", "-q", *pytest_targets]
     if _has_module("coverage"):
-        args = [sys.executable, "-m", "coverage", "run", "-m", "pytest", "-q"]
+        args = [sys.executable, "-m", "coverage", "run", "-m", "pytest", "-q", *pytest_targets]
     result = subprocess.run(args, cwd=ROOT)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
@@ -39,78 +49,15 @@ else:
     print("▶ pytest (skipped: pytest not installed in this environment)", flush=True)
 
 # ---------------------------------------------------------------------------
-# Standalone smoke/contract scripts. These predate pytest and are still the
-# authority for the phase-by-phase functional guarantees; several are also
-# mirrored as pytest contract tests under tests/contract, but the originals
-# stay wired here until that migration is complete.
+# Standalone fallback: only when pytest is unavailable. The same curated list
+# (tools/smoke_scripts.py) is what the pytest wrapper runs, so behaviour is
+# identical either way; this just keeps the gate working without pytest.
 # ---------------------------------------------------------------------------
-SCRIPTS = [
-    "tools/schema_smoke_test.py",
-    "tools/core_smoke_test.py",
-    "tools/phase2_schema_upgrade_smoke_test.py",
-    "tools/phase2_invoice_editor_core_smoke_test.py",
-    "tools/phase2_flet_ui_contract_smoke_test.py",
-    "tools/phase2_project_contract_smoke_test.py",
-    "tools/phase3_schema_migration_smoke_test.py",
-    "tools/phase3_financial_workflow_smoke_test.py",
-    "tools/phase3_allocation_edge_cases_smoke_test.py",
-    "tools/phase3_flet_ui_contract_smoke_test.py",
-    "tools/phase3_project_contract_smoke_test.py",
-    "tools/phase4_reporting_core_smoke_test.py",
-    "tools/phase4_reporting_historical_smoke_test.py",
-    "tools/phase4_flet_ui_contract_smoke_test.py",
-    "tools/phase4_project_contract_smoke_test.py",
-    "tools/phase5_schema_migration_smoke_test.py",
-    "tools/phase5_auth_security_smoke_test.py",
-    "tools/phase5_backup_restore_smoke_test.py",
-    "tools/phase5_license_offline_smoke_test.py",
-    "tools/phase5_admin_ui_contract_smoke_test.py",
-    "tools/phase5_project_contract_smoke_test.py",
-    "tools/phase6_hawaa_activation_contract_smoke_test.py",
-    "tools/phase6_android_storage_smoke_test.py",
-    "tools/phase6_activation_ui_contract_smoke_test.py",
-    "tools/phase6_android_build_contract_smoke_test.py",
-    "tools/phase7_service_cost_smoke_test.py",
-    "tools/phase7_document_export_smoke_test.py",
-    "tools/phase7_native_extension_packaging_smoke_test.py",
-    "tools/phase7_ui_contract_smoke_test.py",
-    "tools/phase7_1_android_ci_environment_smoke_test.py",
-    "tools/phase7_2_flutter_dependency_alignment_smoke_test.py",
-    "tools/phase7_project_contract_smoke_test.py",
-    "tools/nano_branding_contract_smoke_test.py",
-    "tools/sound_system_smoke_test.py",
-    "tools/invoice_ui_android_regression_smoke_test.py",
-    "tools/search_select_contract_smoke_test.py",
-    "tools/quick_auth_saved_login_smoke_test.py",
-    "tools/cash_backup_pdf_android_smoke_test.py",
-    "tools/qeid_reference_design_phase1_smoke_test.py",
-    "tools/safe_mode_privacy_smoke_test.py",
-    "tools/qeid_reference_design_phase2_smoke_test.py",
-    "tools/definitions_management_smoke_test.py",
-    "tools/item_delete_guard_smoke_test.py",
-    "tools/barcode_scan_smoke_test.py",
-    "tools/barcode_labels_branding_smoke_test.py",
-    "tools/phase10_audit_chain_smoke_test.py",
-    "tools/phase10_backup_encryption_smoke_test.py",
-    "tools/phase10_public_qr_verify_smoke_test.py",
-    "tools/phase10_receipt_capture_smoke_test.py",
-    "tools/phase10_forecast_smoke_test.py",
-    "tools/money_consistency_smoke_test.py",
-    "tools/phase11_router_contract_smoke_test.py",
-    "tools/lan_price_server_smoke_test.py",
-    "tools/lan_api_server_smoke_test.py",
-    "tools/remote_client_config_smoke_test.py",
-    "tools/client_mode_smoke_test.py",
-    "tools/hybrid_context_smoke_test.py",
-    "tools/client_startup_smoke_test.py",
-    "tools/rpc_parity_smoke_test.py",
-    "tools/version_consistency_smoke_test.py",
-    "tools/apk_release_preflight.py",
-]
-
-env_note = "(pytest already covered unit+integration; smoke scripts verify phase contracts)"
-print(f"▶ smoke/contract scripts {env_note}", flush=True)
-for script in SCRIPTS:
-    print("▶", script, flush=True)
-    subprocess.run([sys.executable, str(ROOT / script)], check=True, cwd=ROOT, env=env)
+if not _has_module("pytest"):
+    print("▶ smoke/contract scripts (standalone; pytest unavailable)", flush=True)
+    for script in SMOKE_SCRIPTS:
+        print("▶", script, flush=True)
+        subprocess.run([sys.executable, str(ROOT / script)], check=True, cwd=ROOT, env=env)
+else:
+    print("▶ smoke/contract scripts (via pytest wrapper)", flush=True)
 print("quality_gate passed")

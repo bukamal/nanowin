@@ -32,13 +32,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 
-# Every standalone checker under tools/ except the gate orchestrator and the
-# CI helper (verify_flet_native_files_registration takes an argument).
-SCRIPTS = sorted(
-    p.name
-    for p in TOOLS.glob("*_test.py")
-    if p.name != "quality_gate.py"
-) + ["apk_release_preflight.py", "money_consistency_check.py"]
+# The curated list lives in tools/smoke_scripts.py so quality_gate.py (standalone
+# path) and this wrapper run exactly the same set.
+sys.path.insert(0, str(TOOLS))
+from smoke_scripts import SMOKE_SCRIPTS  # noqa: E402
+
+SCRIPTS = [name.split("/", 1)[1] if name.startswith("tools/") else name for name in SMOKE_SCRIPTS]
 
 # Some scripts insert src/ onto sys.path themselves; several others were only
 # ever run via quality_gate.py which exports PYTHONPATH=src. Provide the same
