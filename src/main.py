@@ -266,7 +266,15 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # items offers "مادة جديدة" backed by its internal editor). Guarded
     # because the command bar widget itself is built later in this function;
     # an early call just no-ops rather than crashing on the unbound name.
+    context_actions_cache: dict[str, list] = {}
+
     def set_context_actions(actions):
+        # Remember per-section so a cached tab can restore the same strip
+        # (a cache hit skips the view render that would have published it).
+        try:
+            context_actions_cache[selected_key["value"]] = list(actions or [])
+        except Exception:
+            pass
         try:
             command_bar.set_actions(actions)
         except NameError:
@@ -976,12 +984,25 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         enabled = _tab_cache_enabled()
         prev = selected_key["value"]
         if enabled and prev in section_keys and prev != key and content.content is not None:
-            tab_cache[prev] = (content.content, _data_version())
+            # Snapshot the surface plus the chrome the view published (header +
+            # contextual ribbon actions), since a cache hit skips rendering.
+            tab_cache[prev] = (
+                content.content,
+                _data_version(),
+                list(context_actions_cache.get(prev) or []),
+                header_title.value,
+                header_subtitle.value,
+            )
         if enabled and key in section_keys and not kwargs:
             hit = tab_cache.get(key)
             if hit is not None and hit[1] == _data_version():
                 content.content = hit[0]
                 route_coordinator.render(router, page, content, key, kwargs, skip_render=True)
+                try:
+                    header_title.value, header_subtitle.value = hit[3], hit[4]
+                    command_bar.set_actions(hit[2] if hit[2] else _section_actions(key))
+                except NameError:
+                    pass
                 return
         route_coordinator.render(router, page, content, key, kwargs)
 
