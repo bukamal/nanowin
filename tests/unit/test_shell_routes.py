@@ -158,3 +158,30 @@ def test_route_coordinator_only_notifies_permission_denials():
     coordinator.on_denied(RouteDenied("route not registered: unknown"), "unknown", {})
 
     assert messages == ["لا تملك صلاحية الفواتير"]
+
+
+def test_route_coordinator_skip_render_keeps_chrome_without_rebuilding():
+    calls = []
+    page = type("Page", (), {})()
+    content = type("Content", (), {"opacity": 1, "update": lambda self: calls.append("update")})()
+    router = Router(render=lambda _key, _kwargs: None)
+    router.register("items", label="المواد", subtitle="المخزون", render=lambda **kw: calls.append(("render", kw)))
+    coordinator = ShellRouteCoordinator(
+        active_key=lambda key: calls.append(("active", key)),
+        keyboard_handler=lambda: "kh",
+        set_header=lambda title, subtitle: calls.append(("header", title, subtitle)),
+        refresh_navigation=lambda: calls.append("navigation"),
+        notify=calls.append,
+        refresh_badge=lambda: calls.append("badge"),
+    )
+
+    coordinator.render(router, page, content, "items", {}, skip_render=True)
+
+    assert ("render", {}) not in calls  # the cached surface was not rebuilt
+    assert calls == [
+        ("active", "items"),
+        ("header", "المواد", "المخزون"),
+        "navigation",
+        "update",
+        "badge",
+    ]

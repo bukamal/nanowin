@@ -128,6 +128,11 @@ def _apply_rtl_to_sheets(page: ft.Page) -> None:
             unregister_modal(page, control)
         except Exception:
             pass
+        # A closing sheet/dialog may have written data; invalidate tab caches.
+        try:
+            page._nano_data_version = int(getattr(page, "_nano_data_version", 0)) + 1
+        except Exception:
+            pass
         return original_close(control)
 
     page.open = open_sheet
@@ -929,6 +934,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         _pos_fullscreen["value"] = False
         _pos_fullscreen["window_fs"] = False
         _set_os_fullscreen(False)
+        # POS writes sales; invalidate the section tab caches on the way out.
+        try:
+            page._nano_data_version = int(getattr(page, "_nano_data_version", 0)) + 1
+        except Exception:
+            pass
         # POS is a transient surface: drop its document tab on the way out.
         try:
             command_bar.close_tab("pos", silent=True)
@@ -941,9 +951,43 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             pass
         adapt_navigation()
 
+    # ---------------- tab surface cache (fast tab switching) ----------------
+    # Re-building a whole section's control tree on every tab tap is what made
+    # navigation feel heavy. We snapshot the last surface each section showed
+    # and restore it instantly on return -- invalidated whenever a sheet/dialog
+    # closes or POS is left (i.e. whenever data may have changed). Toggle with
+    # the ``ui.tab_cache`` setting (default on).
+    section_keys = set(page_meta)
+    tab_cache: dict[str, tuple] = {}
+
+    def _tab_cache_enabled() -> bool:
+        try:
+            return str(ctx.settings.get("ui.tab_cache", "1")).strip().lower() not in {"0", "false", "off", "no"}
+        except Exception:
+            return True
+
+    def _data_version() -> int:
+        try:
+            return int(getattr(page, "_nano_data_version", 0))
+        except Exception:
+            return 0
+
+    def render_route(key: str, kwargs: dict) -> None:
+        enabled = _tab_cache_enabled()
+        prev = selected_key["value"]
+        if enabled and prev in section_keys and prev != key and content.content is not None:
+            tab_cache[prev] = (content.content, _data_version())
+        if enabled and key in section_keys and not kwargs:
+            hit = tab_cache.get(key)
+            if hit is not None and hit[1] == _data_version():
+                content.content = hit[0]
+                route_coordinator.render(router, page, content, key, kwargs, skip_render=True)
+                return
+        route_coordinator.render(router, page, content, key, kwargs)
+
     router = Router(
         home="dashboard",
-        render=lambda key, kwargs: route_coordinator.render(router, page, content, key, kwargs),
+        render=render_route,
         can_render=lambda route: session.can(route.permission or route.key),
         on_denied=route_coordinator.on_denied,
     )

@@ -41,7 +41,7 @@ class ShellRouteCoordinator:
         self.notify = notify
         self.refresh_badge = refresh_badge
 
-    def render(self, router: Router, page: Any, content: Any, key: str, kwargs: dict) -> None:
+    def render(self, router: Router, page: Any, content: Any, key: str, kwargs: dict, *, skip_render: bool = False) -> None:
         route = router.get(key)
         self.active_key(key)
         page.on_keyboard_event = self.keyboard_handler()
@@ -50,10 +50,11 @@ class ShellRouteCoordinator:
         self.refresh_navigation()
         content.opacity = 0
         try:
-            if kwargs:
-                route.render(**kwargs)
-            else:
-                route.render()
+            if not skip_render:
+                if kwargs:
+                    route.render(**kwargs)
+                else:
+                    route.render()
         except Exception as exc:
             content.opacity = 1
             try:
