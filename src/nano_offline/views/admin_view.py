@@ -1219,6 +1219,14 @@ class AdminCenter:
             label="إظهار تنبيه المخزون المنخفض داخل محرر الفاتورة",
             value=invoice_settings.show_stock_badge(iset),
         )
+        invoice_sell_by_amount_switch = ft.Switch(
+            label="تفعيل «البيع بمبلغ» في جدول الفاتورة (إدخال مبلغ الزبون لحساب الكمية)",
+            value=invoice_settings.sell_by_amount(iset),
+        )
+        invoice_amount_remainder_switch = ft.Switch(
+            label="إظهار المتبقي من مبلغ الزبون بعد احتساب الكمية",
+            value=invoice_settings.amount_show_remainder(iset),
+        )
 
         def save_invoice_settings(_):
             try:
@@ -1247,6 +1255,8 @@ class AdminCenter:
                     invoice_settings.SHOW_VERIFY_QR_KEY: "1" if invoice_verify_qr_switch.value else "0",
                     invoice_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if invoice_negative_stock_switch.value else "0",
                     invoice_settings.SHOW_STOCK_BADGE_KEY: "1" if invoice_show_stock_badge_switch.value else "0",
+                    invoice_settings.SELL_BY_AMOUNT_KEY: "1" if invoice_sell_by_amount_switch.value else "0",
+                    invoice_settings.AMOUNT_SHOW_REMAINDER_KEY: "1" if invoice_amount_remainder_switch.value else "0",
                 })
                 invoice_due_days_field.value = str(due_days)
                 invoice_overdue_days_field.value = str(overdue_after)
@@ -2901,6 +2911,8 @@ class AdminCenter:
                     ft.Text("سياسة المخزون", size=12, weight=ft.FontWeight.W_600),
                     invoice_negative_stock_switch,
                     invoice_show_stock_badge_switch,
+                    invoice_sell_by_amount_switch,
+                    invoice_amount_remainder_switch,
                     ft.Text("يُحفظ إذن المخزون السالب مع كل فاتورة، فلا تتأثر الفواتير القديمة بتغيير الإعداد لاحقًا.", size=11, color=Colors.TEXT_SECONDARY),
                     primary_button("حفظ إعدادات الفواتير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_invoice_settings, width=None, size="md"),
                 ],

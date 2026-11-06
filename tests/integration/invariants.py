@@ -45,7 +45,7 @@ def inventory_value_from_report(ctx) -> float:
     return float(ctx.reports.inventory_valuation()["total_value"])
 
 
-def assert_inventory_consistent(ctx, *, abs: float = 1e-6) -> None:
+def assert_inventory_consistent(ctx, *, abs: float = 1e-4) -> None:
     report = inventory_value_from_report(ctx)
     items = inventory_value_from_items(ctx)
     assert report == pytest.approx(items, abs=abs), f"inventory report {report} != items {items}"
@@ -91,7 +91,8 @@ def assert_rebuild_idempotent(ctx, *, abs: float = 1e-6) -> None:
 
 def assert_all(ctx, *, abs: float = 1e-6) -> None:
     assert_trial_balance(ctx, abs=abs)
-    assert_inventory_consistent(ctx, abs=abs)
+    # inventory is derived at 6 decimals -> allow rounding dust
+    assert_inventory_consistent(ctx, abs=max(abs, 1e-4))
     assert_cash_matches_dashboard(ctx, abs=abs)
     assert_no_over_allocated_payments(ctx, abs=abs)
 

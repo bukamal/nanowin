@@ -2074,6 +2074,22 @@ class InvoiceCenter:
             return _usd_text(amount_usd)
 
         def row_formatter(col, value, row):
+            if col.key == "qty":
+                if value in (None, ""):
+                    return ""
+                try:
+                    return currency.format_qty(float(value), settings)
+                except (TypeError, ValueError):
+                    return str(value)
+            if col.key == "_amount":
+                # Live read-out of the line total in the display currency; the
+                # stored value (the customer's target amount) is only used to
+                # derive the quantity on commit.
+                try:
+                    total = float(row.get("qty") or 0) * float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    total = 0.0
+                return currency.format_display_value(total, settings, with_symbol=False) if total else ""
             if col.key == "_avg_cost":
                 # The item's real weighted average cost (from its purchases and
                 # opening balance), read-only, shown in the display currency.
@@ -2146,12 +2162,17 @@ class InvoiceCenter:
                 return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
             return None
 
+        sell_by_amount = invoice_settings.sell_by_amount(settings)
         line_columns = [
             GridColumn("item", "المادة", width=220, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للبحث والاختيار داخلها"),
             GridColumn("description", "البيان", width=220, editable=True, tooltip="وصف البند الظاهر في الفاتورة"),
             GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="وحدة البند — تغيّر معامل التحويل والسعر"),
             GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
             GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
+            *(
+                [GridColumn("_amount", "المبلغ", width=130, align="end", kind="money", editable=True, tooltip="أدخل مبلغ الزبون ليُحسب منه الكمية (تقريب لأسفل)")]
+                if sell_by_amount else []
+            ),
             GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
             GridColumn("_avg_cost", "التكلفة الوسطية", width=135, align="end", sortable=False, tooltip="متوسط تكلفة المادة الحقيقي (المشتريات + الرصيد الافتتاحي) بعملة العرض"),
             GridColumn("_extra_cost", "التكلفة", width=130, align="end", sortable=False, tooltip="تكلفة الوحدة بالعملة الإضافية (بدّل $/ل.س من الشريط)"),
@@ -2241,7 +2262,46 @@ class InvoiceCenter:
                 lines_grid.set_cell(index, "qty", 1, notify=False)
             lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
 
+        def _apply_amount(index: int, value) -> None:
+            """Derive the quantity from the customer's amount (round down)."""
+            row = lines_grid.row_at(index) or {}
+            if not row.get("item"):
+                self.notify("اختر المادة أولًا ثم أدخل المبلغ", kind="warning")
+                lines_grid.refresh_display()
+                return
+            try:
+                amount = float(value or 0)
+                price = float(row.get("price") or 0)
+            except (TypeError, ValueError):
+                amount = price = 0.0
+            if price <= 0:
+                self.notify("حدّد سعر الوحدة أولًا لحساب الكمية من المبلغ", kind="warning")
+                lines_grid.refresh_display()
+                return
+            qty = invoice_settings.quantity_for_amount(amount, price, invoice_settings.amount_qty_decimals(settings))
+            if qty <= 0:
+                self.notify("المبلغ أقل من سعر وحدة واحدة", kind="warning")
+                lines_grid.refresh_display()
+                return
+            lines_grid.set_cell(index, "qty", qty, notify=False)
+            # Keep the cell's stored value equal to the actual line total, so a
+            # re-edit starts from reality rather than the original target.
+            lines_grid.set_cell(index, "_amount", round(qty * price, 2), notify=False)
+            qty_text = currency.format_qty(qty, settings)
+            if invoice_settings.amount_show_remainder(settings):
+                remainder = max(0.0, amount - qty * price)
+                self.notify(
+                    f"الكمية: {qty_text} · الإجمالي: {currency.format_display_value(qty * price, settings, with_symbol=False)}"
+                    f" · المتبقي: {currency.format_display_value(remainder, settings, with_symbol=False)}"
+                )
+            else:
+                self.notify(f"الكمية المحتسبة: {qty_text}")
+
         def commit_line_cell(index: int, key: str, value) -> None:
+            if key == "_amount":
+                _apply_amount(index, value)
+                refresh_summary()
+                return
             if key == "item" and value:
                 sound.play(self.page, "pick")
                 fill_line_defaults(index, int(value))
