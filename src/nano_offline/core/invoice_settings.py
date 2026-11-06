@@ -18,6 +18,7 @@ and contact details. New invoices freeze these choices in
 """
 
 import json
+import math
 from datetime import date, datetime, timedelta
 
 from nano_offline.core import business_profile
@@ -43,6 +44,12 @@ SHOW_VERIFY_QR_KEY = "invoice_show_verify_qr"
 # --- Stock policy ---------------------------------------------------------#
 ALLOW_NEGATIVE_STOCK_KEY = "invoice_allow_negative_stock"
 SHOW_STOCK_BADGE_KEY = "invoice_show_stock_badge"
+# Editing a line's *total* derives the other field: editing the display-currency
+# total recomputes the unit price (qty fixed), editing the extra-currency total
+# recomputes the quantity (price fixed). Two independent switches, both off by
+# default so the table sheet is unchanged until enabled.
+EDIT_TOTAL_PRICE_KEY = "invoice_edit_total_price"
+EDIT_TOTAL_QTY_KEY = "invoice_edit_total_qty"
 
 DEFAULT_NUMBER_PREFIX = ""
 DEFAULT_NUMBER_PADDING = 0
@@ -58,6 +65,8 @@ DEFAULT_SHOW_UNIT_EQUIV = False
 DEFAULT_SHOW_VERIFY_QR = False
 DEFAULT_ALLOW_NEGATIVE_STOCK = False
 DEFAULT_SHOW_STOCK_BADGE = True
+DEFAULT_EDIT_TOTAL_PRICE = False
+DEFAULT_EDIT_TOTAL_QTY = False
 
 VALID_NUMBER_PADDING = (0, 4, 5, 6)
 
@@ -195,6 +204,38 @@ def show_stock_badge(settings) -> bool:
     return _flag(settings, SHOW_STOCK_BADGE_KEY, DEFAULT_SHOW_STOCK_BADGE)
 
 
+def edit_total_changes_price(settings) -> bool:
+    """Editing the display-currency line total recomputes the unit price."""
+    return _flag(settings, EDIT_TOTAL_PRICE_KEY, DEFAULT_EDIT_TOTAL_PRICE)
+
+
+def edit_total_changes_qty(settings) -> bool:
+    """Editing the extra-currency line total recomputes the quantity."""
+    return _flag(settings, EDIT_TOTAL_QTY_KEY, DEFAULT_EDIT_TOTAL_QTY)
+
+
+def total_qty_decimals(settings) -> int:
+    """Decimals to round a quantity derived from a total to (admin qty, else 3)."""
+    from nano_offline.core import precision_settings
+
+    decimals = precision_settings.decimals(settings, "qty")
+    return 3 if decimals is None else max(0, int(decimals))
+
+
+def quantity_for_total(total, unit_price, decimals: int = 3) -> float:
+    """Quantity whose line total is ``total`` at ``unit_price``, rounded DOWN
+    to ``decimals`` so the resulting total never exceeds the entered total."""
+    try:
+        total_value = float(total)
+        price_value = float(unit_price)
+    except (TypeError, ValueError):
+        return 0.0
+    if total_value <= 0 or price_value <= 0:
+        return 0.0
+    factor = 10 ** max(0, int(decimals))
+    return math.floor((total_value / price_value) * factor + 1e-9) / factor
+
+
 PRINT_SNAPSHOT_KEYS = (
     "show_number",
     "show_barcode",
@@ -288,6 +329,7 @@ __all__ = [
     "SHOW_PROGRESS_KEY", "SHOW_REMAINING_KEY", "SHOW_UNIT_EQUIV_KEY",
     "SHOW_VERIFY_QR_KEY",
     "ALLOW_NEGATIVE_STOCK_KEY", "SHOW_STOCK_BADGE_KEY",
+    "EDIT_TOTAL_PRICE_KEY", "EDIT_TOTAL_QTY_KEY",
     "DEFAULT_NUMBER_PREFIX", "DEFAULT_NUMBER_PADDING", "DEFAULT_DUE_DAYS",
     "DEFAULT_OVERDUE_DAYS", "DEFAULT_FOOTER_TEXT",
     "DEFAULT_SHOW_NUMBER", "DEFAULT_SHOW_BARCODE",
@@ -295,13 +337,15 @@ __all__ = [
     "DEFAULT_SHOW_REMAINING", "DEFAULT_SHOW_UNIT_EQUIV",
     "DEFAULT_SHOW_VERIFY_QR",
     "DEFAULT_ALLOW_NEGATIVE_STOCK", "DEFAULT_SHOW_STOCK_BADGE",
+    "DEFAULT_EDIT_TOTAL_PRICE", "DEFAULT_EDIT_TOTAL_QTY",
     "VALID_NUMBER_PADDING",
     "number_prefix", "number_padding", "format_invoice_number",
     "default_due_days", "overdue_days", "due_date_for", "due_date_from_days",
     "footer_text", "show_invoice_number", "show_invoice_barcode",
     "show_exchange_rate", "show_payment_progress", "show_remaining",
     "show_unit_equiv", "show_verify_qr", "allow_negative_stock",
-    "show_stock_badge",
+    "show_stock_badge", "edit_total_changes_price", "edit_total_changes_qty",
+    "total_qty_decimals", "quantity_for_total",
     "PRINT_SNAPSHOT_KEYS", "print_snapshot_from_settings",
     "encode_print_snapshot", "decode_print_snapshot", "print_snapshot",
 ]

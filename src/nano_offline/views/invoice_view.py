@@ -2146,16 +2146,18 @@ class InvoiceCenter:
                 return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
             return None
 
+        edit_total_price = invoice_settings.edit_total_changes_price(settings)
+        edit_total_qty = invoice_settings.edit_total_changes_qty(settings)
         line_columns = [
             GridColumn("item", "المادة", width=220, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للبحث والاختيار داخلها"),
             GridColumn("description", "البيان", width=220, editable=True, tooltip="وصف البند الظاهر في الفاتورة"),
             GridColumn("unit", "الوحدة", width=140, editable=True, kind="picker", tooltip="وحدة البند — تغيّر معامل التحويل والسعر"),
             GridColumn("qty", "الكمية", width=90, align="end", kind="number", editable=True),
             GridColumn("price", currency.amount_field_label("السعر", settings), width=140, align="end", kind="money", editable=True),
-            GridColumn("_total", "الإجمالي", width=130, align="end", tooltip="الكمية × السعر"),
+            GridColumn("_total", "الإجمالي", width=130, align="end", kind="money", editable=edit_total_price, tooltip="الكمية × السعر — عند التفعيل: تعديله يغيّر السعر ويثبّت الكمية"),
             GridColumn("_avg_cost", "التكلفة الوسطية", width=135, align="end", sortable=False, tooltip="متوسط تكلفة المادة الحقيقي (المشتريات + الرصيد الافتتاحي) بعملة العرض"),
             GridColumn("_extra_cost", "التكلفة", width=130, align="end", sortable=False, tooltip="تكلفة الوحدة بالعملة الإضافية (بدّل $/ل.س من الشريط)"),
-            GridColumn("_extra_total", "الإجمالي", width=140, align="end", sortable=False, tooltip="إجمالي البند بالعملة الإضافية"),
+            GridColumn("_extra_total", "الإجمالي", width=140, align="end", kind="money", editable=edit_total_qty, sortable=False, tooltip="إجمالي البند بالعملة الإضافية — عند التفعيل: تعديله يغيّر الكمية ويثبّت السعر"),
             GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
         ]
         line_visibility = ColumnVisibility(
@@ -2197,11 +2199,42 @@ class InvoiceCenter:
         # The sheet now pins its header and footer and lets the grid take the
         # remaining height, so the table (and its totals row) stay put while
         # the rows scroll inside their own viewport.
+        def _extra_to_usd(value: float) -> float:
+            """Convert an amount shown in the extra currency back to USD."""
+            if extra_currency["value"] == currency.DISPLAY_CURRENCY_SYP:
+                rate = currency.get_exchange_rate(settings)
+                return (value / rate) if rate and rate > 0 else float(value or 0)
+            return float(value or 0)
+
+        def _extra_plain(amount_usd: float) -> str:
+            """The extra-currency amount as plain numeric text (no symbol)."""
+            if extra_currency["value"] == currency.DISPLAY_CURRENCY_SYP:
+                return currency.format_amount(amount_usd, rate=currency.get_exchange_rate(settings), with_symbol=False, decimals=0)
+            return currency.format_amount(amount_usd, rate=1.0, with_symbol=False, decimals=2)
+
+        def _edit_cell_text(col, value, row):
+            # Prefill the editable computed totals with their current figure.
+            if col.key == "_total":
+                try:
+                    total = float(row.get("qty") or 0) * float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    total = 0.0
+                return currency.format_display_value(total, settings, with_symbol=False)
+            if col.key == "_extra_total":
+                try:
+                    qty = float(row.get("qty") or 0)
+                    price_usd = float(row.get("price") or 0) / (currency.get_effective_rate(settings) or 1.0)
+                except (TypeError, ValueError):
+                    qty = price_usd = 0.0
+                return _extra_plain(qty * price_usd)
+            return None
+
         lines_grid = DataGrid(
             columns=line_columns, rows=[], page=self.page,
             row_height=36 if density_state["compact"] else 48,
             hidden_keys=line_visibility.hidden_keys,
             formatter=row_formatter,
+            edit_formatter=lambda col, value, row: _edit_cell_text(col, value, row),
             on_cell_commit=lambda index, key, value: commit_line_cell(index, key, value),
             picker_options=lambda col, row: (
                 [
@@ -2241,7 +2274,61 @@ class InvoiceCenter:
                 lines_grid.set_cell(index, "qty", 1, notify=False)
             lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
 
+        def _apply_total_price(index: int, value) -> None:
+            """Editing the display-currency total recomputes the unit price."""
+            row = lines_grid.row_at(index) or {}
+            try:
+                qty = float(row.get("qty") or 0)
+                total = float(value or 0)
+            except (TypeError, ValueError):
+                qty = total = 0.0
+            if qty <= 0:
+                self.notify("حدّد الكمية أولًا لحساب السعر من الإجمالي", kind="warning")
+                lines_grid.refresh_display()
+                return
+            if total <= 0:
+                self.notify("الإجمالي غير صالح", kind="warning")
+                lines_grid.refresh_display()
+                return
+            price = round(total / qty, currency.decimals_for(settings, "price"))
+            if price <= 0:
+                self.notify("الإجمالي أقل من وحدة واحدة", kind="warning")
+                lines_grid.refresh_display()
+                return
+            lines_grid.set_cell(index, "price", price, notify=False)
+            self.notify(f"سعر الوحدة: {currency.format_display_value(price, settings, with_symbol=False, field='price')}")
+
+        def _apply_total_qty(index: int, value) -> None:
+            """Editing the extra-currency total recomputes the quantity."""
+            row = lines_grid.row_at(index) or {}
+            try:
+                price_disp = float(row.get("price") or 0)
+                amount_usd = _extra_to_usd(float(value or 0))
+            except (TypeError, ValueError):
+                price_disp = amount_usd = 0.0
+            if price_disp <= 0:
+                self.notify("حدّد السعر أولًا لحساب الكمية من الإجمالي", kind="warning")
+                lines_grid.refresh_display()
+                return
+            rate = currency.get_effective_rate(settings) or 1.0
+            price_usd = price_disp / rate if rate else price_disp
+            qty = invoice_settings.quantity_for_total(amount_usd, price_usd, invoice_settings.total_qty_decimals(settings))
+            if qty <= 0:
+                self.notify("الإجمالي أقل من سعر وحدة واحدة", kind="warning")
+                lines_grid.refresh_display()
+                return
+            lines_grid.set_cell(index, "qty", qty, notify=False)
+            self.notify(f"الكمية المحتسبة: {currency.format_qty(qty, settings)}")
+
         def commit_line_cell(index: int, key: str, value) -> None:
+            if key == "_total" and edit_total_price:
+                _apply_total_price(index, value)
+                refresh_summary()
+                return
+            if key == "_extra_total" and edit_total_qty:
+                _apply_total_qty(index, value)
+                refresh_summary()
+                return
             if key == "item" and value:
                 sound.play(self.page, "pick")
                 fill_line_defaults(index, int(value))

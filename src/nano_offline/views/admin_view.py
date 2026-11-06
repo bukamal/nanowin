@@ -1219,6 +1219,14 @@ class AdminCenter:
             label="إظهار تنبيه المخزون المنخفض داخل محرر الفاتورة",
             value=invoice_settings.show_stock_badge(iset),
         )
+        invoice_edit_total_price_switch = ft.Switch(
+            label="تفعيل: تعديل الإجمالي (بعملة العرض) يغيّر السعر ويثبّت الكمية",
+            value=invoice_settings.edit_total_changes_price(iset),
+        )
+        invoice_edit_total_qty_switch = ft.Switch(
+            label="تفعيل: تعديل الإجمالي (بالعملة الإضافية) يغيّر الكمية ويثبّت السعر",
+            value=invoice_settings.edit_total_changes_qty(iset),
+        )
 
         def save_invoice_settings(_):
             try:
@@ -1247,6 +1255,8 @@ class AdminCenter:
                     invoice_settings.SHOW_VERIFY_QR_KEY: "1" if invoice_verify_qr_switch.value else "0",
                     invoice_settings.ALLOW_NEGATIVE_STOCK_KEY: "1" if invoice_negative_stock_switch.value else "0",
                     invoice_settings.SHOW_STOCK_BADGE_KEY: "1" if invoice_show_stock_badge_switch.value else "0",
+                    invoice_settings.EDIT_TOTAL_PRICE_KEY: "1" if invoice_edit_total_price_switch.value else "0",
+                    invoice_settings.EDIT_TOTAL_QTY_KEY: "1" if invoice_edit_total_qty_switch.value else "0",
                 })
                 invoice_due_days_field.value = str(due_days)
                 invoice_overdue_days_field.value = str(overdue_after)
@@ -2901,6 +2911,8 @@ class AdminCenter:
                     ft.Text("سياسة المخزون", size=12, weight=ft.FontWeight.W_600),
                     invoice_negative_stock_switch,
                     invoice_show_stock_badge_switch,
+                    invoice_edit_total_price_switch,
+                    invoice_edit_total_qty_switch,
                     ft.Text("يُحفظ إذن المخزون السالب مع كل فاتورة، فلا تتأثر الفواتير القديمة بتغيير الإعداد لاحقًا.", size=11, color=Colors.TEXT_SECONDARY),
                     primary_button("حفظ إعدادات الفواتير", icon=ft.Icons.SAVE_OUTLINED, on_click=save_invoice_settings, width=None, size="md"),
                 ],
