@@ -167,3 +167,44 @@ def test_usd_era_invoice_snapshot_survives_switching_back_to_syp():
         assert "$" in html
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+def test_full_payment_snaps_to_total_despite_rounding_dust():
+    # Reproduces the reported bug: item with no opening stock, display SYP at a
+    # common rate, buy 100 kg at 11000 SYP/كغ and pay "the full total". The
+    # per-unit USD price is rounded to 6 decimals while the paid amount comes
+    # from the unrounded display total, so paid was a few micro-cents above the
+    # stored total and the strict check rejected a full payment.
+    ctx, tmp = _ctx()
+    try:
+        currency.set_display_currency(ctx.settings, "SYP")
+        currency.set_exchange_rate(ctx.settings, 12000)
+        unit = ctx.definitions.create_unit("كيلو", "كغ")
+        supplier = ctx.suppliers.create("مورد")
+        item = ctx.items.create(
+            name="سكر", item_type="مخزون", purchase_price=11000.0, selling_price=15000.0,
+            quantity=0.0, base_unit_id=unit, barcode="SUGAR-1",
+        )
+
+        qty, price_display = 100.0, 11000.0
+        unit_price_usd = currency.parse_display_input(price_display, ctx.settings)
+        paid_usd = currency.parse_display_input(qty * price_display, ctx.settings)
+
+        inv = ctx.invoices.create_invoice(
+            invoice_type="purchase", supplier_id=supplier, paid_amount=paid_usd,
+            lines=[InvoiceLineInput(description="سكر", item_id=item, quantity=qty, unit_price=unit_price_usd, unit_id=unit)],
+        )
+        row = ctx.invoices.get_invoice(inv)
+        assert row["paid_amount"] == pytest.approx(row["total"], abs=1e-9)
+        assert row["total"] == pytest.approx(paid_usd, abs=1e-4)
+        assert ctx.reports.party_balances("supplier")["net_total"] == pytest.approx(0.0, abs=1e-6)
+        debit, credit = _trial(ctx)
+        assert debit == pytest.approx(credit, abs=1e-6)
+
+        # A genuine overpayment (well beyond rounding dust) is still rejected.
+        with pytest.raises(ValueError, match="لا يمكن أن يتجاوز"):
+            ctx.invoices.create_invoice(
+                invoice_type="purchase", supplier_id=supplier, paid_amount=unit_price_usd * qty + 10.0,
+                lines=[InvoiceLineInput(description="سكر", item_id=item, quantity=qty, unit_price=unit_price_usd, unit_id=unit)],
+            )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

@@ -395,11 +395,13 @@ class InvoiceService:
 
         prepared: list[dict] = []
         total = Decimal(0)
+        sum_qty = 0.0
         for raw in lines:
             qty = float(raw.quantity)
             price = money.quantized(raw.unit_price)
             if qty <= 0 or price < 0:
                 raise ValueError("بيانات بند الفاتورة غير صحيحة")
+            sum_qty += qty
 
             item = None
             factor = float(raw.conversion_factor or 1)
@@ -446,8 +448,17 @@ class InvoiceService:
 
         total_decimal = money.quantize(total)
         total_float = float(total_decimal)
-        if paid > total_float + EPSILON:
+        # A caller may derive the paid amount from the *display* total, which is
+        # built from less-rounded numbers than the per-unit prices stored here
+        # (6-decimal quantization). Allow for that rounding dust -- bounded from
+        # the line quantities -- and snap a within-dust overpayment down to the
+        # total, instead of rejecting a full payment for a rounding error.
+        rounding_dust = (sum_qty + len(lines) + 3) * 0.5e-6 + EPSILON
+        if paid > total_float + rounding_dust:
             raise ValueError("المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة")
+        if abs(paid - total_float) <= rounding_dust:
+            # Within rounding dust of the total -> treat as a full payment.
+            paid = total_float
         paid = min(paid, total_float)
         return prepared, total_float, paid
 
