@@ -2858,11 +2858,14 @@ class ItemsCenter:
                     "alternate_selling_price": _alt.get("selling_price") if _alt.get("selling_price") is not None else "",
                     "alternate_barcode": _alt_barcode or "",
                 }
-                _idx = bulk_grid.add_row(_prefill)
+                _idx = bulk_grid.add_row()
                 if _idx is not None:
-                    # ``DataGrid.rows`` returns copies, so set the id through the
-                    # grid itself -- otherwise the row has no ``_id`` and save
-                    # tries to CREATE (duplicate barcode) instead of UPDATE.
+                    # Apply the FULL prefill -- including hidden columns and the
+                    # non-column id -- through set_cell, which writes the real
+                    # row. (add_row only keeps visible columns, so applying it
+                    # there would blank any hidden column on save.)
+                    for _key, _value in _prefill.items():
+                        bulk_grid.set_cell(_idx, _key, _value, notify=False)
                     bulk_grid.set_cell(_idx, "_id", _edit_id, notify=False)
             else:
                 bulk_grid.add_row(row_defaults())

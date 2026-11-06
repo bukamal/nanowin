@@ -762,3 +762,12 @@ def test_rows_property_returns_copies_but_set_cell_persists_non_column_keys():
     assert "_id" not in g._rows[0]
     g.set_cell(0, "_id", 42, notify=False)
     assert g._rows[0]["_id"] == 42
+
+
+def test_set_cell_persists_values_for_hidden_columns():
+    # add_row only keeps visible columns; set_cell must still store a value for
+    # a hidden column (used to prefill every field when editing an item).
+    g = DataGrid(columns=COLS, rows=[], page=None, hidden_keys={"category"})
+    idx = g.add_row()
+    g.set_cell(idx, "category", "قرطاسية", notify=False)
+    assert g._rows[idx]["category"] == "قرطاسية"
