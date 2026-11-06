@@ -1366,7 +1366,7 @@ class InvoiceCenter:
         # --------------------------------------------------------------- grid
         def default_display_price(item_row: dict) -> float:
             price_key = "selling_price" if (type_dd.value or "sale") == "sale" else "purchase_price"
-            return round(currency.to_display(float(item_row.get(price_key) or 0), rate), 2)
+            return round(currency.to_display(float(item_row.get(price_key) or 0), rate), currency.decimals_for(settings, "price"))
 
         def row_formatter(col, value, row):
             if col.key == "item":
@@ -1488,7 +1488,7 @@ class InvoiceCenter:
             total = rows_total_display()
             count = sum(1 for row in lines_grid.rows if row.get("item"))
             lines_grid.set_footer(
-                {"item": f"{count} بند", "price": currency.format_plain(round(total, 2))} if count else None
+                {"item": f"{count} بند", "price": currency.format_display_value(total, settings, with_symbol=False)} if count else None
             )
             lines_summary_text.value = f"{count} بند" if count else "لا بنود بعد"
             # Anonymous invoices are cash by definition (same rule the page
@@ -1498,7 +1498,7 @@ class InvoiceCenter:
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
             if cash_without_party:
-                paid.value = currency.format_plain(total)
+                paid.value = currency.format_display_input(total, settings)
                 paid_value = total
             else:
                 try:
@@ -1551,7 +1551,7 @@ class InvoiceCenter:
             refresh_summary()
 
         def quick_pay(ratio: float) -> None:
-            paid.value = currency.format_plain(round(rows_total_display() * ratio, 2))
+            paid.value = currency.format_display_input(rows_total_display() * ratio, settings)
             _safe_update(paid)
             refresh_summary()
 
@@ -1918,7 +1918,7 @@ class InvoiceCenter:
             lines_grid.set_cell(index, "item", item_id)
             price_usd = line.get("unit_price")
             if price_usd:
-                lines_grid.set_cell(index, "price", round(currency.to_display(float(price_usd), rate), 2))
+                lines_grid.set_cell(index, "price", round(currency.to_display(float(price_usd), rate), currency.decimals_for(settings, "price")))
             elif item_row is not None:
                 lines_grid.set_cell(index, "price", default_display_price(item_row))
             _fill_derived(index)
@@ -2042,10 +2042,10 @@ class InvoiceCenter:
             if unit_row is not None:
                 override = unit_row.get(key)
                 if override not in (None, ""):
-                    return round(currency.to_display(float(override), rate), 2)
+                    return round(currency.to_display(float(override), rate), currency.decimals_for(settings, "price"))
             base = currency.to_display(float(item_row.get(key) or 0), rate)
             factor = float((unit_row or {}).get("conversion_factor") or 1)
-            return round(base * factor, 2)
+            return round(base * factor, currency.decimals_for(settings, "price"))
 
         configured_rate = currency.get_exchange_rate(settings)
         usd_symbol = str(settings.get(currency.USD_DISPLAY_SYMBOL_KEY) or currency.DEFAULT_USD_DISPLAY_SYMBOL)
@@ -2562,7 +2562,7 @@ class InvoiceCenter:
                 lines_grid.set_footer({
                     "item": f"{count} بند",
                     "qty": self._qty(qty_total),
-                    "_total": currency.format_plain(round(total, 2)),
+                    "_total": currency.format_display_value(total, settings, with_symbol=False),
                 })
             else:
                 lines_grid.set_footer(None)
@@ -2572,7 +2572,7 @@ class InvoiceCenter:
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
             if cash_without_party:
-                paid.value = currency.format_plain(total)
+                paid.value = currency.format_display_input(total, settings)
                 paid_value = total
             else:
                 try:
@@ -2591,7 +2591,7 @@ class InvoiceCenter:
             _safe_update(cash_note)
 
         def quick_pay(ratio: float) -> None:
-            paid.value = currency.format_plain(round(rows_total_display() * ratio, 2))
+            paid.value = currency.format_display_input(rows_total_display() * ratio, settings)
             _safe_update(paid)
             refresh_summary()
 
@@ -2806,7 +2806,7 @@ class InvoiceCenter:
                     "unit": unit_id,
                     "_factor": float(line.get("conversion_factor") or 1),
                     "qty": float(line.get("quantity") or 1),
-                    "price": round(currency.to_display(float(line.get("unit_price") or 0), rate), 2),
+                    "price": round(currency.to_display(float(line.get("unit_price") or 0), rate), currency.decimals_for(settings, "price")),
                 })
             lines_grid.set_rows(initial_rows or [{"qty": 1}])
         else:
@@ -3427,7 +3427,7 @@ class InvoiceCenter:
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", self.ctx.settings)
             if cash_without_party:
-                paid.value = currency.format_plain(total)
+                paid.value = currency.format_display_input(total, self.ctx.settings)
                 paid_value = total
             else:
                 try:
@@ -3942,7 +3942,7 @@ class InvoiceCenter:
             price_key = "selling_price" if (type_dd.value or self.invoice_type) == "sale" else "purchase_price"
             def default_display_price(item_row: dict) -> float:
                 price_usd = float(item_row.get(price_key) or 0)
-                return round(currency.to_display(price_usd, rate), 2)
+                return round(currency.to_display(price_usd, rate), currency.decimals_for(self.ctx.settings, "price"))
 
             def row_formatter(col, value, row):
                 if col.key == "item":
@@ -3988,7 +3988,7 @@ class InvoiceCenter:
                     return
                 bulk_grid.set_footer({
                     "item": f"{count} بند",
-                    "price": currency.format_plain(round(total, 2)),
+                    "price": currency.format_display_value(total, self.ctx.settings, with_symbol=False),
                 })
 
             def commit_bulk_cell(index: int, key: str, value) -> None:

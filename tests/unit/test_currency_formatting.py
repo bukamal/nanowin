@@ -92,3 +92,15 @@ def test_format_qty_honors_setting_else_strips_zeros():
     fixed = _with(syp, **{p.SETTING_QTY: "2"})
     assert currency.format_qty(2.0, fixed) == "2.00"
     assert currency.format_qty(2.5, fixed) == "2.50"
+
+
+def test_format_display_input_rounds_to_display_decimals_without_separators():
+    usd = _settings("USD")
+    syp = _settings("SYP")
+
+    assert currency.format_display_input(1234.5, usd) == "1234.5"
+    assert currency.format_display_input(126.0, usd) == "126"
+    assert currency.format_display_input(1701000, syp) == "1701000"
+    # a fraction of a pound rounds to a whole pound (SYP -> 0 decimals)
+    assert currency.format_display_input(1099999.6, syp) == "1100000"
+    assert "," not in currency.format_display_input(1099999.6, syp)

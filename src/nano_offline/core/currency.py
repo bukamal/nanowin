@@ -290,6 +290,22 @@ def to_input_text(amount_usd: float | int | None, settings=None, *, rate: float 
     return _round_for_input(value)
 
 
+def format_display_input(value: float | int | None, settings=None, *, field: str = "total", decimals: int | None = None) -> str:
+    """Editable-field text for a value already in the *display* currency.
+
+    Rounded to the display decimals (0 for SYP, 2 for USD by default; an
+    explicit admin precision wins), with no thousands separators or symbol so
+    the value can be read back with ``float(...)``. Keeps wide-denomination
+    figures like a SYP total whole so the paid field matches the shown total.
+    """
+    if decimals is None:
+        decimals = decimals_for(settings, field)
+    text = f"{float(value or 0):.{decimals}f}"
+    if decimals:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def format_qty(value: float | int | None, settings=None) -> str:
     """Quantity formatting: admin qty-decimals when set, else strip trailing
     zeros (no thousands separators, no forced decimals)."""
@@ -381,6 +397,7 @@ __all__ = [
     "format_amount",
     "format_plain",
     "format_qty",
+    "format_display_input",
     "format_display_value",
     "to_input_text",
     "parse_display_input",
