@@ -100,7 +100,7 @@ from nano_offline.core import sound_settings
 
 SoundKind = Literal[
     "success", "error", "warning", "info", "scan", "save", "delete",
-    "login", "notify", "barcode_error", "line_add", "pick",
+    "login", "notify", "barcode_error", "line_add", "pick", "cell",
 ]
 
 # Kept here (rather than only in sound_pool.dart) as the single source of
@@ -121,7 +121,7 @@ SoundKind = Literal[
 # cashier mid-scan hears "no match" as a distinct, shorter cue rather than
 # the same tone a database/validation failure would produce).
 _SOUND_KINDS: frozenset[str] = frozenset(
-    {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error", "line_add", "pick"}
+    {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error", "line_add", "pick", "cell"}
 )
 
 # Logical event kinds that reuse an existing bundled asset. ``line_add`` (a

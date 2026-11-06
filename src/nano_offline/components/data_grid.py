@@ -802,8 +802,9 @@ class DataGrid(ft.Column):
     def _row_snapshots(self, row_indices: set[int]) -> dict[int, dict]:
         return {index: dict(self._rows[index]) for index in row_indices if 0 <= index < len(self._rows)}
 
-    def _apply_user_changes(self, changes: list[tuple[int, str, object]], *, record_history: bool) -> bool:
+    def _apply_user_changes(self, changes: list[tuple[int, str, object]], *, record_history: bool, edit_sound: bool = True) -> bool:
         snapshots = self._row_snapshots({row for row, _, _ in changes})
+        applied = False
         try:
             for row_index, key, value in changes:
                 row = self._rows[row_index]
@@ -811,6 +812,7 @@ class DataGrid(ft.Column):
                 if old == value:
                     continue
                 row[key] = value
+                applied = True
                 if self._on_cell_commit is not None:
                     self._on_cell_commit(row_index, key, value)
         except Exception as exc:
@@ -830,6 +832,8 @@ class DataGrid(ft.Column):
                     if before.get(key) != after.get(key)
                 )
             self._record_history(recorded)
+        if applied and edit_sound:
+            self._notify_cell_edited()
         # Fast path: an ordinary cell edit only changes its own row. Rebuilding
         # the entire body made every keystroke/Enter O(rows) (hundreds of ms on
         # long invoices); repaint just the touched row(s) instead. Grouping is
@@ -850,6 +854,22 @@ class DataGrid(ft.Column):
             self._render_body()
             self._safe_update(self._body)
         return True
+
+    def _notify_cell_edited(self) -> None:
+        """Play the short 'cell commit' cue for a real edit (best-effort).
+
+        Centralised here so every editable grid gets it without each view
+        wiring it; the picker path suppresses it separately (it plays the
+        distinct 'pick' cue from the view instead).
+        """
+        if self._page is None:
+            return
+        try:
+            from nano_offline.core import sound
+
+            sound.play(self._page, "cell")
+        except Exception:
+            pass
 
     def _restore_rows(self, snapshots: dict[int, dict]) -> None:
         changed: list[tuple[int, str, object]] = []
@@ -887,7 +907,7 @@ class DataGrid(ft.Column):
                 return False
             entry = self._history[self._history_cursor - 1]
             changes = [(row, key, old) for row, key, old, _new in entry]
-        if not self._apply_user_changes(changes, record_history=False):
+        if not self._apply_user_changes(changes, record_history=False, edit_sound=False):
             return False
         self._history_cursor += 1 if redo else -1
         return True
@@ -1423,7 +1443,7 @@ class DataGrid(ft.Column):
             return
         if col.kind == "picker":
             if self._picker_options is not None:
-                self._begin_picker(r, col, box)
+                self._begin_picker(r, col, box, prefill=prefill)
                 return
             # Legacy picker cells may still delegate to a view-level selector.
             if self._on_pick is not None:
@@ -1473,7 +1493,7 @@ class DataGrid(ft.Column):
         except Exception:
             pass
 
-    def _begin_picker(self, row_index: int, col: GridColumn, box: ft.Container) -> None:
+    def _begin_picker(self, row_index: int, col: GridColumn, box: ft.Container, prefill: str | None = None) -> None:
         options = self._picker_options(col, self._rows[row_index]) if self._picker_options else []
         if not options:
             if self._on_pick is not None:
@@ -1488,9 +1508,11 @@ class DataGrid(ft.Column):
         self._picker_items = [(value, str(label)) for value, label in options]
         self._picker_highlight = 0
         self.nav.begin_edit()
+        initial_query = prefill or ""
 
         self._picker_search = ft.TextField(
-            hint_text="اكتب للبحث…",
+            value=initial_query,
+            hint_text="اكتب للبحث...",
             autofocus=True,
             dense=True,
             border_radius=Radius.SM,
@@ -1512,7 +1534,7 @@ class DataGrid(ft.Column):
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.PRIMARY_BORDER)),
         )
         self._picker_control = self._picker_panel  # truthy flag while open
-        self._picker_filter("")
+        self._picker_filter(initial_query)
         self._render_body()
         self._safe_update(self._body)
         # Bring the just-opened panel into view (it is appended below the row).
@@ -1589,7 +1611,9 @@ class DataGrid(ft.Column):
             self._render_row(row)
             self._safe_update(self._body)
         else:
-            self._apply_user_changes([(row, key, value)], record_history=True)
+            # The view plays the distinct 'pick' cue for a picked material, so
+            # don't also fire the generic cell-commit tick here.
+            self._apply_user_changes([(row, key, value)], record_history=True, edit_sound=False)
 
     def _picker_clear(self) -> None:
         self._picker_control = None

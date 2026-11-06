@@ -716,3 +716,39 @@ def test_large_grid_scrolls_by_offset_not_stale_key():
     expected = max(0, (n - 1) * big._row_height - 2 * big._row_height)
     assert viewport.calls[-1].get("offset") == expected
     assert "key" not in viewport.calls[-1]
+
+
+def test_editing_a_cell_fires_the_commit_sound_hook_once():
+    g = make_grid()
+    calls = []
+    g._notify_cell_edited = lambda: calls.append(1)
+    g._apply_user_changes([(0, "name", "جديد")], record_history=False)
+    assert calls == [1]
+
+
+def test_picker_commit_does_not_fire_the_generic_cell_sound():
+    page = SimpleNamespace(on_keyboard_event=None)
+    cols = [GridColumn("item", "المادة", editable=True, kind="picker")]
+    rows = [{"item": 1}, {"item": 2}]
+    g = DataGrid(columns=cols, rows=rows, page=page, picker_options=lambda c, r: [(1, "أ"), (2, "ب")])
+    calls = []
+    g._notify_cell_edited = lambda: calls.append(1)
+    g._on_cell_click(0, 0)
+    g._begin_edit()
+    g._picker_choose(1)
+    assert calls == []
+
+
+def test_typing_on_a_picker_cell_prefills_the_search():
+    page = SimpleNamespace(on_keyboard_event=None)
+    cols = [GridColumn("item", "المادة", editable=True, kind="picker")]
+    rows = [{"item": 1}, {"item": 2}]
+    g = DataGrid(
+        columns=cols, rows=rows, page=page,
+        picker_options=lambda c, r: [(1, "رز"), (2, "خبز")],
+    )
+    g._on_cell_click(0, 0)
+    g._handle_key(FakeKey("ر"))  # first typed char starts the picker search
+
+    assert g._picker_search is not None and g._picker_search.value == "ر"
+    assert [label for _value, label in g._picker_visible] == ["رز"]

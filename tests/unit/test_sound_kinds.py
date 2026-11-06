@@ -21,3 +21,10 @@ def test_data_entry_kinds_default_on_and_can_be_disabled():
     settings[sound_settings.KIND_PICK_KEY] = "0"
     assert sound_settings.kind_enabled(settings, "line_add") is False
     assert sound_settings.kind_enabled(settings, "pick") is False
+
+def test_cell_commit_kind_is_registered_and_gated():
+    assert "cell" in sound._SOUND_KINDS
+    settings: dict[str, str] = {}
+    assert sound_settings.kind_enabled(settings, "cell") is True
+    settings[sound_settings.KIND_CELL_KEY] = "0"
+    assert sound_settings.kind_enabled(settings, "cell") is False

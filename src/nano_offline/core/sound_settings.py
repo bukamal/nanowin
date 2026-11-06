@@ -54,6 +54,10 @@ KIND_BARCODE_ERROR_KEY = "sound_kind_barcode_error_enabled"
 # scan/navigation feedback without every grid interaction chiming.
 KIND_LINE_ADD_KEY = "sound_kind_line_add_enabled"
 KIND_PICK_KEY = "sound_kind_pick_enabled"
+# A crisp tick for committing an editable grid cell (any column, not just
+# picking a material). Separate switch so a cashier can silence cell ticks
+# while keeping scan/save sounds.
+KIND_CELL_KEY = "sound_kind_cell_enabled"
 
 DEFAULT_ENABLED = True
 DEFAULT_VOLUME = 70  # percent, 0-100
@@ -86,6 +90,7 @@ DEFAULT_KIND_BARCODE_ERROR = True
 # and stay short, so they add feedback without feeling noisy.
 DEFAULT_KIND_LINE_ADD = True
 DEFAULT_KIND_PICK = True
+DEFAULT_KIND_CELL = True
 
 VALID_VOLUME_RANGE = (0, 100)
 
@@ -102,6 +107,7 @@ _KIND_KEYS = {
     "barcode_error": (KIND_BARCODE_ERROR_KEY, DEFAULT_KIND_BARCODE_ERROR),
     "line_add": (KIND_LINE_ADD_KEY, DEFAULT_KIND_LINE_ADD),
     "pick": (KIND_PICK_KEY, DEFAULT_KIND_PICK),
+    "cell": (KIND_CELL_KEY, DEFAULT_KIND_CELL),
 }
 
 
@@ -142,12 +148,12 @@ __all__ = [
     "KIND_SUCCESS_KEY", "KIND_ERROR_KEY", "KIND_WARNING_KEY", "KIND_INFO_KEY",
     "KIND_SCAN_KEY", "KIND_SAVE_KEY", "KIND_DELETE_KEY",
     "KIND_LOGIN_KEY", "KIND_NOTIFY_KEY", "KIND_BARCODE_ERROR_KEY",
-    "KIND_LINE_ADD_KEY", "KIND_PICK_KEY",
+    "KIND_LINE_ADD_KEY", "KIND_PICK_KEY", "KIND_CELL_KEY",
     "DEFAULT_ENABLED", "DEFAULT_VOLUME",
     "DEFAULT_KIND_SUCCESS", "DEFAULT_KIND_ERROR", "DEFAULT_KIND_WARNING", "DEFAULT_KIND_INFO",
     "DEFAULT_KIND_SCAN", "DEFAULT_KIND_SAVE", "DEFAULT_KIND_DELETE",
     "DEFAULT_KIND_LOGIN", "DEFAULT_KIND_NOTIFY", "DEFAULT_KIND_BARCODE_ERROR",
-    "DEFAULT_KIND_LINE_ADD", "DEFAULT_KIND_PICK",
+    "DEFAULT_KIND_LINE_ADD", "DEFAULT_KIND_PICK", "DEFAULT_KIND_CELL",
     "VALID_VOLUME_RANGE",
     "sound_enabled", "sound_volume_percent", "sound_volume", "kind_enabled",
 ]

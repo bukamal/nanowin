@@ -65,6 +65,9 @@ const Map<String, String> kSoundAssetPaths = {
   'login': 'packages/flet_native_files/assets/sounds/login.wav',
   'notify': 'packages/flet_native_files/assets/sounds/notify.wav',
   'barcode_error': 'packages/flet_native_files/assets/sounds/barcode_error.wav',
+  // A crisp, stronger tick for committing an editable grid cell (distinct
+  // from 'scan'/'pick' and from the heavier 'save').
+  'cell': 'packages/flet_native_files/assets/sounds/cell.wav',
 };
 
 // Empty prefix: kSoundAssetPaths above already supplies the full
