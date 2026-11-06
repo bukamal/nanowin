@@ -752,3 +752,13 @@ def test_typing_on_a_picker_cell_prefills_the_search():
 
     assert g._picker_search is not None and g._picker_search.value == "ر"
     assert [label for _value, label in g._picker_visible] == ["رز"]
+
+
+def test_rows_property_returns_copies_but_set_cell_persists_non_column_keys():
+    # Pitfall that caused the item-edit bug: mutating ``grid.rows[i]`` mutates a
+    # throwaway copy; use set_cell for keys that are not columns (e.g. ``_id``).
+    g = make_grid()
+    g.rows[0]["_id"] = 999
+    assert "_id" not in g._rows[0]
+    g.set_cell(0, "_id", 42, notify=False)
+    assert g._rows[0]["_id"] == 42

@@ -2499,9 +2499,9 @@ class ItemsCenter:
                 on_cell_commit=lambda *_: refresh_bulk_footer(),
                 picker_options=lambda col, _row: bulk_choices(col.key),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
-                on_row_menu=lambda row: bulk_row_menu(row),
-                selectable=True,
-                on_selection_change=lambda rows: render_bulk_selection(rows),
+                on_row_menu=(None if edit_item is not None else (lambda row: bulk_row_menu(row))),
+                selectable=(edit_item is None),
+                on_selection_change=(None if edit_item is not None else (lambda rows: render_bulk_selection(rows))),
                 empty_text="اضغط «سطر جديد» لبدء الإدخال",
             )
 
@@ -2748,13 +2748,36 @@ class ItemsCenter:
                             created_indices.append(index)
                             created_ids.append(int(item_id))
                         alternate_barcode = str(row.get("alternate_barcode") or "").strip()
-                        if alternate_barcode:
+                        if alternate_unit_id is not None:
+                            # Keep the secondary unit's barcode in sync without
+                            # re-inserting an unchanged one (which would warn
+                            # "already registered" on every re-save).
                             try:
-                                ctx.items.add_barcode(
-                                    item_id, alternate_barcode, unit_id=alternate_unit_id,
-                                )
-                            except Exception as exc:
-                                warnings.append(f"{name} — باركود فرعي: {exc}")
+                                existing_codes = [
+                                    b for b in ctx.items.list_barcodes(item_id)
+                                    if b.get("unit_id") == alternate_unit_id
+                                ]
+                            except Exception:
+                                existing_codes = []
+                            have = {str(b.get("barcode") or "") for b in existing_codes}
+                            if alternate_barcode:
+                                if alternate_barcode not in have:
+                                    for b in existing_codes:
+                                        try:
+                                            ctx.items.remove_barcode(int(b["id"]))
+                                        except Exception:
+                                            pass
+                                    try:
+                                        ctx.items.add_barcode(item_id, alternate_barcode, unit_id=alternate_unit_id)
+                                    except Exception as exc:
+                                        warnings.append(f"{name} — باركود فرعي: {exc}")
+                            else:
+                                # Cleared in the editor -> drop the unit's old code.
+                                for b in existing_codes:
+                                    try:
+                                        ctx.items.remove_barcode(int(b["id"]))
+                                    except Exception:
+                                        pass
                     except Exception as exc:
                         errors.append(f"{name}: {exc}")
                 # Drop the rows that did save; a retry can then only ever
@@ -2807,9 +2830,19 @@ class ItemsCenter:
                 try:
                     _edit_id = int(edit_item["id"])
                     _alt_units = ctx.items.units(_edit_id)
+                    _barcodes = ctx.items.list_barcodes(_edit_id)
                 except Exception:
-                    _edit_id, _alt_units = int(edit_item.get("id") or 0), []
-                _alt = _alt_units[0] if _alt_units else {}
+                    _edit_id, _alt_units, _barcodes = int(edit_item.get("id") or 0), [], []
+                # ``units()`` returns dicts keyed by ``id`` and lists the base
+                # unit first (is_base); the secondary unit is the first non-base.
+                _alt = next((u for u in _alt_units if not u.get("is_base")), {})
+                _alt_unit_id = _alt.get("id") or ""
+                _alt_barcode = ""
+                if _alt_unit_id != "":
+                    _alt_barcode = next(
+                        (b.get("barcode") for b in _barcodes if b.get("unit_id") == _alt.get("id")),
+                        "",
+                    )
                 _prefill = {
                     "name": edit_item.get("name") or "",
                     "barcode": edit_item.get("barcode") or "",
@@ -2819,19 +2852,18 @@ class ItemsCenter:
                     "quantity": edit_item.get("quantity") or 0,
                     "purchase_price": edit_item.get("purchase_price") or 0,
                     "selling_price": edit_item.get("selling_price") or 0,
-                    "alternate_unit_id": _alt.get("unit_id") or "",
+                    "alternate_unit_id": _alt_unit_id,
                     "alternate_conversion_factor": _alt.get("conversion_factor") or 1.0,
-                    "alternate_purchase_price": _alt.get("purchase_price") or "",
-                    "alternate_selling_price": _alt.get("selling_price") or "",
-                    "alternate_barcode": "",
+                    "alternate_purchase_price": _alt.get("purchase_price") if _alt.get("purchase_price") is not None else "",
+                    "alternate_selling_price": _alt.get("selling_price") if _alt.get("selling_price") is not None else "",
+                    "alternate_barcode": _alt_barcode or "",
                 }
                 _idx = bulk_grid.add_row(_prefill)
                 if _idx is not None:
-                    # Keep the full prefill even for columns the user hid, so
-                    # saving an edit never blanks a hidden field.
-                    bulk_grid.rows[_idx].update(_prefill)
-                    bulk_grid.rows[_idx]["_id"] = _edit_id
-                    bulk_grid.set_rows(bulk_grid.rows)
+                    # ``DataGrid.rows`` returns copies, so set the id through the
+                    # grid itself -- otherwise the row has no ``_id`` and save
+                    # tries to CREATE (duplicate barcode) instead of UPDATE.
+                    bulk_grid.set_cell(_idx, "_id", _edit_id, notify=False)
             else:
                 bulk_grid.add_row(row_defaults())
             refresh_bulk_footer()
@@ -2891,7 +2923,7 @@ class ItemsCenter:
                         ),
                         ft.Row(
                             [
-                                ft.OutlinedButton("تكرار الأخير", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(bulk_grid.rows[-1:] if bulk_grid.rows else [])),
+                                ft.OutlinedButton("تكرار الأخير", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(bulk_grid.rows[-1:] if bulk_grid.rows else []), visible=edit_item is None),
                                 ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                                 bulk_columns_button,
                                 bulk_density_button,
