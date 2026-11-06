@@ -18,7 +18,6 @@ and contact details. New invoices freeze these choices in
 """
 
 import json
-import math
 from datetime import date, datetime, timedelta
 
 from nano_offline.core import business_profile
@@ -44,11 +43,6 @@ SHOW_VERIFY_QR_KEY = "invoice_show_verify_qr"
 # --- Stock policy ---------------------------------------------------------#
 ALLOW_NEGATIVE_STOCK_KEY = "invoice_allow_negative_stock"
 SHOW_STOCK_BADGE_KEY = "invoice_show_stock_badge"
-# "Sell by amount": an editable amount column in the invoice table sheet that
-# derives the quantity from the customer's money (qty = amount / unit price,
-# rounded down). Off by default so the sheet is unchanged until enabled.
-SELL_BY_AMOUNT_KEY = "invoice_sell_by_amount"
-AMOUNT_SHOW_REMAINDER_KEY = "invoice_amount_show_remainder"
 
 DEFAULT_NUMBER_PREFIX = ""
 DEFAULT_NUMBER_PADDING = 0
@@ -64,8 +58,6 @@ DEFAULT_SHOW_UNIT_EQUIV = False
 DEFAULT_SHOW_VERIFY_QR = False
 DEFAULT_ALLOW_NEGATIVE_STOCK = False
 DEFAULT_SHOW_STOCK_BADGE = True
-DEFAULT_SELL_BY_AMOUNT = False
-DEFAULT_AMOUNT_SHOW_REMAINDER = False
 
 VALID_NUMBER_PADDING = (0, 4, 5, 6)
 
@@ -73,41 +65,6 @@ VALID_NUMBER_PADDING = (0, 4, 5, 6)
 def _flag(settings, key: str, default: bool) -> bool:
     raw = settings.get(key, "1" if default else "0")
     return str(raw).strip() == "1"
-
-
-def sell_by_amount(settings) -> bool:
-    """Whether the invoice table sheet shows the editable 'amount' column."""
-    return _flag(settings, SELL_BY_AMOUNT_KEY, DEFAULT_SELL_BY_AMOUNT)
-
-
-def amount_show_remainder(settings) -> bool:
-    """Whether the sell-by-amount flow mentions the amount left over."""
-    return _flag(settings, AMOUNT_SHOW_REMAINDER_KEY, DEFAULT_AMOUNT_SHOW_REMAINDER)
-
-
-def amount_qty_decimals(settings) -> int:
-    """Decimals to round a derived quantity to (admin qty setting, else 3)."""
-    from nano_offline.core import precision_settings
-
-    decimals = precision_settings.decimals(settings, "qty")
-    return 3 if decimals is None else max(0, int(decimals))
-
-
-def quantity_for_amount(amount, unit_price, decimals: int = 3) -> float:
-    """Quantity a customer gets for ``amount`` at ``unit_price``.
-
-    Rounded DOWN to ``decimals`` so the resulting line total
-    (``quantity × unit_price``) never exceeds the amount the customer has.
-    """
-    try:
-        amount_value = float(amount)
-        price_value = float(unit_price)
-    except (TypeError, ValueError):
-        return 0.0
-    if amount_value <= 0 or price_value <= 0:
-        return 0.0
-    factor = 10 ** max(0, int(decimals))
-    return math.floor((amount_value / price_value) * factor + 1e-9) / factor
 
 
 def number_prefix(settings) -> str:
@@ -331,7 +288,6 @@ __all__ = [
     "SHOW_PROGRESS_KEY", "SHOW_REMAINING_KEY", "SHOW_UNIT_EQUIV_KEY",
     "SHOW_VERIFY_QR_KEY",
     "ALLOW_NEGATIVE_STOCK_KEY", "SHOW_STOCK_BADGE_KEY",
-    "SELL_BY_AMOUNT_KEY", "AMOUNT_SHOW_REMAINDER_KEY",
     "DEFAULT_NUMBER_PREFIX", "DEFAULT_NUMBER_PADDING", "DEFAULT_DUE_DAYS",
     "DEFAULT_OVERDUE_DAYS", "DEFAULT_FOOTER_TEXT",
     "DEFAULT_SHOW_NUMBER", "DEFAULT_SHOW_BARCODE",
@@ -339,15 +295,13 @@ __all__ = [
     "DEFAULT_SHOW_REMAINING", "DEFAULT_SHOW_UNIT_EQUIV",
     "DEFAULT_SHOW_VERIFY_QR",
     "DEFAULT_ALLOW_NEGATIVE_STOCK", "DEFAULT_SHOW_STOCK_BADGE",
-    "DEFAULT_SELL_BY_AMOUNT", "DEFAULT_AMOUNT_SHOW_REMAINDER",
     "VALID_NUMBER_PADDING",
     "number_prefix", "number_padding", "format_invoice_number",
     "default_due_days", "overdue_days", "due_date_for", "due_date_from_days",
     "footer_text", "show_invoice_number", "show_invoice_barcode",
     "show_exchange_rate", "show_payment_progress", "show_remaining",
     "show_unit_equiv", "show_verify_qr", "allow_negative_stock",
-    "show_stock_badge", "sell_by_amount", "amount_show_remainder",
-    "amount_qty_decimals", "quantity_for_amount",
+    "show_stock_badge",
     "PRINT_SNAPSHOT_KEYS", "print_snapshot_from_settings",
     "encode_print_snapshot", "decode_print_snapshot", "print_snapshot",
 ]
