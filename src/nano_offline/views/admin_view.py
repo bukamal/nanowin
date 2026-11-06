@@ -22,6 +22,7 @@ from nano_offline.core.theme import BRAND_PRESETS, Colors, Radius, Shadow, norma
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import font_settings
+from nano_offline.core import grid_settings
 from nano_offline.core import precision_settings
 from nano_offline.core import barcode_settings
 from nano_offline.core import branding
@@ -2101,6 +2102,10 @@ class AdminCenter:
             options=[SegmentOption(str(px), label) for px, label in font_settings.SIZES],
             value=str(font_settings.font_size(sset)),
         )
+        fit_width_switch = ft.Switch(
+            label="ملاءمة عرض أعمدة الجداول للشاشة تلقائيًا (توزيع نسبي بلا فيض)",
+            value=grid_settings.fit_width(sset),
+        )
 
         def save_theme_settings(_):
             theme_settings.set_mode_preference(sset, theme_mode_toggle.value)
@@ -2113,6 +2118,7 @@ class AdminCenter:
             sset.set_many({
                 font_settings.SETTING_FAMILY: font_family_field.value or font_settings.DEFAULT_FAMILY,
                 font_settings.SETTING_SIZE: font_size_field.value or str(font_settings.DEFAULT_SIZE),
+                grid_settings.FIT_WIDTH_KEY: "1" if fit_width_switch.value else "0",
             })
             self._notify("تم حفظ إعدادات المظهر والخط", kind="success")
             self.on_theme_changed()
@@ -2600,6 +2606,9 @@ class AdminCenter:
                     font_family_field,
                     ft.Text("الحجم الأساسي (للطباعة)", size=11, color=Colors.TEXT_SECONDARY),
                     font_size_field,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("الجداول", size=12, weight=ft.FontWeight.W_600),
+                    fit_width_switch,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     theme_schedule_switch,
                     theme_schedule_row,

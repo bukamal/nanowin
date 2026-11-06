@@ -50,6 +50,9 @@ _HISTORY_LIMIT = 100
 # Above this many rows, the body switches its ListView to on-demand widget
 # building so scrolling stays smooth; smaller grids stay eager as before.
 _ON_DEMAND_THRESHOLD = 150
+# Nominal width (as a flex weight) for columns that declare no width when
+# fit-to-width is on.
+_FIT_DEFAULT_WEIGHT = 160
 
 # Standard Arabic (Windows 101) keyboard: physical latin key -> Arabic letter.
 # Used ONLY to seed the first character of a type-to-edit when the runtime
@@ -131,10 +134,16 @@ class DataGrid(ft.Column):
         on_edit_error: Callable[[str], None] | None = None,
         on_enter: Callable[[], None] | None = None,
         top_row: ft.Control | None = None,
+        fit_width: bool | None = None,
     ):
         self._all_columns = list(columns)
         self._hidden_keys: set[str] = set(hidden_keys or set())
         self._columns = [c for c in self._all_columns if c.key not in self._hidden_keys]
+        # Fit-to-width: distribute column widths proportionally across the
+        # available width (no fixed pixels) so revealing many columns squeezes
+        # them to fit instead of overflowing to the right. Resolved from the
+        # admin setting when not forced by the caller.
+        self._fit_width = self._resolve_fit_width(page) if fit_width is None else bool(fit_width)
         self._rows: list[dict] = [dict(r) for r in (rows or [])]
         self._page = page
         self._on_cell_commit = on_cell_commit
@@ -523,9 +532,26 @@ class DataGrid(ft.Column):
         return ft.TextAlign.LEFT if col.align == "end" else ft.TextAlign.RIGHT
 
     def _cell_kwargs(self, col: GridColumn) -> dict:
+        if self._fit_width:
+            # Flex every column by its nominal width so the row always fills the
+            # available width without overflowing (header + rows stay aligned).
+            return {"expand": int(col.width) if col.width else _FIT_DEFAULT_WEIGHT}
         if col.width is None:
             return {"expand": True}
         return {"width": col.width}
+
+    @staticmethod
+    def _resolve_fit_width(page) -> bool:
+        ctx = getattr(page, "_nano_ctx", None) if page is not None else None
+        settings = getattr(ctx, "settings", None)
+        if settings is None:
+            return True
+        try:
+            from nano_offline.core import grid_settings
+
+            return grid_settings.fit_width(settings)
+        except Exception:
+            return True
 
     def _trailing_width(self) -> int:
         return (48 if self._on_row_activate is not None else 0) + (40 if self._on_row_menu is not None else 0)
@@ -541,6 +567,8 @@ class DataGrid(ft.Column):
             size=12,
             weight=ft.FontWeight.W_700,
             color=Colors.TEXT_MUTED_DARK,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
         )
         sortable = self._on_sort is not None and col.sortable
         if not sortable:
@@ -929,7 +957,7 @@ class DataGrid(ft.Column):
         """Cell text; money/number cells get a medium weight so a column of
         figures scans as a tidy block instead of a wall of thin digits."""
         weight = ft.FontWeight.W_600 if col.kind in ("money", "number") else None
-        return ft.Text(str(value), size=12.5, color=Colors.TEXT_PRIMARY, weight=weight)
+        return ft.Text(str(value), size=12.5, color=Colors.TEXT_PRIMARY, weight=weight, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
 
     def _make_cell(self, r: int, c: int, col: GridColumn, row: dict) -> ft.Container:
         box = ft.Container(
