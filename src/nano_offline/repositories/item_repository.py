@@ -590,6 +590,7 @@ class ItemRepository(Offloadable):
             "selling_price": float(row["selling_price"] or 0),
             "base_unit_id": row["base_unit_id"],
             "barcode": row["barcode"],
+            "quantity": float(row["quantity"] or 0),
             "units": units,
             "barcodes": barcodes,
         }
@@ -610,12 +611,13 @@ class ItemRepository(Offloadable):
             moved = conn.execute("SELECT 1 FROM inventory_movements WHERE item_id=? LIMIT 1", (item_id,)).fetchone()
             if invoiced or moved:
                 raise ValueError("لا يمكن حذف المادة لوجود حركات مخزون أو فواتير مرتبطة بها")
+            before = self._snapshot(conn, item_id)
             conn.execute("DELETE FROM items WHERE id=?", (item_id,))
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','item',?,NULL)",
                 (item_id,),
             )
-        event_bus.publish(event_bus.ITEM_DELETED, {"item_id": item_id})
+        event_bus.publish(event_bus.ITEM_DELETED, {"item_id": item_id, "before": before})
 
     @blocking
     def delete_opening_balance(self, item_id: int) -> dict:

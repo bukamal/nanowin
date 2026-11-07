@@ -200,3 +200,41 @@ def test_item_update_undo_restores_name_prices_and_units():
         event_bus.bus().clear()
         undo.manager().clear()
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_item_create_and_delete_undo_redo():
+    ctx, tmp = _ctx()
+    _isolate()
+    undo.install(ctx)
+    try:
+        unit = ctx.definitions.create_unit("كيلو", "كغ")
+
+        # Service item with no stock/movements is cleanly reversible.
+        undo.manager().clear()
+        item = ctx.items.create(name="خدمة", item_type="خدمة", selling_price=1.0, base_unit_id=unit, barcode="IC-1")
+        assert ctx.items.get(item) is not None
+        assert undo.undo() == "إنشاء مادة"
+        assert ctx.items.get(item) is None
+        assert undo.redo() == "إنشاء مادة"
+        assert any(i.get("barcode") == "IC-1" for i in ctx.items.list())
+
+        # Deleting an unused item is reversible too.
+        created = next(i for i in ctx.items.list() if i.get("barcode") == "IC-1")
+        item_id = int(created["id"])
+        undo.manager().clear()
+        ctx.items.delete(item_id)
+        assert ctx.items.get(item_id) is None
+        assert undo.undo() == "حذف مادة"
+        assert any(i.get("barcode") == "IC-1" for i in ctx.items.list())
+        assert undo.redo() == "حذف مادة"
+        assert not any(i.get("barcode") == "IC-1" for i in ctx.items.list())
+
+        # An item created WITH opening stock is not recorded (unsafe to undo
+        # without opening-invoice handling).
+        undo.manager().clear()
+        ctx.items.create(name="بكمية", purchase_price=1.0, selling_price=2.0, quantity=5.0, base_unit_id=unit, barcode="IC-2")
+        assert undo.manager().can_undo() is False
+    finally:
+        event_bus.bus().clear()
+        undo.manager().clear()
+        shutil.rmtree(tmp, ignore_errors=True)

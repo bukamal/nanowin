@@ -190,6 +190,69 @@ def _apply_item(ctx, item_id: int, snapshot: dict) -> None:
                 pass
 
 
+
+def _item_snapshot(ctx, item_id: int) -> dict | None:
+    item = ctx.items.get(item_id)
+    if not item:
+        return None
+    units = [
+        {
+            "unit_id": int(unit["id"]),
+            "conversion_factor": float(unit.get("conversion_factor") or 1),
+            "purchase_price": unit.get("purchase_price"),
+            "selling_price": unit.get("selling_price"),
+        }
+        for unit in ctx.items.units(item_id)
+        if not unit.get("is_base")
+    ]
+    barcodes = [
+        {"barcode": b.get("barcode"), "unit_id": b.get("unit_id")}
+        for b in ctx.items.list_barcodes(item_id)
+    ]
+    return {
+        "name": item.get("name") or "",
+        "category_id": item.get("category_id"),
+        "item_type": item.get("item_type") or "مخزون",
+        "purchase_price": float(item.get("purchase_price") or 0),
+        "selling_price": float(item.get("selling_price") or 0),
+        "quantity": float(item.get("quantity") or 0),
+        "base_unit_id": item.get("base_unit_id"),
+        "barcode": item.get("barcode"),
+        "units": units,
+        "barcodes": barcodes,
+    }
+
+
+def _restore_item(ctx, snapshot: dict) -> int:
+    item_id = ctx.items.create(
+        name=snapshot.get("name") or "",
+        category_id=snapshot.get("category_id"),
+        item_type=snapshot.get("item_type") or "مخزون",
+        purchase_price=float(snapshot.get("purchase_price") or 0),
+        selling_price=float(snapshot.get("selling_price") or 0),
+        quantity=float(snapshot.get("quantity") or 0),
+        base_unit_id=snapshot.get("base_unit_id"),
+        barcode=snapshot.get("barcode"),
+        item_units=[
+            {
+                "unit_id": int(unit["unit_id"]),
+                "conversion_factor": float(unit.get("conversion_factor") or 1),
+                "purchase_price": unit.get("purchase_price"),
+                "selling_price": unit.get("selling_price"),
+            }
+            for unit in snapshot.get("units") or []
+        ],
+    )
+    for bar in snapshot.get("barcodes") or []:
+        code = str(bar.get("barcode") or "").strip()
+        if code:
+            try:
+                ctx.items.add_barcode(item_id, code, unit_id=bar.get("unit_id"))
+            except Exception:
+                pass
+    return item_id
+
+
 def install(ctx) -> None:
     """Subscribe the invoice events for ``ctx`` (idempotent per database)."""
     if ctx is None:
@@ -320,6 +383,46 @@ def install(ctx) -> None:
 
         _MANAGER.record(undo_cmd, redo_cmd, label="تعديل مادة")
 
+
+    def on_item_created(event: str, payload: dict) -> None:
+        if _SUSPENDED["value"]:
+            return
+        item_id = int(payload["item_id"])
+        snapshot = _item_snapshot(ctx, item_id)
+        if not snapshot:
+            return
+        # An item created with opening stock also gets an "أول المدة" invoice in
+        # the bulk flow; reversing that safely needs opening-invoice handling,
+        # so only record the (service/zero-stock) cases we can undo cleanly.
+        if abs(float(snapshot.get("quantity") or 0)) > 1e-9:
+            return
+        holder = {"id": item_id}
+
+        def undo_cmd() -> None:
+            ctx.items.delete(holder["id"])
+
+        def redo_cmd() -> None:
+            holder["id"] = _restore_item(ctx, snapshot)
+
+        _MANAGER.record(undo_cmd, redo_cmd, label="إنشاء مادة")
+
+    def on_item_deleted(event: str, payload: dict) -> None:
+        if _SUSPENDED["value"]:
+            return
+        before = payload.get("before")
+        if not before:
+            return
+        holder = {"id": None}
+
+        def undo_cmd() -> None:
+            holder["id"] = _restore_item(ctx, before)
+
+        def redo_cmd() -> None:
+            if holder["id"] is not None:
+                ctx.items.delete(holder["id"])
+
+        _MANAGER.record(undo_cmd, redo_cmd, label="حذف مادة")
+
     bus.subscribe(event_bus.INVOICE_CREATED, on_created)
     bus.subscribe(event_bus.INVOICE_UPDATED, on_updated)
     bus.subscribe(event_bus.INVOICE_DELETED, on_deleted)
@@ -327,6 +430,8 @@ def install(ctx) -> None:
     bus.subscribe(event_bus.VOUCHER_UPDATED, on_voucher_updated)
     bus.subscribe(event_bus.VOUCHER_DELETED, on_voucher_deleted)
     bus.subscribe(event_bus.ITEM_UPDATED, on_item_updated)
+    bus.subscribe(event_bus.ITEM_CREATED, on_item_created)
+    bus.subscribe(event_bus.ITEM_DELETED, on_item_deleted)
 
 
 __all__ = ["UndoManager", "manager", "undo", "redo", "install"]
