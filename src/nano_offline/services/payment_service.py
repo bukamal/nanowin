@@ -176,6 +176,7 @@ class PaymentService:
             old = conn.execute("SELECT * FROM vouchers WHERE id=?", (voucher_id,)).fetchone()
             if old is None:
                 raise ValueError("السند غير موجود")
+            before = self._snapshot(conn, voucher_id)
             direction, customer_id, supplier_id = self._validate_party(
                 conn, voucher_type, customer_id, supplier_id
             )
@@ -225,13 +226,15 @@ class PaymentService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','voucher',?,?)",
                 (voucher_id, f"{old['voucher_type']}:{old['amount']} -> {voucher_type}:{amount_value}"),
             )
-        event_bus.publish(event_bus.VOUCHER_UPDATED, {"voucher_id": voucher_id, "voucher_type": voucher_type, "amount": amount_value})
+            after = self._snapshot(conn, voucher_id)
+        event_bus.publish(event_bus.VOUCHER_UPDATED, {"voucher_id": voucher_id, "voucher_type": voucher_type, "amount": amount_value, "before": before, "after": after})
 
     def delete_voucher(self, voucher_id: int) -> None:
         with self.db.transaction() as conn:
             old = conn.execute("SELECT * FROM vouchers WHERE id=?", (voucher_id,)).fetchone()
             if old is None:
                 raise ValueError("السند غير موجود")
+            before = self._snapshot(conn, voucher_id)
             conn.execute("DELETE FROM payments WHERE source_type='voucher' AND source_id=?", (voucher_id,))
             conn.execute("DELETE FROM vouchers WHERE id=?", (voucher_id,))
             AccountingRebuilder.rebuild(conn, inventory=False)
@@ -239,7 +242,33 @@ class PaymentService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','voucher',?,?)",
                 (voucher_id, f"{old['voucher_type']}:{old['amount']}"),
             )
-        event_bus.publish(event_bus.VOUCHER_DELETED, {"voucher_id": voucher_id, "voucher_type": old["voucher_type"]})
+        event_bus.publish(event_bus.VOUCHER_DELETED, {"voucher_id": voucher_id, "voucher_type": old["voucher_type"], "before": before})
+
+    @staticmethod
+    def _snapshot(conn, voucher_id: int) -> dict | None:
+        """A serialisable before/after image of a voucher (for undo/redo)."""
+        row = conn.execute("SELECT * FROM vouchers WHERE id=?", (voucher_id,)).fetchone()
+        if row is None:
+            return None
+        payment = conn.execute(
+            "SELECT id FROM payments WHERE source_type='voucher' AND source_id=?", (voucher_id,)
+        ).fetchone()
+        allocations: dict[int, float] = {}
+        if payment is not None:
+            for alloc in conn.execute(
+                "SELECT invoice_id, amount FROM payment_allocations WHERE payment_id=?", (payment["id"],)
+            ).fetchall():
+                allocations[int(alloc["invoice_id"])] = float(alloc["amount"])
+        return {
+            "voucher_type": row["voucher_type"],
+            "amount": float(row["amount"] or 0),
+            "customer_id": row["customer_id"],
+            "supplier_id": row["supplier_id"],
+            "voucher_date": row["voucher_date"],
+            "reference": row["reference"],
+            "notes": row["notes"],
+            "allocations": allocations,
+        }
 
     def register_invoice_payment(
         self,

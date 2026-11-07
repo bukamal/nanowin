@@ -517,6 +517,7 @@ class ItemRepository(Offloadable):
             old = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
             if old is None:
                 raise ValueError("المادة غير موجودة")
+            before = self._snapshot(conn, item_id)
             if old["item_type"] != item_type:
                 used = conn.execute("SELECT 1 FROM invoice_lines WHERE item_id=? LIMIT 1", (item_id,)).fetchone()
                 if used:
@@ -555,7 +556,43 @@ class ItemRepository(Offloadable):
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','item',?,?)",
                 (item_id, name),
             )
-        event_bus.publish(event_bus.ITEM_UPDATED, {"item_id": item_id, "name": name})
+            after = self._snapshot(conn, item_id)
+        event_bus.publish(event_bus.ITEM_UPDATED, {"item_id": item_id, "name": name, "before": before, "after": after})
+
+    @staticmethod
+    def _snapshot(conn, item_id: int) -> dict | None:
+        """A serialisable image of an item + its sub-units/barcodes (undo/redo)."""
+        row = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        if row is None:
+            return None
+        units = [
+            {
+                "unit_id": int(u["unit_id"]),
+                "conversion_factor": float(u["conversion_factor"] or 1),
+                "purchase_price": u["purchase_price"],
+                "selling_price": u["selling_price"],
+            }
+            for u in conn.execute(
+                "SELECT * FROM item_units WHERE item_id=? ORDER BY id", (item_id,)
+            ).fetchall()
+        ]
+        barcodes = [
+            {"barcode": b["barcode"], "unit_id": b["unit_id"]}
+            for b in conn.execute(
+                "SELECT barcode,unit_id FROM item_barcodes WHERE item_id=? ORDER BY id", (item_id,)
+            ).fetchall()
+        ]
+        return {
+            "name": row["name"],
+            "category_id": row["category_id"],
+            "item_type": row["item_type"],
+            "purchase_price": float(row["purchase_price"] or 0),
+            "selling_price": float(row["selling_price"] or 0),
+            "base_unit_id": row["base_unit_id"],
+            "barcode": row["barcode"],
+            "units": units,
+            "barcodes": barcodes,
+        }
 
     @blocking
     def delete(self, item_id: int) -> None:

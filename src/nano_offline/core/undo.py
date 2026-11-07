@@ -128,6 +128,68 @@ def _apply_invoice(ctx, invoice_id: int, snapshot: dict) -> None:
     ctx.invoices.update_invoice(invoice_id, **_invoice_kwargs(snapshot))
 
 
+
+def _voucher_kwargs(snapshot: dict) -> dict:
+    allocs = {int(k): float(v) for k, v in (snapshot.get("allocations") or {}).items()}
+    return dict(
+        voucher_type=snapshot.get("voucher_type") or "receipt",
+        amount=float(snapshot.get("amount") or 0),
+        customer_id=snapshot.get("customer_id"),
+        supplier_id=snapshot.get("supplier_id"),
+        voucher_date=snapshot.get("voucher_date"),
+        reference=snapshot.get("reference"),
+        notes=snapshot.get("notes"),
+        allocation_mode="manual" if allocs else "oldest",
+        allocations=allocs or None,
+    )
+
+
+def _restore_voucher(ctx, snapshot: dict) -> int:
+    return ctx.payments.create_voucher(**_voucher_kwargs(snapshot))
+
+
+def _apply_voucher(ctx, voucher_id: int, snapshot: dict) -> None:
+    ctx.payments.update_voucher(voucher_id, **_voucher_kwargs(snapshot))
+
+
+def _apply_item(ctx, item_id: int, snapshot: dict) -> None:
+    ctx.items.update(
+        item_id,
+        name=snapshot.get("name") or "",
+        category_id=snapshot.get("category_id"),
+        item_type=snapshot.get("item_type") or "مخزون",
+        purchase_price=float(snapshot.get("purchase_price") or 0),
+        selling_price=float(snapshot.get("selling_price") or 0),
+        base_unit_id=snapshot.get("base_unit_id"),
+        item_units=[
+            {
+                "unit_id": int(unit["unit_id"]),
+                "conversion_factor": float(unit.get("conversion_factor") or 1),
+                "purchase_price": unit.get("purchase_price"),
+                "selling_price": unit.get("selling_price"),
+            }
+            for unit in snapshot.get("units") or []
+        ],
+        barcode=snapshot.get("barcode"),
+    )
+    # Sync secondary barcodes to the snapshot (best-effort).
+    want = {(str(b.get("barcode") or ""), b.get("unit_id")) for b in snapshot.get("barcodes") or []}
+    have = {int(b["id"]): (str(b.get("barcode") or ""), b.get("unit_id")) for b in ctx.items.list_barcodes(item_id)}
+    for row_id, key in have.items():
+        if key not in want:
+            try:
+                ctx.items.remove_barcode(row_id)
+            except Exception:
+                pass
+    existing = set(have.values())
+    for code, unit_id in want:
+        if code and (code, unit_id) not in existing:
+            try:
+                ctx.items.add_barcode(item_id, code, unit_id=unit_id)
+            except Exception:
+                pass
+
+
 def install(ctx) -> None:
     """Subscribe the invoice events for ``ctx`` (idempotent per database)."""
     if ctx is None:
@@ -192,9 +254,79 @@ def install(ctx) -> None:
 
         _MANAGER.record(undo_cmd, redo_cmd, label="حذف فاتورة")
 
+
+    def on_voucher_created(event: str, payload: dict) -> None:
+        if _SUSPENDED["value"]:
+            return
+        snapshot = ctx.payments.get_voucher(int(payload["voucher_id"]))
+        if not snapshot:
+            return
+        holder = {"id": int(payload["voucher_id"])}
+
+        def undo_cmd() -> None:
+            ctx.payments.delete_voucher(holder["id"])
+
+        def redo_cmd() -> None:
+            holder["id"] = _restore_voucher(ctx, snapshot)
+
+        _MANAGER.record(undo_cmd, redo_cmd, label="إنشاء سند")
+
+    def on_voucher_updated(event: str, payload: dict) -> None:
+        if _SUSPENDED["value"]:
+            return
+        voucher_id = int(payload["voucher_id"])
+        before, after = payload.get("before"), payload.get("after")
+        if not before or not after:
+            return
+
+        def undo_cmd() -> None:
+            _apply_voucher(ctx, voucher_id, before)
+
+        def redo_cmd() -> None:
+            _apply_voucher(ctx, voucher_id, after)
+
+        _MANAGER.record(undo_cmd, redo_cmd, label="تعديل سند")
+
+    def on_voucher_deleted(event: str, payload: dict) -> None:
+        if _SUSPENDED["value"]:
+            return
+        before = payload.get("before")
+        if not before:
+            return
+        holder = {"id": None}
+
+        def undo_cmd() -> None:
+            holder["id"] = _restore_voucher(ctx, before)
+
+        def redo_cmd() -> None:
+            if holder["id"] is not None:
+                ctx.payments.delete_voucher(holder["id"])
+
+        _MANAGER.record(undo_cmd, redo_cmd, label="حذف سند")
+
+    def on_item_updated(event: str, payload: dict) -> None:
+        if _SUSPENDED["value"]:
+            return
+        item_id = int(payload["item_id"])
+        before, after = payload.get("before"), payload.get("after")
+        if not before or not after:
+            return
+
+        def undo_cmd() -> None:
+            _apply_item(ctx, item_id, before)
+
+        def redo_cmd() -> None:
+            _apply_item(ctx, item_id, after)
+
+        _MANAGER.record(undo_cmd, redo_cmd, label="تعديل مادة")
+
     bus.subscribe(event_bus.INVOICE_CREATED, on_created)
     bus.subscribe(event_bus.INVOICE_UPDATED, on_updated)
     bus.subscribe(event_bus.INVOICE_DELETED, on_deleted)
+    bus.subscribe(event_bus.VOUCHER_CREATED, on_voucher_created)
+    bus.subscribe(event_bus.VOUCHER_UPDATED, on_voucher_updated)
+    bus.subscribe(event_bus.VOUCHER_DELETED, on_voucher_deleted)
+    bus.subscribe(event_bus.ITEM_UPDATED, on_item_updated)
 
 
 __all__ = ["UndoManager", "manager", "undo", "redo", "install"]

@@ -123,3 +123,80 @@ def test_delete_undo_recreates_and_redo_deletes():
         event_bus.bus().clear()
         undo.manager().clear()
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_voucher_create_update_delete_undo_redo():
+    ctx, tmp = _ctx()
+    _isolate()
+    undo.install(ctx)
+    try:
+        customer = ctx.customers.create("عميل")
+        undo.manager().clear()
+
+        voucher = ctx.payments.create_voucher(voucher_type="receipt", amount=5.0, customer_id=customer)
+        assert ctx.payments.get_voucher(voucher) is not None
+        assert undo.undo() == "إنشاء سند"
+        assert ctx.payments.get_voucher(voucher) is None
+        assert undo.redo() == "إنشاء سند"
+
+        created = next(v for v in ctx.payments.list_vouchers() if float(v["amount"]) == 5.0)
+        vid = int(created["id"])
+        undo.manager().clear()
+        ctx.payments.update_voucher(vid, voucher_type="receipt", amount=3.0, customer_id=customer)
+        assert float(ctx.payments.get_voucher(vid)["amount"]) == 3.0
+        assert undo.undo() == "تعديل سند"
+        assert float(ctx.payments.get_voucher(vid)["amount"]) == 5.0
+        assert undo.redo() == "تعديل سند"
+        assert float(ctx.payments.get_voucher(vid)["amount"]) == 3.0
+
+        undo.manager().clear()
+        ctx.payments.delete_voucher(vid)
+        assert ctx.payments.get_voucher(vid) is None
+        assert undo.undo() == "حذف سند"
+        assert any(float(v["amount"]) == 3.0 for v in ctx.payments.list_vouchers())
+        assert undo.redo() == "حذف سند"
+        assert not any(float(v["amount"]) == 3.0 for v in ctx.payments.list_vouchers())
+    finally:
+        event_bus.bus().clear()
+        undo.manager().clear()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_item_update_undo_restores_name_prices_and_units():
+    ctx, tmp = _ctx()
+    _isolate()
+    undo.install(ctx)
+    try:
+        kg = ctx.definitions.create_unit("كيلو", "كغ")
+        sack = ctx.definitions.create_unit("شوال", "ش")
+        carton = ctx.definitions.create_unit("كرتونة", "ك")
+        item = ctx.items.create(
+            name="سكر", purchase_price=1.0, selling_price=1.4, quantity=0.0,
+            base_unit_id=kg, barcode="IU-1",
+            item_units=[{"unit_id": sack, "conversion_factor": 50, "purchase_price": 45.0, "selling_price": 60.0}],
+        )
+        undo.manager().clear()
+
+        ctx.items.update(
+            item, name="سكر فاخر", purchase_price=1.2, selling_price=1.8,
+            base_unit_id=kg, barcode="IU-1",
+            item_units=[{"unit_id": carton, "conversion_factor": 24, "purchase_price": 22.0, "selling_price": 30.0}],
+        )
+        after = ctx.items.get(item)
+        assert after["name"] == "سكر فاخر"
+        assert {int(u["id"]) for u in ctx.items.units(item) if not u.get("is_base")} == {int(carton)}
+
+        assert undo.undo() == "تعديل مادة"
+        restored = ctx.items.get(item)
+        assert restored["name"] == "سكر"
+        assert float(restored["purchase_price"]) == pytest.approx(1.0)
+        assert {int(u["id"]) for u in ctx.items.units(item) if not u.get("is_base")} == {int(sack)}
+
+        assert undo.redo() == "تعديل مادة"
+        redone = ctx.items.get(item)
+        assert redone["name"] == "سكر فاخر"
+        assert {int(u["id"]) for u in ctx.items.units(item) if not u.get("is_base")} == {int(carton)}
+    finally:
+        event_bus.bus().clear()
+        undo.manager().clear()
+        shutil.rmtree(tmp, ignore_errors=True)
