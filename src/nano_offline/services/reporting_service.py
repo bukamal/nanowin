@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
+from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
 
@@ -44,13 +45,21 @@ class ReportingService(Offloadable):
     def income_statement(self, *, date_from: str | None = None, date_to: str | None = None) -> dict:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("i.invoice_date", date_from, date_to)
+        opening_clause, opening_params = self._date_clause("i.invoice_date", None, date_to)
         e_clause, e_params = self._date_clause("e.expense_date", date_from, date_to)
         with self.db.connect() as conn:
             sales = float(conn.execute(
                 f"SELECT COALESCE(SUM(i.total),0) FROM invoices i WHERE i.type='sale' AND {clause}", params
             ).fetchone()[0])
+            opening_inventory = float(conn.execute(
+                f"SELECT COALESCE(SUM(i.total),0) FROM invoices i WHERE i.type='purchase' "
+                f"AND i.notes LIKE ? AND {opening_clause}",
+                [f"%{OPENING_BALANCE_MARKER}%", *opening_params],
+            ).fetchone()[0])
             purchases = float(conn.execute(
-                f"SELECT COALESCE(SUM(i.total),0) FROM invoices i WHERE i.type='purchase' AND {clause}", params
+                f"SELECT COALESCE(SUM(i.total),0) FROM invoices i WHERE i.type='purchase' "
+                f"AND COALESCE(i.notes,'') NOT LIKE ? AND {clause}",
+                [f"%{OPENING_BALANCE_MARKER}%", *params],
             ).fetchone()[0])
             cogs = float(conn.execute(
                 f"""SELECT COALESCE(SUM(il.cost_amount),0)
@@ -69,18 +78,99 @@ class ReportingService(Offloadable):
                     ORDER BY amount DESC,category""", e_params
             ).fetchall()]
             gross_profit = sales - cogs
+            net_profit = gross_profit - expenses
             return {
                 "date_from": date_from,
                 "date_to": date_to,
                 "sales": sales,
                 "purchases": purchases,
+                "opening_inventory": opening_inventory,
                 "cogs": cogs,
                 "gross_profit": gross_profit,
                 "gross_margin_percent": (gross_profit / sales * 100.0) if sales > EPSILON else 0.0,
                 "expenses": expenses,
-                "net_profit": gross_profit - expenses,
+                "net_profit": net_profit,
+                "net_margin_percent": (net_profit / sales * 100.0) if sales > EPSILON else 0.0,
+                "markup_percent": (gross_profit / cogs * 100.0) if cogs > EPSILON else 0.0,
                 "expense_breakdown": expense_rows,
             }
+
+    @blocking
+    def profit_trend(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+        """Monthly sales, COGS, expenses and profit, excluding opening stock."""
+        date_from, date_to = self._normalize_dates(date_from, date_to)
+        invoice_clause, invoice_params = self._date_clause("i.invoice_date", date_from, date_to)
+        expense_clause, expense_params = self._date_clause("e.expense_date", date_from, date_to)
+        with self.db.connect() as conn:
+            sales_rows = conn.execute(
+                f"""SELECT substr(i.invoice_date,1,7) AS month,
+                           SUM(CASE WHEN i.type='sale' THEN i.total ELSE 0 END) AS sales,
+                           SUM(CASE WHEN i.type='sale' THEN
+                               (SELECT COALESCE(SUM(il.cost_amount),0) FROM invoice_lines il WHERE il.invoice_id=i.id)
+                               ELSE 0 END) AS cogs
+                    FROM invoices i
+                    WHERE {invoice_clause}
+                    GROUP BY substr(i.invoice_date,1,7)""",
+                invoice_params,
+            ).fetchall()
+            expense_rows = conn.execute(
+                f"""SELECT substr(e.expense_date,1,7) AS month, SUM(e.amount) AS expenses
+                    FROM expenses e WHERE {expense_clause}
+                    GROUP BY substr(e.expense_date,1,7)""",
+                expense_params,
+            ).fetchall()
+        totals: dict[str, dict[str, float]] = {}
+        for row in sales_rows:
+            totals[str(row["month"])] = {
+                "sales": float(row["sales"] or 0),
+                "cogs": float(row["cogs"] or 0),
+                "expenses": 0.0,
+            }
+        for row in expense_rows:
+            totals.setdefault(str(row["month"]), {"sales": 0.0, "cogs": 0.0, "expenses": 0.0})
+            totals[str(row["month"])]["expenses"] = float(row["expenses"] or 0)
+        result = []
+        for month, values in sorted(totals.items()):
+            gross = values["sales"] - values["cogs"]
+            result.append({
+                "month": month,
+                **values,
+                "gross_profit": gross,
+                "net_profit": gross - values["expenses"],
+            })
+        return result
+
+    @blocking
+    def period_comparison(self, *, date_from: str, date_to: str) -> dict:
+        """Compare a bounded period with the immediately preceding equal-length period."""
+        start, end = self._normalize_dates(date_from, date_to)
+        if start is None or end is None:
+            raise ValueError("للمقارنة حدد تاريخ بداية ونهاية")
+        start_date, end_date = date.fromisoformat(start), date.fromisoformat(end)
+        days = (end_date - start_date).days + 1
+        previous_end = start_date - timedelta(days=1)
+        previous_start = previous_end - timedelta(days=days - 1)
+        current = self.income_statement(date_from=start, date_to=end)
+        previous = self.income_statement(
+            date_from=previous_start.isoformat(), date_to=previous_end.isoformat()
+        )
+        metrics = ("sales", "gross_profit", "gross_margin_percent", "expenses", "net_profit", "net_margin_percent")
+        changes = {}
+        for key in metrics:
+            before, now = float(previous[key]), float(current[key])
+            changes[key] = {
+                "previous": before,
+                "current": now,
+                "difference": now - before,
+                "change_percent": ((now - before) / abs(before) * 100.0) if abs(before) > EPSILON else None,
+            }
+        return {
+            "date_from": start,
+            "date_to": end,
+            "previous_from": previous_start.isoformat(),
+            "previous_to": previous_end.isoformat(),
+            "metrics": changes,
+        }
 
     @blocking
     def invoice_profitability(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
@@ -107,6 +197,7 @@ class ReportingService(Offloadable):
                 profit = total - cogs
                 row["gross_profit"] = profit
                 row["margin_percent"] = (profit / total * 100.0) if total > EPSILON else 0.0
+                row["markup_percent"] = (profit / cogs * 100.0) if cogs > EPSILON else 0.0
                 row["remaining_amount"] = max(0.0, total - float(row["paid_amount"] or 0))
                 result.append(row)
             return result
@@ -142,6 +233,7 @@ class ReportingService(Offloadable):
                 profit = revenue - cogs
                 row["gross_profit"] = profit
                 row["margin_percent"] = (profit / revenue * 100.0) if revenue > EPSILON else 0.0
+                row["markup_percent"] = (profit / cogs * 100.0) if cogs > EPSILON else 0.0
                 result.append(row)
             return result
 
@@ -315,13 +407,86 @@ class ReportingService(Offloadable):
                 params = [invoice_type]
             rows = conn.execute(sql.format(pay_date_filter=pay_filter, invoice_date_filter=invoice_filter), params).fetchall()
             result = []
+            aged_as_of = date.fromisoformat(as_of or date.today().isoformat())
             for raw in rows:
                 row = dict(raw)
                 remaining = float(row["total"] or 0) - float(row["paid_as_of"] or 0)
                 if remaining > EPSILON:
                     row["remaining_amount"] = remaining
+                    row["age_days"] = max(
+                        0,
+                        (aged_as_of - date.fromisoformat(str(row["invoice_date"])[:10])).days,
+                    )
+                    row["age_bucket"] = (
+                        "0-30" if row["age_days"] <= 30 else
+                        "31-60" if row["age_days"] <= 60 else
+                        "61-90" if row["age_days"] <= 90 else "90+"
+                    )
                     result.append(row)
             return result
+
+    @blocking
+    def aging_summary(self, party_type: str, *, as_of: str | None = None) -> dict:
+        """Outstanding invoice aging by invoice age (not contractual due date)."""
+        rows = self.outstanding_invoices(party_type, as_of=as_of)
+        buckets = {"0-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}
+        parties: dict[int, dict] = {}
+        for row in rows:
+            bucket = str(row["age_bucket"])
+            amount = float(row["remaining_amount"])
+            buckets[bucket] += amount
+            party_id = int(row["party_id"])
+            party = parties.setdefault(party_id, {
+                "party_id": party_id,
+                "party_name": row["party_name"],
+                "balance": 0.0,
+                "oldest_days": 0,
+            })
+            party["balance"] += amount
+            party["oldest_days"] = max(party["oldest_days"], int(row["age_days"]))
+        return {
+            "party_type": party_type,
+            "as_of": as_of or date.today().isoformat(),
+            "basis": "invoice_date",
+            "buckets": buckets,
+            "total": sum(buckets.values()),
+            "parties": sorted(parties.values(), key=lambda row: row["balance"], reverse=True),
+            "invoices": rows,
+        }
+
+    @blocking
+    def cash_outlook(self, *, as_of: str | None = None, lookback_days: int = 30) -> dict:
+        """Scenario projection from recent average daily cash movement, not scheduled dues."""
+        end = date.fromisoformat(as_of) if as_of else date.today()
+        lookback_days = max(7, min(int(lookback_days), 365))
+        start = end - timedelta(days=lookback_days - 1)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT COALESCE(SUM(debit),0) AS receipts, COALESCE(SUM(credit),0) AS payments
+                   FROM ledger_entries WHERE account_code='CASH' AND entry_date>=? AND entry_date<=?""",
+                (start.isoformat(), end.isoformat()),
+            ).fetchone()
+            balance = float(conn.execute(
+                "SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries "
+                "WHERE account_code='CASH' AND entry_date<=?",
+                (end.isoformat(),),
+            ).fetchone()[0])
+        receipts = float(rows["receipts"] or 0)
+        payments = float(rows["payments"] or 0)
+        daily_net = (receipts - payments) / lookback_days
+        return {
+            "as_of": end.isoformat(),
+            "lookback_days": lookback_days,
+            "current_balance": balance,
+            "average_daily_receipts": receipts / lookback_days,
+            "average_daily_payments": payments / lookback_days,
+            "average_daily_net": daily_net,
+            "scenario_only": True,
+            "projections": [
+                {"days": days, "balance": balance + daily_net * days}
+                for days in (7, 30, 90)
+            ],
+        }
 
     @blocking
     def cash_movement(self, *, date_from: str | None = None, date_to: str | None = None) -> dict:

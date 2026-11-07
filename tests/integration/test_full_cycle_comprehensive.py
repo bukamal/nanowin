@@ -124,7 +124,8 @@ def test_comprehensive_project_cycle():
         # income statement
         income = ctx.reports.income_statement()
         assert income["sales"] == pytest.approx(125.0, abs=1e-6)  # 80 + 45
-        assert income["purchases"] == pytest.approx(440.0, abs=1e-6)  # 240 opening + 200
+        assert income["purchases"] == pytest.approx(200.0, abs=1e-6)
+        assert income["opening_inventory"] == pytest.approx(240.0, abs=1e-6)
         assert income["cogs"] == pytest.approx(8 * avg, abs=1e-6)
         assert income["gross_profit"] == pytest.approx(125.0 - 8 * avg, abs=1e-6)
         assert income["expenses"] == pytest.approx(20.0, abs=1e-6)

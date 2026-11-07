@@ -151,6 +151,50 @@ class ForecastService(Offloadable):
             "forecasts": forecasts,
         }
 
+    @blocking
+    def forecast_accuracy(
+        self,
+        *,
+        invoice_type: str = "sale",
+        months: int = 6,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict:
+        """One-step rolling-average backtest against held-out monthly totals."""
+        history = self.monthly_totals(
+            invoice_type=invoice_type, date_from=date_from, date_to=date_to
+        )
+        totals = [float(row["total"] or 0) for row in history]
+        months = max(1, min(int(months), 24))
+        first_test = max(2, len(totals) - months)
+        errors: list[float] = []
+        actuals: list[float] = []
+        for index in range(first_test, len(totals)):
+            forecast = mean(totals[max(0, index - 6):index])
+            actual = totals[index]
+            errors.append(abs(actual - forecast))
+            actuals.append(abs(actual))
+        if not errors:
+            return {
+                "invoice_type": invoice_type,
+                "insufficient": True,
+                "reason": "يلزم وجود ثلاثة أشهر على الأقل لقياس خطأ التوقع.",
+                "sample_months": 0,
+                "mae": None,
+                "wape_percent": None,
+                "accuracy_percent": None,
+            }
+        wape = sum(errors) / sum(actuals) * 100 if sum(actuals) > 1e-9 else None
+        return {
+            "invoice_type": invoice_type,
+            "insufficient": False,
+            "sample_months": len(errors),
+            "mae": mean(errors),
+            "wape_percent": wape,
+            "accuracy_percent": max(0.0, 100.0 - wape) if wape is not None else None,
+            "method": "rolling_6_month_mean",
+        }
+
     @staticmethod
     def _insufficient(invoice_type: str, reason: str) -> dict:
         return {

@@ -96,6 +96,34 @@ def test_voucher_amount_must_be_positive():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.parametrize(
+    ("invoice_type", "quantity"),
+    [("sale", -2.0), ("sale", 0.0), ("purchase", -2.0), ("purchase", 0.0)],
+)
+def test_nonpositive_invoice_quantities_are_rejected_without_side_effects(invoice_type, quantity):
+    ctx, tmp = _ctx()
+    try:
+        customer = ctx.customers.create("عميل")
+        supplier = ctx.suppliers.create("مورد")
+        item = _stock_item(ctx, 5.0)
+        invoices_before = len(ctx.invoices.list_invoices())
+        ledger_before = _trial(ctx)
+
+        with pytest.raises(ValueError, match="بيانات بند الفاتورة غير صحيحة"):
+            ctx.invoices.create_invoice(
+                invoice_type=invoice_type,
+                customer_id=customer if invoice_type == "sale" else None,
+                supplier_id=supplier if invoice_type == "purchase" else None,
+                lines=[InvoiceLineInput(description="x", item_id=item, quantity=quantity, unit_price=15.0)],
+            )
+
+        assert ctx.items.get(item)["quantity"] == pytest.approx(5.0)
+        assert len(ctx.invoices.list_invoices()) == invoices_before
+        assert _trial(ctx) == pytest.approx(ledger_before, abs=1e-6)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_purchase_by_secondary_unit_records_base_quantity_and_total():
     ctx, tmp = _ctx()
     try:

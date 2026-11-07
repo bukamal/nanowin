@@ -1041,12 +1041,37 @@ body {{
             return "كل الفترة"
         return f"من {date_from or 'البداية'} إلى {date_to or 'النهاية'}"
 
-    def pnl_report_html(self, report: dict, *, date_from: str | None, date_to: str | None) -> str:
+    def pnl_report_html(
+        self,
+        report: dict,
+        *,
+        date_from: str | None,
+        date_to: str | None,
+        comparison: dict | None = None,
+        trend: list[dict] | None = None,
+    ) -> str:
         """Printable income-statement (P&L) report -- mirrors ReportsCenter._render_pnl."""
         expense_rows = "".join(
             f"<tr><td>{idx}</td><td>{self._e(row['category'])}</td>"
             f"<td class='money'>{self._money(row['amount'])}</td><td>{int(row['count'])}</td></tr>"
             for idx, row in enumerate(report.get("expense_breakdown") or [], start=1)
+        )
+        comparison_rows = "".join(
+            f"<tr><td>{label}</td><td class='money'>{self._money(comparison['metrics'][key]['previous'])}</td>"
+            f"<td class='money'>{self._money(comparison['metrics'][key]['current'])}</td>"
+            f"<td class='money'>{self._money(comparison['metrics'][key]['difference'])}</td></tr>"
+            for key, label in (
+                ("sales", "المبيعات"),
+                ("gross_profit", "مجمل الربح"),
+                ("expenses", "المصروفات"),
+                ("net_profit", "صافي الربح"),
+            )
+        ) if comparison else ""
+        trend_rows = "".join(
+            f"<tr><td>{self._e(row['month'])}</td><td class='money'>{self._money(row['sales'])}</td>"
+            f"<td class='money'>{self._money(row['gross_profit'])}</td>"
+            f"<td class='money'>{self._money(row['expenses'])}</td><td class='money'>{self._money(row['net_profit'])}</td></tr>"
+            for row in (trend or [])
         )
         body = f"""
 <div class="meta-row"><span>الفترة: <b>{self._e(self._period_label(date_from, date_to))}</b></span></div>
@@ -1055,13 +1080,25 @@ body {{
   <div class="metric"><small>تكلفة المبيعات</small><strong class="money">{self._money(report['cogs'])}</strong></div>
   <div class="metric"><small>مجمل الربح</small><strong class="money">{self._money(report['gross_profit'])}</strong><span class="fx">هامش {report['gross_margin_percent']:.1f}٪</span></div>
   <div class="metric"><small>المصروفات</small><strong class="money">{self._money(report['expenses'])}</strong></div>
-  <div class="metric"><small>صافي الربح</small><strong class="money">{self._money(report['net_profit'])}</strong></div>
+  <div class="metric"><small>صافي الربح</small><strong class="money">{self._money(report['net_profit'])}</strong><span class="fx">هامش صافي {report['net_margin_percent']:.1f}٪</span></div>
+  <div class="metric"><small>الزيادة على التكلفة</small><strong>{report['markup_percent']:.1f}٪</strong></div>
   <div class="metric"><small>المشتريات</small><strong class="money">{self._money(report['purchases'])}</strong></div>
+  <div class="metric"><small>مخزون أول المدة (ليس شراءً)</small><strong class="money">{self._money(report['opening_inventory'])}</strong></div>
 </div>
 <table>
 <thead><tr><th>#</th><th>التصنيف</th><th>المبلغ</th><th>عدد الحركات</th></tr></thead>
 <tbody>{expense_rows or '<tr><td colspan="4">لا توجد مصروفات في الفترة.</td></tr>'}</tbody>
 </table>
+{(
+    '<div class="doc-title">اتجاه الأداء الشهري</div><table><thead><tr><th>الشهر</th><th>المبيعات</th><th>مجمل الربح</th><th>المصروفات</th><th>صافي الربح</th></tr></thead><tbody>'
+    + (trend_rows or '<tr><td colspan="5">لا توجد بيانات.</td></tr>')
+    + '</tbody></table>'
+) if trend is not None else ''}
+{(
+    '<div class="doc-title">مقارنة الفترة السابقة</div><table><thead><tr><th>المؤشر</th><th>السابق</th><th>الحالي</th><th>الفرق</th></tr></thead><tbody>'
+    + comparison_rows
+    + '</tbody></table>'
+) if comparison else ''}
 """
         return self._shell("قائمة الدخل", "قائمة الدخل والربحية", body)
 
@@ -1078,13 +1115,14 @@ body {{
         invoice_rows = "".join(
             f"<tr><td>#{self._e(row['id'])}</td><td>{self._e(row['invoice_date'])}</td>"
             f"<td>{self._e(row['customer_name'])}</td><td class='money'>{self._money(row['total'])}</td>"
-            f"<td class='money'>{self._money(row['gross_profit'])}</td><td>{row['margin_percent']:.1f}٪</td></tr>"
+            f"<td class='money'>{self._money(row['gross_profit'])}</td><td>{row['margin_percent']:.1f}٪</td>"
+            f"<td>{row['markup_percent']:.1f}٪</td></tr>"
             for row in invoices
         )
         item_rows = "".join(
             f"<tr><td>{self._e(row['item_name'])}</td><td class='money'>{self._money(row['revenue'])}</td>"
             f"<td class='money'>{self._money(row['cogs'])}</td><td class='money'>{self._money(row['gross_profit'])}</td>"
-            f"<td>{row['margin_percent']:.1f}٪</td></tr>"
+            f"<td>{row['margin_percent']:.1f}٪</td><td>{row['markup_percent']:.1f}٪</td></tr>"
             for row in items
         )
         body = f"""
@@ -1096,13 +1134,13 @@ body {{
 </table>
 <div class="doc-title" style="margin:16px 0 6px">ربحية الفواتير</div>
 <table>
-<thead><tr><th>الفاتورة</th><th>التاريخ</th><th>العميل</th><th>المبيعات</th><th>الربح</th><th>الهامش</th></tr></thead>
-<tbody>{invoice_rows or '<tr><td colspan="6">لا توجد فواتير بيع في الفترة.</td></tr>'}</tbody>
+<thead><tr><th>الفاتورة</th><th>التاريخ</th><th>العميل</th><th>المبيعات</th><th>الربح</th><th>الهامش</th><th>الزيادة على التكلفة</th></tr></thead>
+<tbody>{invoice_rows or '<tr><td colspan="7">لا توجد فواتير بيع في الفترة.</td></tr>'}</tbody>
 </table>
 <div class="doc-title" style="margin:16px 0 6px">ربحية المواد والخدمات</div>
 <table>
-<thead><tr><th>المادة</th><th>المبيعات</th><th>التكلفة</th><th>الربح</th><th>الهامش</th></tr></thead>
-<tbody>{item_rows or '<tr><td colspan="5">لا توجد مواد مباعة في الفترة.</td></tr>'}</tbody>
+<thead><tr><th>المادة</th><th>المبيعات</th><th>التكلفة</th><th>الربح</th><th>الهامش</th><th>الزيادة على التكلفة</th></tr></thead>
+<tbody>{item_rows or '<tr><td colspan="6">لا توجد مواد مباعة في الفترة.</td></tr>'}</tbody>
 </table>
 """
         return self._shell("الربحية", "ربحية الفواتير والمواد", body)
@@ -1133,6 +1171,7 @@ body {{
     def balances_report_html(
         self, *, customers: dict, suppliers: dict,
         open_customers: list[dict], open_suppliers: list[dict], as_of: str | None,
+        customer_aging: dict | None = None, supplier_aging: dict | None = None,
     ) -> str:
         """Printable party-balances report -- mirrors ReportsCenter._render_balances."""
 
@@ -1155,6 +1194,24 @@ body {{
                 for row in rows
             )
 
+        def aging_metrics(report: dict | None) -> str:
+            if not report:
+                return ""
+            values = report["buckets"]
+            return (
+                "<div class='grid'>"
+                + "".join(
+                    f"<div class='metric'><small>{label}</small><strong class='money'>{self._money(values[key])}</strong></div>"
+                    for key, label in (
+                        ("0-30", "0–30 يوم (عمر الفاتورة)"),
+                        ("31-60", "31–60 يوم"),
+                        ("61-90", "61–90 يوم"),
+                        ("90+", "أكثر من 90 يوم"),
+                    )
+                )
+                + "</div>"
+            )
+
         body = f"""
 <div class="meta-row"><span>كما في: <b>{self._e(as_of or 'آخر حركة')}</b></span></div>
 <div class="grid">
@@ -1163,6 +1220,7 @@ body {{
   <div class="metric"><small>ذمم الموردين</small><strong class="money">{self._money(suppliers['positive_total'])}</strong></div>
   <div class="metric"><small>دفعات مقدمة للموردين</small><strong class="money">{self._money(suppliers['credit_total'])}</strong></div>
 </div>
+{aging_metrics(customer_aging)}
 <div class="doc-title" style="margin:6px 0">العملاء</div>
 <table>
 <thead><tr><th>الاسم</th><th>الرصيد</th><th>النوع</th><th>عدد الفواتير</th></tr></thead>
@@ -1173,6 +1231,7 @@ body {{
 <thead><tr><th>الفاتورة</th><th>العميل</th><th>التاريخ</th><th>الإجمالي</th><th>المتبقي</th></tr></thead>
 <tbody>{open_rows(open_customers) or '<tr><td colspan="5">لا توجد فواتير بيع مفتوحة.</td></tr>'}</tbody>
 </table>
+{aging_metrics(supplier_aging)}
 <div class="doc-title" style="margin:16px 0 6px">الموردون</div>
 <table>
 <thead><tr><th>الاسم</th><th>الرصيد</th><th>النوع</th><th>عدد الفواتير</th></tr></thead>
@@ -1186,7 +1245,7 @@ body {{
 """
         return self._shell("الذمم", "ذمم العملاء والموردين", body)
 
-    def cash_report_html(self, report: dict, *, date_from: str | None, date_to: str | None) -> str:
+    def cash_report_html(self, report: dict, *, outlook: dict | None = None, date_from: str | None, date_to: str | None) -> str:
         """Printable cash-movement report -- mirrors ReportsCenter._render_cash."""
         rows = "".join(
             f"<tr><td>{self._e(row['entry_date'])}</td>"
@@ -1203,6 +1262,14 @@ body {{
   <div class="metric"><small>المدفوعات</small><strong class="money">{self._money(report['payments'])}</strong></div>
   <div class="metric"><small>الرصيد الختامي</small><strong class="money">{self._money(report['closing_balance'])}</strong></div>
 </div>
+{(
+    '<div class="doc-title">سيناريو السيولة (استقراء تاريخي، غير مضمون)</div><div class="grid">'
+    + ''.join(
+        f"<div class='metric'><small>بعد {int(row['days'])} يوم</small><strong class='money'>{self._money(row['balance'])}</strong></div>"
+        for row in outlook['projections']
+    )
+    + '</div>'
+) if outlook else ''}
 <table>
 <thead><tr><th>التاريخ</th><th>البيان</th><th>قبض</th><th>صرف</th><th>الرصيد</th></tr></thead>
 <tbody>{rows or '<tr><td colspan="5">لا توجد حركات صندوق في الفترة.</td></tr>'}</tbody>
@@ -1210,7 +1277,7 @@ body {{
 """
         return self._shell("الصندوق", "حركة الصندوق", body)
 
-    def forecast_report_html(self, *, sales: dict, purchases: dict, date_from: str | None, date_to: str | None) -> str:
+    def forecast_report_html(self, *, sales: dict, purchases: dict, accuracy: dict | None = None, date_from: str | None, date_to: str | None) -> str:
         """Printable seasonal-forecast report -- mirrors ReportsCenter._render_forecast."""
         from nano_offline.services.forecast_service import MONTH_NAMES_AR
 
@@ -1250,6 +1317,10 @@ body {{
 
         body = f"""
 <div class="meta-row"><span>الفترة: <b>{self._e(self._period_label(date_from, date_to))}</b></span></div>
+{(
+    f"<div class='meta-row'>اختبار رجعي لمتوسط 6 أشهر على {int(accuracy['sample_months'])} أشهر: "
+    f"WAPE {float(accuracy['wape_percent']):.1f}% — لا يعد ضمانًا للتوقع.</div>"
+) if accuracy and not accuracy.get('insufficient') else ''}
 {direction_section("توقعات المبيعات", sales)}
 {direction_section("توقعات المشتريات", purchases)}
 """

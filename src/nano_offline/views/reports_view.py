@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import tempfile
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SmartDateField, empty_state, metric_row
+from nano_offline.components import DataGrid, GridColumn, SmartDateField, empty_state, metric_row
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -67,6 +71,7 @@ class ReportsCenter:
         self.report_chips: dict[str, ft.Container] = {}
         self.date_from: ft.TextField | None = None
         self.date_to: ft.TextField | None = None
+        self.date_presets: dict[str, ft.OutlinedButton] = {}
         self.body = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
         # NOTE: no wrap=True on this Row. Two fixed action buttons always
         # fit one line, and combining wrap=True with expand=True children
@@ -192,6 +197,43 @@ class ReportsCenter:
     @staticmethod
     def _footnote(text: str) -> ft.Text:
         return ft.Text(text, size=11, color=Colors.TEXT_SECONDARY)
+
+    def _readonly_grid(
+        self,
+        columns: list[GridColumn],
+        rows: list[dict],
+        *,
+        on_row_activate=None,
+        height: int = 340,
+    ) -> ft.Control:
+        grid = DataGrid(
+            columns=columns,
+            rows=rows,
+            viewport_height=height,
+            boxed=True,
+            center_cells=True,
+            on_row_activate=on_row_activate,
+            formatter=lambda col, value, _row: (
+                self.money(value) if col.kind == "money"
+                else f"{float(value or 0):,.1f}%" if col.key.endswith("_percent") or col.key == "margin_percent"
+                else self.number(value) if col.kind == "number"
+                else value
+            ),
+            on_sort=lambda key, direction: grid_sort(key, direction),
+        )
+
+        def grid_sort(key: str | None, direction: str | None) -> None:
+            if not key:
+                ordered = rows
+            else:
+                ordered = sorted(
+                    rows,
+                    key=lambda row: (row.get(key) is None, row.get(key) or 0),
+                    reverse=direction == "desc",
+                )
+            grid.set_rows(ordered)
+
+        return grid
 
     def _empty(self, text: str, *, icon=ft.Icons.INSIGHTS_OUTLINED) -> ft.Container:
         return empty_state(text, icon=icon)
@@ -330,6 +372,19 @@ class ReportsCenter:
         _default_from, _default_to = reporting_settings.default_range_dates(self.ctx.settings)
         self.date_from = SmartDateField(label="من تاريخ YYYY-MM-DD", hint_text="اتركه فارغًا لكل الفترة", value=_default_from)
         self.date_to = SmartDateField(label="إلى تاريخ / كما في YYYY-MM-DD", hint_text="اتركه فارغًا حتى آخر حركة", value=_default_to)
+        presets = [
+            ("today", "اليوم"),
+            ("week", "هذا الأسبوع"),
+            ("month", "هذا الشهر"),
+            ("quarter", "هذا الربع"),
+            ("year", "هذه السنة"),
+            ("previous_month", "الشهر السابق"),
+            ("all", "كل الفترة"),
+        ]
+        self.date_presets = {
+            key: ft.OutlinedButton(label, on_click=lambda _, selected=key: self._apply_date_preset(selected))
+            for key, label in presets
+        }
 
         self.report_chips = {}
         report_picker = ft.Row(
@@ -349,6 +404,7 @@ class ReportsCenter:
             ft.Column(
                 [
                     report_picker,
+                    ft.Row(list(self.date_presets.values()), spacing=6, scroll=ft.ScrollMode.AUTO),
                     ft.ResponsiveRow(
                         [
                             ft.Container(self.date_from, col={"xs": 6, "md": 6}),
@@ -372,6 +428,7 @@ class ReportsCenter:
                 RibbonAction("refresh", "تحديث", ft.Icons.REFRESH, on_click=lambda _=None: self._refresh()),
                 RibbonAction("print", "طباعة التقرير", ft.Icons.PRINT_OUTLINED, on_click=lambda _=None: self.page.run_task(self._print_report)),
                 RibbonAction("pdf", "مشاركة PDF", ft.Icons.PICTURE_AS_PDF_OUTLINED, on_click=lambda _=None: self.page.run_task(self._share_report_pdf)),
+                RibbonAction("csv", "تصدير CSV", ft.Icons.DOWNLOAD_OUTLINED, on_click=lambda _=None: self.page.run_task(self._export_csv)),
             ])
 
         self.content.content = ft.Column(
@@ -386,6 +443,34 @@ class ReportsCenter:
             spacing=0,
             expand=True,
         )
+        self._refresh()
+
+    def _apply_date_preset(self, key: str) -> None:
+        today = date.today()
+        if key == "today":
+            start = end = today
+        elif key == "week":
+            start, end = today - timedelta(days=today.weekday()), today
+        elif key == "month":
+            start, end = today.replace(day=1), today
+        elif key == "quarter":
+            quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+            start, end = today.replace(month=quarter_start_month, day=1), today
+        elif key == "year":
+            start, end = today.replace(month=1, day=1), today
+        elif key == "previous_month":
+            end = today.replace(day=1) - timedelta(days=1)
+            start = end.replace(day=1)
+        else:
+            start = end = None
+        self.date_from.value = start.isoformat() if start else ""
+        self.date_to.value = end.isoformat() if end else ""
+        for preset, button in self.date_presets.items():
+            active = preset == key
+            button.style = ft.ButtonStyle(
+                color=Colors.WHITE if active else Colors.TEXT_MUTED,
+                bgcolor=Colors.PRIMARY if active else Colors.WHITE,
+            )
         self._refresh()
 
     def _report_chip(self, key: str, label: str, icon: str) -> ft.Container:
@@ -434,7 +519,15 @@ class ReportsCenter:
     async def _load_report_data(self, report: str, date_from: str | None, date_to: str | None):
         reports = self.ctx.reports.aio
         if report == "pnl":
-            return await reports.income_statement(date_from=date_from, date_to=date_to)
+            tasks = [
+                reports.income_statement(date_from=date_from, date_to=date_to),
+                reports.profit_trend(date_from=date_from, date_to=date_to),
+            ]
+            if date_from and date_to:
+                tasks.append(reports.period_comparison(date_from=date_from, date_to=date_to))
+            else:
+                tasks.append(asyncio.sleep(0, result=None))
+            return await asyncio.gather(*tasks)
         if report == "profitability":
             invoices, items = await asyncio.gather(
                 reports.invoice_profitability(date_from=date_from, date_to=date_to),
@@ -453,11 +546,19 @@ class ReportsCenter:
                 reports.party_balances("supplier", as_of=date_to),
                 reports.outstanding_invoices("customer", as_of=date_to),
                 reports.outstanding_invoices("supplier", as_of=date_to),
+                reports.aging_summary("customer", as_of=date_to),
+                reports.aging_summary("supplier", as_of=date_to),
             )
         if report == "forecast":
             return await asyncio.gather(
                 self.ctx.forecast.aio.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to),
                 self.ctx.forecast.aio.seasonal_forecast(invoice_type="purchase", date_from=date_from, date_to=date_to),
+                self.ctx.forecast.aio.forecast_accuracy(invoice_type="sale", date_from=date_from, date_to=date_to),
+            )
+        if report == "cash":
+            return await asyncio.gather(
+                reports.cash_movement(date_from=date_from, date_to=date_to),
+                reports.cash_outlook(as_of=date_to),
             )
         return await reports.cash_movement(date_from=date_from, date_to=date_to)
 
@@ -467,7 +568,7 @@ class ReportsCenter:
             if generation != self._refresh_generation:
                 return
             if report == "pnl":
-                controls = self._render_pnl(data)
+                controls = self._render_pnl(*data)
             elif report == "profitability":
                 controls = self._render_profitability(*data)
             elif report == "inventory":
@@ -476,8 +577,10 @@ class ReportsCenter:
                 controls = self._render_balances(*data)
             elif report == "forecast":
                 controls = self._render_forecast(*data)
+            elif report == "cash":
+                controls = self._render_cash(*data)
             else:
-                controls = self._render_cash(data)
+                controls = self._render_balances(*data)
         except Exception as exc:
             if generation != self._refresh_generation:
                 return
@@ -500,8 +603,17 @@ class ReportsCenter:
         documents = self.ctx.documents
         reports = self.ctx.reports.aio
         if report == "pnl":
-            data = await reports.income_statement(date_from=date_from, date_to=date_to)
-            return documents.pnl_report_html(data, date_from=date_from, date_to=date_to)
+            data, trend = await asyncio.gather(
+                reports.income_statement(date_from=date_from, date_to=date_to),
+                reports.profit_trend(date_from=date_from, date_to=date_to),
+            )
+            comparison = (
+                await reports.period_comparison(date_from=date_from, date_to=date_to)
+                if date_from and date_to else None
+            )
+            return documents.pnl_report_html(
+                data, date_from=date_from, date_to=date_to, trend=trend, comparison=comparison
+            )
         if report == "profitability":
             invoices, items = await asyncio.gather(
                 reports.invoice_profitability(date_from=date_from, date_to=date_to),
@@ -518,24 +630,109 @@ class ReportsCenter:
             )
             return documents.inventory_report_html(rows=rows, valuation=valuation, date_from=date_from, date_to=date_to)
         if report == "balances":
-            customers, suppliers, open_customers, open_suppliers = await asyncio.gather(
+            customers, suppliers, open_customers, open_suppliers, customer_aging, supplier_aging = await asyncio.gather(
                 reports.party_balances("customer", as_of=date_to),
                 reports.party_balances("supplier", as_of=date_to),
                 reports.outstanding_invoices("customer", as_of=date_to),
                 reports.outstanding_invoices("supplier", as_of=date_to),
+                reports.aging_summary("customer", as_of=date_to),
+                reports.aging_summary("supplier", as_of=date_to),
             )
             return documents.balances_report_html(
                 customers=customers, suppliers=suppliers,
                 open_customers=open_customers, open_suppliers=open_suppliers, as_of=date_to,
+                customer_aging=customer_aging, supplier_aging=supplier_aging,
             )
         if report == "forecast":
-            sales, purchases = await asyncio.gather(
+            sales, purchases, accuracy = await asyncio.gather(
                 self.ctx.forecast.aio.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to),
                 self.ctx.forecast.aio.seasonal_forecast(invoice_type="purchase", date_from=date_from, date_to=date_to),
+                self.ctx.forecast.aio.forecast_accuracy(invoice_type="sale", date_from=date_from, date_to=date_to),
             )
-            return documents.forecast_report_html(sales=sales, purchases=purchases, date_from=date_from, date_to=date_to)
-        data = await reports.cash_movement(date_from=date_from, date_to=date_to)
-        return documents.cash_report_html(data, date_from=date_from, date_to=date_to)
+            return documents.forecast_report_html(sales=sales, purchases=purchases, accuracy=accuracy, date_from=date_from, date_to=date_to)
+        data, outlook = await asyncio.gather(
+            reports.cash_movement(date_from=date_from, date_to=date_to),
+            reports.cash_outlook(as_of=date_to),
+        )
+        return documents.cash_report_html(data, outlook=outlook, date_from=date_from, date_to=date_to)
+
+    async def _export_csv(self) -> None:
+        if self.native_files is None:
+            self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+            return
+        report = self._report_key or "pnl"
+        date_from, date_to = self._dates()
+        try:
+            data = await self._load_report_data(report, date_from, date_to)
+            if report == "pnl":
+                summary, _trend, _comparison = data
+                headers = ["القسم", "المؤشر", "القيمة", "النسبة"]
+                rows = [
+                    ["قائمة الدخل", "المبيعات", summary["sales"], ""],
+                    ["قائمة الدخل", "تكلفة المبيعات", summary["cogs"], ""],
+                    ["قائمة الدخل", "مجمل الربح", summary["gross_profit"], summary["gross_margin_percent"]],
+                    ["قائمة الدخل", "المصروفات", summary["expenses"], ""],
+                    ["قائمة الدخل", "صافي الربح", summary["net_profit"], summary["net_margin_percent"]],
+                    ["قائمة الدخل", "المشتريات الفعلية", summary["purchases"], ""],
+                    ["قائمة الدخل", "مخزون أول المدة", summary["opening_inventory"], ""],
+                    *[["مصروفات", row["category"], row["amount"], ""] for row in summary["expense_breakdown"]],
+                ]
+            elif report == "profitability":
+                invoices, items, _top = data
+                headers = ["النوع", "المعرف/الاسم", "التاريخ", "الطرف/النوع", "المبيعات", "التكلفة", "الربح", "هامش الربح %", "الزيادة على التكلفة %"]
+                rows = [
+                    ["فاتورة", row["id"], row["invoice_date"], row["customer_name"], row["total"], row["cogs"], row["gross_profit"], row["margin_percent"], row["markup_percent"]]
+                    for row in invoices
+                ] + [
+                    ["مادة/خدمة", row["item_name"], "", row["item_type"], row["revenue"], row["cogs"], row["gross_profit"], row["margin_percent"], row["markup_percent"]]
+                    for row in items
+                ]
+            elif report == "inventory":
+                items, _valuation = data
+                headers = ["المادة", "الوحدة", "افتتاحي", "وارد", "صادر", "ختامي", "متوسط التكلفة", "قيمة المخزون"]
+                rows = [[row["name"], row["unit_name"], row["opening_quantity_period"], row["purchases_quantity"], row["sales_quantity"], row["closing_quantity"], row["closing_unit_cost"], row["closing_value"]] for row in items]
+            elif report == "balances":
+                customers, suppliers, open_customers, open_suppliers, _customer_aging, _supplier_aging = data
+                headers = ["النوع", "الطرف", "الفاتورة", "التاريخ", "العمر بالأيام", "شريحة العمر", "الرصيد/المتبقي"]
+                rows = [
+                    [kind, row.get("name") or row.get("party_name"), row.get("id", ""), row.get("invoice_date", ""), row.get("age_days", ""), row.get("age_bucket", ""), row.get("balance", row.get("remaining_amount", 0))]
+                    for kind, report_data, invoices_data in (
+                        ("عميل", customers, open_customers),
+                        ("مورد", suppliers, open_suppliers),
+                    )
+                    for row in (report_data["rows"] + invoices_data)
+                ]
+            elif report == "cash":
+                cash, outlook = data
+                headers = ["التاريخ", "البيان", "النوع", "قبض", "صرف", "الرصيد"]
+                rows = [[row["entry_date"], row.get("description") or row["source_type"], row["source_type"], row["debit"], row["credit"], row["balance"]] for row in cash["rows"]]
+                rows.extend([["سيناريو", f"رصيد بعد {row['days']} يوم", "", "", "", row["balance"]] for row in outlook["projections"]])
+            else:
+                sales, purchases, accuracy = data
+                headers = ["النوع", "الشهر", "فعلي", "توقع", "حد أدنى", "حد أعلى", "مؤشر موسمي"]
+                rows = [
+                    [kind, row["month"], row["total"], "", "", "", ""]
+                    for kind, forecast in (("مبيعات تاريخية", sales), ("مشتريات تاريخية", purchases))
+                    for row in forecast.get("history", [])
+                ] + [
+                    [kind, row["month"], "", row["forecast"], row["low"], row["high"], row["seasonal_index"]]
+                    for kind, forecast in (("توقع مبيعات", sales), ("توقع مشتريات", purchases))
+                    for row in forecast.get("forecasts", [])
+                ]
+                if not accuracy["insufficient"]:
+                    rows.append(["اختبار رجعي", "WAPE %", "", accuracy["wape_percent"], "", "", ""])
+            if not rows:
+                self.notify("لا توجد بيانات للتصدير", kind="warning")
+                return
+            path = Path(tempfile.gettempdir()) / f"nano_report_{report}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            with path.open("w", encoding="utf-8-sig", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير تقرير")
+            self.notify("تم تجهيز ملف CSV وفتحه للمشاركة")
+        except Exception as exc:
+            self.notify(str(exc), kind="error")
 
     async def _print_report(self, _=None) -> None:
         if self.native_files is None:
@@ -592,159 +789,221 @@ class ReportsCenter:
             preview_builder=lambda _layout, _width: self._report_html(),
         )
 
-    def _render_pnl(self, report: dict) -> list[ft.Control]:
+    def _comparison_metric(self, title: str, values: dict, *, percent: bool = False) -> ft.Container:
+        delta = float(values["difference"])
+        change = values["change_percent"]
+        value = f"{delta:+.1f} نقطة" if percent else self.money(delta)
+        note = "لا توجد قاعدة مقارنة" if change is None else f"{float(change):+.1f}% عن الفترة السابقة"
+        return self._metric(
+            title,
+            value,
+            icon=ft.Icons.TRENDING_UP_ROUNDED if delta >= 0 else ft.Icons.TRENDING_DOWN_ROUNDED,
+            accent=Colors.SUCCESS if delta >= 0 else Colors.DANGER,
+            note=note,
+        )
+
+    def _trend_bars(self, rows: list[dict]) -> ft.Control:
+        if not rows:
+            return self._empty("لا توجد بيانات كافية لعرض الاتجاه.", icon=ft.Icons.SHOW_CHART)
+        max_sales = max((float(row["sales"]) for row in rows), default=0.0) or 1.0
+        bars = []
+        for row in rows[-12:]:
+            sales_width = max(2, int(190 * float(row["sales"]) / max_sales)) if row["sales"] > 0 else 0
+            profit_width = max(2, int(190 * abs(float(row["net_profit"])) / max_sales)) if row["net_profit"] else 0
+            bars.append(ft.Row(
+                [
+                    ft.Text(str(row["month"]), width=68, size=11),
+                    ft.Column([
+                        ft.Row([ft.Container(width=sales_width, height=8, bgcolor=Colors.PRIMARY, border_radius=4)]),
+                        ft.Row([ft.Container(width=profit_width, height=8, bgcolor=Colors.SUCCESS if row["net_profit"] >= 0 else Colors.DANGER, border_radius=4)]),
+                    ], spacing=4, expand=True),
+                    ft.Column([
+                        ft.Text(f"مبيعات {self.money(row['sales'])}", size=10),
+                        ft.Text(f"صافي {self.money(row['net_profit'])}", size=10, color=Colors.TEXT_SECONDARY),
+                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ))
+        return self._card([
+            ft.Row([ft.Text("المبيعات", color=Colors.PRIMARY), ft.Text("صافي الربح", color=Colors.SUCCESS)], spacing=14),
+            *bars,
+        ])
+
+    def _render_pnl(self, report: dict, trend: list[dict], comparison: dict | None) -> list[ft.Control]:
         metrics = metric_row([
             self._metric("المبيعات", self.money(report["sales"]), icon=ft.Icons.POINT_OF_SALE_OUTLINED, accent=Colors.PRIMARY),
             self._metric("تكلفة المبيعات", self.money(report["cogs"]), icon=ft.Icons.RECEIPT_LONG_OUTLINED, accent=Colors.ORANGE),
-            self._metric("مجمل الربح", self.money(report["gross_profit"]), icon=ft.Icons.TRENDING_UP_ROUNDED, accent=Colors.SUCCESS, note=f"هامش {report['gross_margin_percent']:.1f}%"),
+            self._metric("مجمل الربح", self.money(report["gross_profit"]), icon=ft.Icons.TRENDING_UP_ROUNDED, accent=Colors.SUCCESS, note=f"هامش {report['gross_margin_percent']:.1f}% من المبيعات"),
             self._metric("المصروفات", self.money(report["expenses"]), icon=ft.Icons.PAYMENTS_OUTLINED, accent=Colors.DANGER),
-            self._metric("صافي الربح", self.money(report["net_profit"]), icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.SUCCESS_ALT),
-            self._metric("المشتريات", self.money(report["purchases"]), icon=ft.Icons.ADD_SHOPPING_CART_OUTLINED, accent=Colors.PURPLE_LIGHT, note="معلومة مشتريات وليست تكلفة مبيعات"),
+            self._metric("صافي الربح", self.money(report["net_profit"]), icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.SUCCESS_ALT, note=f"هامش صافي {report['net_margin_percent']:.1f}%"),
+            self._metric("المشتريات", self.money(report["purchases"]), icon=ft.Icons.ADD_SHOPPING_CART_OUTLINED, accent=Colors.PURPLE_LIGHT, note="مشتريات فعلية خلال الفترة"),
         ], spacing=10)
-        expenses = ft.Column(spacing=6)
-        for row in report["expense_breakdown"]:
-            expenses.controls.append(
-                self._entry(
-                    icon=ft.Icons.SELL_OUTLINED, accent=Colors.WARNING_DARK,
-                    title=row["category"], subtitle=f"عدد الحركات: {int(row['count'])}",
-                    value=self.money(row["amount"]),
-                )
-            )
-        if not expenses.controls:
-            expenses.controls.append(self._empty("لا توجد مصروفات في الفترة.", icon=ft.Icons.PAYMENTS_OUTLINED))
-        result: list[ft.Control] = [metrics, self._section_title(ft.Icons.CATEGORY_OUTLINED, "المصروفات حسب التصنيف")]
+        expenses = self._readonly_grid(
+            [
+                GridColumn("category", "التصنيف", width=180),
+                GridColumn("count", "الحركات", kind="number", width=95),
+                GridColumn("amount", "المبلغ", kind="money", width=150),
+            ],
+            report["expense_breakdown"],
+            height=240,
+        )
+        result: list[ft.Control] = [
+            metrics,
+            metric_row([
+                self._metric("هامش مجمل الربح", f"{report['gross_margin_percent']:.1f}%", icon=ft.Icons.PERCENT, accent=Colors.SUCCESS, note="مجمل الربح ÷ المبيعات"),
+                self._metric("هامش صافي الربح", f"{report['net_margin_percent']:.1f}%", icon=ft.Icons.SAVINGS_OUTLINED, accent=Colors.PRIMARY, note="بعد المصروفات"),
+                self._metric("الزيادة على التكلفة", f"{report['markup_percent']:.1f}%", icon=ft.Icons.CALCULATE_OUTLINED, accent=Colors.PURPLE, note="الربح ÷ تكلفة المبيعات"),
+                self._metric("مخزون أول المدة", self.money(report["opening_inventory"]), icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.ORANGE, note="رصيد افتتاحي، ليس شراءً للفترة"),
+            ], spacing=10),
+        ]
+        if comparison is not None:
+            metrics_change = comparison["metrics"]
+            result.extend([
+                self._section_title(ft.Icons.COMPARE_ARROWS, "مقارنة بالفترة السابقة"),
+                self._footnote(f"{comparison['date_from']} إلى {comparison['date_to']} مقابل {comparison['previous_from']} إلى {comparison['previous_to']}"),
+                metric_row([
+                    self._comparison_metric("المبيعات", metrics_change["sales"]),
+                    self._comparison_metric("صافي الربح", metrics_change["net_profit"]),
+                    self._comparison_metric("هامش صافي الربح", metrics_change["net_margin_percent"], percent=True),
+                ], spacing=10),
+            ])
+        result.extend([
+            self._section_title(ft.Icons.SHOW_CHART, "اتجاه الأداء الشهري"),
+            self._trend_bars(trend),
+            self._section_title(ft.Icons.CATEGORY_OUTLINED, "المصروفات حسب التصنيف"),
+            expenses,
+        ])
         donut = self._category_donut(report["expense_breakdown"], label_key="category", value_key="amount")
         if donut is not None:
             result.append(self._card([donut]))
-        result.append(expenses)
         return result
 
     def _render_profitability(self, invoices: list[dict], items: list[dict], top: list[dict]) -> list[ft.Control]:
-        top_cards = ft.Column(spacing=6)
-        for index, row in enumerate(top, 1):
-            top_cards.controls.append(
-                self._entry(
-                    icon=ft.Icons.WORKSPACE_PREMIUM_ROUNDED, accent=Colors.WARNING if index == 1 else Colors.PRIMARY,
-                    title=f"#{index} {row['item_name']}",
-                    subtitle=f"الكمية الأساسية: {self.number(row['quantity_in_base'])} • الربح: {self.money(row['gross_profit'])}",
-                    value=self.money(row["revenue"]),
-                )
-            )
-        if not top_cards.controls:
-            top_cards.controls.append(self._empty("لا توجد مبيعات في الفترة.", icon=ft.Icons.WORKSPACE_PREMIUM_OUTLINED))
-
-        invoice_cards = ft.Column(spacing=6)
-        for row in invoices:
-            margin = float(row["margin_percent"] or 0)
-            invoice_cards.controls.append(
-                self._entry(
-                    icon=ft.Icons.RECEIPT_LONG_OUTLINED, accent=Colors.SUCCESS if margin >= 0 else Colors.DANGER,
-                    title=f"فاتورة بيع #{row['id']}",
-                    subtitle=f"{row['invoice_date']} • {row['customer_name']}",
-                    value=f"{margin:.1f}%",
-                    footer=self._footnote(f"المبيعات {self.money(row['total'])} • التكلفة {self.money(row['cogs'])} • الربح {self.money(row['gross_profit'])}"),
-                )
-            )
-        if not invoice_cards.controls:
-            invoice_cards.controls.append(self._empty("لا توجد فواتير بيع في الفترة.", icon=ft.Icons.RECEIPT_LONG_OUTLINED))
-
-        item_cards = ft.Column(spacing=6)
-        for row in items:
-            unit = f" {row['base_unit_name']}" if row.get("base_unit_name") else ""
-            item_cards.controls.append(
-                self._entry(
-                    icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PURPLE_LIGHT,
-                    title=row["item_name"],
-                    subtitle=f"مبيعات {self.money(row['revenue'])} • تكلفة {self.money(row['cogs'])} • هامش {row['margin_percent']:.1f}%",
-                    value=self.money(row["gross_profit"]),
-                    footer=self._footnote(f"الكمية: {self.number(row['quantity_in_base'])}{unit} • فواتير: {int(row['invoice_count'])}"),
-                )
-            )
-        if not item_cards.controls:
-            item_cards.controls.append(self._empty("لا توجد مواد مباعة في الفترة.", icon=ft.Icons.INVENTORY_2_OUTLINED))
-
+        top_grid = self._readonly_grid(
+            [
+                GridColumn("item_name", "المادة", width=180),
+                GridColumn("quantity_in_base", "الكمية", kind="number", width=100),
+                GridColumn("revenue", "المبيعات", kind="money", width=140),
+                GridColumn("gross_profit", "الربح", kind="money", width=140),
+                GridColumn("margin_percent", "الهامش", width=110),
+            ],
+            top,
+            height=280,
+        )
+        invoice_grid = self._readonly_grid(
+            [
+                GridColumn("id", "الفاتورة", kind="number", width=85),
+                GridColumn("invoice_date", "التاريخ", width=110),
+                GridColumn("customer_name", "العميل", width=150),
+                GridColumn("total", "المبيعات", kind="money", width=130),
+                GridColumn("cogs", "التكلفة", kind="money", width=130),
+                GridColumn("gross_profit", "الربح", kind="money", width=130),
+                GridColumn("margin_percent", "الهامش", width=100),
+                GridColumn("markup_percent", "الزيادة", width=100),
+            ],
+            invoices,
+            on_row_activate=lambda row: self.on_open_invoice(int(row["id"])) if self.on_open_invoice else None,
+            height=360,
+        )
+        item_grid = self._readonly_grid(
+            [
+                GridColumn("item_name", "المادة/الخدمة", width=180),
+                GridColumn("item_type", "النوع", width=90),
+                GridColumn("quantity_in_base", "الكمية", kind="number", width=100),
+                GridColumn("revenue", "المبيعات", kind="money", width=130),
+                GridColumn("cogs", "التكلفة", kind="money", width=130),
+                GridColumn("gross_profit", "الربح", kind="money", width=130),
+                GridColumn("margin_percent", "الهامش", width=100),
+                GridColumn("markup_percent", "الزيادة", width=100),
+                GridColumn("invoice_count", "فواتير", kind="number", width=80),
+            ],
+            items,
+            height=360,
+        )
         return [
-            self._section_title(ft.Icons.WORKSPACE_PREMIUM_ROUNDED, "الأكثر مبيعًا"), top_cards,
-            self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "ربحية الفواتير"), invoice_cards,
-            self._section_title(ft.Icons.INVENTORY_2_OUTLINED, "ربحية المواد والخدمات"), item_cards,
+            self._section_title(ft.Icons.WORKSPACE_PREMIUM_ROUNDED, "الأكثر مبيعًا (مرتبة بالإيراد)"), top_grid,
+            self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "ربحية الفواتير — اضغط صفًا لفتح الفاتورة"), invoice_grid,
+            self._section_title(ft.Icons.INVENTORY_2_OUTLINED, "ربحية المواد والخدمات"), item_grid,
         ]
 
     def _render_inventory(self, rows: list[dict], valuation: dict) -> list[ft.Control]:
         _, date_to = self._dates()
-        cards = ft.Column(spacing=6)
-        for row in rows:
-            unit = f" {row['unit_name']}" if row.get("unit_name") else ""
-            cards.controls.append(
-                self._entry(
-                    icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PRIMARY,
-                    title=row["name"],
-                    subtitle=f"افتتاحي {self.number(row['opening_quantity_period'])}{unit} • وارد {self.number(row['purchases_quantity'])} • صادر {self.number(row['sales_quantity'])}",
-                    value=self.money(row["closing_value"]),
-                    footer=self._footnote(f"ختامي {self.number(row['closing_quantity'])}{unit} • متوسط تكلفة ختامي {self.money(row['closing_unit_cost'])}"),
-                )
-            )
-        if not cards.controls:
-            cards.controls.append(self._empty("لا توجد مواد مخزنية.", icon=ft.Icons.INVENTORY_2_OUTLINED))
+        grid = self._readonly_grid(
+            [
+                GridColumn("name", "المادة", width=170),
+                GridColumn("unit_name", "الوحدة", width=90),
+                GridColumn("opening_quantity_period", "افتتاحي", kind="number", width=95),
+                GridColumn("purchases_quantity", "وارد", kind="number", width=90),
+                GridColumn("sales_quantity", "صادر", kind="number", width=90),
+                GridColumn("closing_quantity", "ختامي", kind="number", width=90),
+                GridColumn("closing_unit_cost", "متوسط التكلفة", kind="money", width=125),
+                GridColumn("closing_value", "قيمة المخزون", kind="money", width=135),
+            ],
+            rows,
+            height=440,
+        )
         return [
             metric_row([
                 self._metric("قيمة المخزون", self.money(valuation["total_value"]), icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PRIMARY, note=f"كما في {date_to or 'آخر حركة'}"),
                 self._metric("عدد المواد المخزنية", str(valuation["item_count"]), icon=ft.Icons.CATEGORY_OUTLINED, accent=Colors.WARNING),
             ], spacing=10),
             self._section_title(ft.Icons.SYNC_ALT_ROUNDED, "حركة المخزون حسب المادة"),
-            cards,
+            grid,
         ]
 
-    def _render_balances(self, customers: dict, suppliers: dict, open_customers: list[dict], open_suppliers: list[dict]) -> list[ft.Control]:
-        def party_cards(report: dict, label: str, icon, party_type: str) -> ft.Column:
-            column = ft.Column(spacing=6)
-            for row in report["rows"]:
-                balance = float(row["balance"] or 0)
-                balance_label = "مستحق" if balance >= 0 else "رصيد دائن/مقدم"
-                try:
-                    pid = int(row["id"])
-                except (TypeError, ValueError):
-                    pid = None
-                if pid is not None and self.on_open_statement is not None:
-                    tap = lambda _, _t=party_type, _pid=pid: self.on_open_statement(_t, _pid)
-                else:
-                    tap = None
-                column.controls.append(
-                    self._entry(
-                        icon=icon, accent=Colors.WARNING if balance >= 0 else Colors.SUCCESS,
-                        title=row["name"],
-                        subtitle=f"{balance_label} • فواتير: {int(row['invoice_count'])}",
-                        value=self.money(abs(balance)),
-                        on_click=tap,
-                    )
-                )
-            if not column.controls:
-                column.controls.append(self._empty(f"لا توجد {label}.", icon=icon))
-            return column
+    def _render_balances(
+        self,
+        customers: dict,
+        suppliers: dict,
+        open_customers: list[dict],
+        open_suppliers: list[dict],
+        customer_aging: dict,
+        supplier_aging: dict,
+    ) -> list[ft.Control]:
+        def party_grid(report: dict, party_type: str) -> ft.Control:
+            def open_party(row: dict) -> None:
+                if self.on_open_statement is not None:
+                    self.on_open_statement(party_type, int(row["id"]))
+            return self._readonly_grid(
+                [
+                    GridColumn("name", "الاسم", width=180),
+                    GridColumn("balance", "الرصيد (+مستحق / −دائن)", kind="money", width=190),
+                    GridColumn("invoice_count", "الفواتير", kind="number", width=100),
+                ],
+                report["rows"],
+                on_row_activate=open_party if self.on_open_statement is not None else None,
+                height=300,
+            )
 
-        def open_cards(rows: list[dict], label: str) -> ft.Column:
-            column = ft.Column(spacing=6)
-            for row in rows:
-                try:
-                    iid = int(row["id"])
-                except (TypeError, ValueError):
-                    iid = None
-                if iid is not None and self.on_open_invoice is not None:
-                    tap = lambda _, _iid=iid: self.on_open_invoice(_iid)
-                else:
-                    tap = None
-                column.controls.append(
-                    self._entry(
-                        icon=ft.Icons.RECEIPT_LONG_OUTLINED, accent=Colors.WARNING,
-                        title=f"فاتورة #{row['id']} • {row['party_name']}",
-                        subtitle=f"{row['invoice_date']} • الإجمالي {self.money(row['total'])} • المدفوع {self.money(row['paid_as_of'])}",
-                        value=self.money(row["remaining_amount"]),
-                        on_click=tap,
-                    )
-                )
-            if not column.controls:
-                column.controls.append(self._empty(f"لا توجد فواتير {label} مفتوحة.", icon=ft.Icons.RECEIPT_LONG_OUTLINED))
-            return column
+        def invoice_grid(rows: list[dict]) -> ft.Control:
+            return self._readonly_grid(
+                [
+                    GridColumn("id", "الفاتورة", kind="number", width=80),
+                    GridColumn("party_name", "الطرف", width=160),
+                    GridColumn("invoice_date", "التاريخ", width=110),
+                    GridColumn("age_days", "العمر/يوم", kind="number", width=100),
+                    GridColumn("age_bucket", "شريحة العمر", width=100),
+                    GridColumn("total", "الإجمالي", kind="money", width=130),
+                    GridColumn("paid_as_of", "المدفوع", kind="money", width=130),
+                    GridColumn("remaining_amount", "المتبقي", kind="money", width=130),
+                ],
+                rows,
+                on_row_activate=lambda row: self.on_open_invoice(int(row["id"])) if self.on_open_invoice else None,
+                height=340,
+            )
 
+        def aging_metrics(aging: dict, title: str) -> list[ft.Control]:
+            return [
+                self._section_title(ft.Icons.DATE_RANGE_OUTLINED, title),
+                self._footnote("العمر محسوب من تاريخ الفاتورة؛ لا يمثل تاريخ استحقاق تعاقديًا."),
+                metric_row([
+                    self._metric("0–30 يوم", self.money(aging["buckets"]["0-30"]), icon=ft.Icons.SCHEDULE, accent=Colors.SUCCESS),
+                    self._metric("31–60 يوم", self.money(aging["buckets"]["31-60"]), icon=ft.Icons.SCHEDULE, accent=Colors.WARNING),
+                    self._metric("61–90 يوم", self.money(aging["buckets"]["61-90"]), icon=ft.Icons.SCHEDULE, accent=Colors.ORANGE),
+                    self._metric("أكثر من 90", self.money(aging["buckets"]["90+"]), icon=ft.Icons.WARNING_AMBER, accent=Colors.DANGER),
+                ], spacing=10),
+            ]
         return [
             metric_row([
                 self._metric("ذمم العملاء", self.money(customers["positive_total"]), icon=ft.Icons.PEOPLE_OUTLINE, accent=Colors.WARNING),
@@ -752,29 +1011,31 @@ class ReportsCenter:
                 self._metric("ذمم الموردين", self.money(suppliers["positive_total"]), icon=ft.Icons.LOCAL_SHIPPING_OUTLINED, accent=Colors.DANGER),
                 self._metric("دفعات مقدمة للموردين", self.money(suppliers["credit_total"]), icon=ft.Icons.PAYMENTS_OUTLINED, accent=Colors.PRIMARY),
             ], spacing=10),
-            self._section_title(ft.Icons.PEOPLE_ALT_OUTLINED, "العملاء"), party_cards(customers, "عملاء", ft.Icons.PERSON_OUTLINE, "customer"),
-            self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير العملاء المفتوحة"), open_cards(open_customers, "بيع"),
-            self._section_title(ft.Icons.LOCAL_SHIPPING_OUTLINED, "الموردون"), party_cards(suppliers, "موردون", ft.Icons.LOCAL_SHIPPING_OUTLINED, "supplier"),
-            self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير الموردين المفتوحة"), open_cards(open_suppliers, "شراء"),
+            *aging_metrics(customer_aging, "أعمار ذمم العملاء"),
+            self._section_title(ft.Icons.PEOPLE_ALT_OUTLINED, "العملاء — اضغط صفًا لفتح كشف الحساب"),
+            party_grid(customers, "customer"),
+            self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير العملاء المفتوحة — اضغط صفًا لفتح الفاتورة"),
+            invoice_grid(open_customers),
+            *aging_metrics(supplier_aging, "أعمار ذمم الموردين"),
+            self._section_title(ft.Icons.LOCAL_SHIPPING_OUTLINED, "الموردون — اضغط صفًا لفتح كشف الحساب"),
+            party_grid(suppliers, "supplier"),
+            self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير الموردين المفتوحة — اضغط صفًا لفتح الفاتورة"),
+            invoice_grid(open_suppliers),
         ]
 
-    def _render_cash(self, report: dict) -> list[ft.Control]:
-        cards = ft.Column(spacing=6)
-        for row in reversed(report["rows"]):
-            incoming = float(row["debit"] or 0)
-            outgoing = float(row["credit"] or 0)
-            cards.controls.append(
-                self._entry(
-                    icon=ft.Icons.SOUTH_WEST_ROUNDED if incoming else ft.Icons.NORTH_EAST_ROUNDED,
-                    accent=Colors.SUCCESS if incoming else Colors.DANGER,
-                    title=str(row.get("description") or row["source_type"]),
-                    subtitle=str(row["entry_date"]),
-                    value=self.money(incoming if incoming else outgoing),
-                    footer=self._footnote(f"{'قبض' if incoming else 'صرف'} • الرصيد بعد الحركة {self.money(row['balance'])}"),
-                )
-            )
-        if not cards.controls:
-            cards.controls.append(self._empty("لا توجد حركات صندوق في الفترة.", icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED))
+    def _render_cash(self, report: dict, outlook: dict) -> list[ft.Control]:
+        cash_grid = self._readonly_grid(
+            [
+                GridColumn("entry_date", "التاريخ", width=110),
+                GridColumn("description", "البيان", width=210),
+                GridColumn("source_type", "النوع", width=100),
+                GridColumn("debit", "قبض", kind="money", width=130),
+                GridColumn("credit", "صرف", kind="money", width=130),
+                GridColumn("balance", "الرصيد بعد الحركة", kind="money", width=160),
+            ],
+            list(reversed(report["rows"])),
+            height=420,
+        )
         return [
             metric_row([
                 self._metric("رصيد افتتاحي", self.money(report["opening_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY),
@@ -782,12 +1043,22 @@ class ReportsCenter:
                 self._metric("المدفوعات", self.money(report["payments"]), icon=ft.Icons.NORTH_EAST_ROUNDED, accent=Colors.DANGER),
                 self._metric("الرصيد الختامي", self.money(report["closing_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_OUTLINED, accent=Colors.PRIMARY),
             ], spacing=10),
+            self._section_title(ft.Icons.AUTO_GRAPH, "سيناريو السيولة"),
+            self._footnote(f"استقراء آلي لمتوسط صافي الحركة اليومية خلال آخر {outlook['lookback_days']} يومًا؛ ليس توقعًا للذمم المستحقة ولا يضمن التحصيل."),
+            metric_row([
+                self._metric("المتوسط اليومي الداخل", self.money(outlook["average_daily_receipts"]), icon=ft.Icons.SOUTH_WEST_ROUNDED, accent=Colors.SUCCESS),
+                self._metric("المتوسط اليومي الخارج", self.money(outlook["average_daily_payments"]), icon=ft.Icons.NORTH_EAST_ROUNDED, accent=Colors.DANGER),
+                *[
+                    self._metric(f"رصيد سيناريو {row['days']} يوم", self.money(row["balance"]), icon=ft.Icons.ACCOUNT_BALANCE_OUTLINED, accent=Colors.PRIMARY)
+                    for row in outlook["projections"]
+                ],
+            ], spacing=10),
             self._section_title(ft.Icons.SWAP_VERT_ROUNDED, "حركات الصندوق"),
-            cards,
+            cash_grid,
         ]
 
     # -- seasonal forecast (phase10 wave4, B1) -----------------------------
-    def _render_forecast(self, sales: dict, purchases: dict) -> list[ft.Control]:
+    def _render_forecast(self, sales: dict, purchases: dict, accuracy: dict) -> list[ft.Control]:
         """Sales/purchase forecast built from local invoice history only.
         Pure-DB analytics (no native extension): renders the same data the
         printable HTML mirrors in document_service.forecast_report_html."""
@@ -827,7 +1098,7 @@ class ReportsCenter:
                 metric_row([
                     self._metric("المتوسط الشهري", self.money(data["monthly_average"]), icon=ft.Icons.CALCULATE_OUTLINED, accent=accent),
                     self._metric("أساس الاتجاه", self.money(data["trend_base"]), icon=ft.Icons.ROUTE_OUTLINED, accent=Colors.ORANGE),
-                    self._metric("دقة التوقع", data["confidence_label"], icon=ft.Icons.VERIFIED_OUTLINED, accent=Colors.SUCCESS, note=f"هامش ±{data['band_percent']}٪"),
+                    self._metric("كفاية البيانات", data["confidence_label"], icon=ft.Icons.VERIFIED_OUTLINED, accent=Colors.SUCCESS, note=f"نطاق التذبذب ±{data['band_percent']}٪"),
                     self._metric("أشهر البيانات", str(data["history_months"]), icon=ft.Icons.DATE_RANGE_OUTLINED, accent=Colors.PURPLE),
                 ], spacing=10),
                 ft.Container(
@@ -852,6 +1123,16 @@ class ReportsCenter:
                 "التوقع = متوسط آخر أشهر الفترة × المؤشر الموسمي للشهر القادم، مع نطاق ± يعتمد على تقلب البيانات. يُحسب من فواتير البيع/الشراء في قاعدة البيانات."
             ),
         ]
+        if accuracy["insufficient"]:
+            blocks.append(self._footnote(accuracy["reason"]))
+        else:
+            blocks.extend([
+                self._section_title(ft.Icons.FACT_CHECK_OUTLINED, "اختبار رجعي لدقة التوقع"),
+                self._footnote(
+                    f"متوسط آخر 6 أشهر اختُبر على {accuracy['sample_months']} أشهر محفوظة خارج العينة؛ "
+                    f"متوسط الخطأ المطلق {self.money(accuracy['mae'])}، وWAPE {accuracy['wape_percent']:.1f}%."
+                ),
+            ])
         blocks += direction_card("توقعات المبيعات", ft.Icons.TRENDING_UP_ROUNDED, Colors.PRIMARY, sales)
         blocks += direction_card("توقعات المشتريات", ft.Icons.TRENDING_DOWN_ROUNDED, Colors.ORANGE, purchases)
         return blocks
