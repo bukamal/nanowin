@@ -101,8 +101,44 @@ def publish(event: str, payload: dict[str, Any] | None = None) -> None:
     _BUS.publish(event, payload)
 
 
+def attach_page_invalidation(page, events: frozenset[str] = MUTATION_EVENTS) -> None:
+    """Subscribe a Flet page once to keep its cached UI in sync.
+
+    On any mutation it bumps ``page._nano_data_version`` (read by the tab
+    surface cache) and, if the shell registered ``page._nano_notification_refresh``,
+    schedules that refresh on the page's event loop (so control updates never
+    happen on a worker/LAN thread). Idempotent per page.
+    """
+    if page is None or getattr(page, "_nano_event_bus_subscribed", False):
+        return
+
+    def _handler(_event: str, _payload: dict[str, Any]) -> None:
+        try:
+            page._nano_data_version = int(getattr(page, "_nano_data_version", 0)) + 1
+        except Exception:
+            pass
+        refresh = getattr(page, "_nano_notification_refresh", None)
+        if not callable(refresh):
+            return
+
+        async def _refresh() -> None:
+            try:
+                refresh()
+            except Exception:
+                pass
+
+        try:
+            page.run_task(_refresh)
+        except Exception:
+            pass
+
+    for name in events:
+        _BUS.subscribe(name, _handler)
+    page._nano_event_bus_subscribed = True
+
+
 __all__ = [
-    "EventBus", "bus", "publish", "MUTATION_EVENTS",
+    "EventBus", "bus", "publish", "attach_page_invalidation", "MUTATION_EVENTS",
     "INVOICE_CREATED", "INVOICE_UPDATED", "INVOICE_DELETED",
     "ITEM_CREATED", "ITEM_UPDATED", "ITEM_DELETED",
     "PARTY_CREATED", "PARTY_UPDATED", "PARTY_DELETED",

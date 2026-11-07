@@ -31,3 +31,42 @@ def test_mutation_events_cover_the_domains():
         "item.created", "voucher.created", "expense.created", "party.created",
     ):
         assert name in MUTATION_EVENTS
+
+
+class _FakePage:
+    def __init__(self):
+        self._nano_data_version = 0
+
+    def run_task(self, handler, *args, **kwargs):
+        import asyncio
+
+        result = handler(*args, **kwargs)
+        if hasattr(result, "__await__"):
+            try:
+                asyncio.run(result)
+            except Exception:
+                pass
+
+
+def test_attach_page_invalidation_bumps_version_and_refreshes_badge():
+    from nano_offline.core import event_bus
+
+    bus = event_bus.bus()
+    bus.clear()  # isolate from any other subscribers
+    try:
+        page = _FakePage()
+        refreshes = []
+        page._nano_notification_refresh = lambda: refreshes.append(True)
+        event_bus.attach_page_invalidation(page)
+
+        event_bus.publish(event_bus.INVOICE_CREATED, {"id": 1})
+        assert page._nano_data_version == 1
+        assert refreshes == [True]
+
+        # Idempotent: a second attach must not double-subscribe.
+        event_bus.attach_page_invalidation(page)
+        event_bus.publish(event_bus.VOUCHER_DELETED, {"id": 2})
+        assert page._nano_data_version == 2
+        assert refreshes == [True, True]
+    finally:
+        bus.clear()

@@ -185,22 +185,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         animate_opacity=180,
     )
 
-    # Domain events -> invalidate the tab surface cache. Subscribed once per
-    # page (build_shell can run again on a theme change); any create/update/
-    # delete in the services bumps the data version read by render_route, so a
-    # cached tab refreshes instead of showing stale data.
-    if not getattr(page, "_nano_event_bus_subscribed", False):
-        from nano_offline.core import event_bus as _event_bus
+    # Domain events -> keep cached UI in sync. Subscribed once per page; any
+    # create/update/delete (including writes made over LAN) bumps the tab-cache
+    # data version and refreshes the notification badge.
+    from nano_offline.core import event_bus as _event_bus
 
-        def _on_domain_event(_event: str, _payload: dict) -> None:
-            try:
-                page._nano_data_version = int(getattr(page, "_nano_data_version", 0)) + 1
-            except Exception:
-                pass
-
-        for _event_name in _event_bus.MUTATION_EVENTS:
-            _event_bus.bus().subscribe(_event_name, _on_domain_event)
-        page._nano_event_bus_subscribed = True
+    _event_bus.attach_page_invalidation(page)
 
     header_title = ft.Text("الرئيسية", size=22, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY)
     header_subtitle = ft.Text("نظرة عامة على أداء عملك", size=12, color=Colors.TEXT_SECONDARY)
@@ -216,6 +206,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_navigate=lambda key: navigate(key),
     )
+    # Latest badge refresher for the event bus (updated on every rebuild so a
+    # theme-driven rebuild doesn't leave it pointing at a stale center).
+    try:
+        page._nano_notification_refresh = notification_center.refresh_badge
+    except Exception:
+        pass
 
     bell_button = ft.Container(
         ft.Stack(
