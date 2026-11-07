@@ -311,6 +311,7 @@ class InvoiceService:
             old = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
             if old is None:
                 raise ValueError("الفاتورة غير موجودة")
+            before = self._snapshot(conn, invoice_id)
             prepared, total, paid_amount = self._validate_and_prepare(
                 conn,
                 invoice_type=invoice_type,
@@ -346,18 +347,20 @@ class InvoiceService:
             conn.execute("DELETE FROM invoice_lines WHERE invoice_id=?", (invoice_id,))
             self._insert_lines(conn, invoice_id, prepared)
             AccountingRebuilder.rebuild(conn)
+            after = self._snapshot(conn, invoice_id)
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','invoice',?,?)",
                 (invoice_id, f"{old['type']}:{old['total']} -> {invoice_type}:{total}"),
             )
         invalidate_insights()
-        event_bus.publish(event_bus.INVOICE_UPDATED, {"invoice_id": invoice_id, "invoice_type": invoice_type, "total": total})
+        event_bus.publish(event_bus.INVOICE_UPDATED, {"invoice_id": invoice_id, "invoice_type": invoice_type, "total": total, "before": before, "after": after})
 
     def delete_invoice(self, invoice_id: int) -> None:
         with self.db.transaction() as conn:
             old = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
             if old is None:
                 raise ValueError("الفاتورة غير موجودة")
+            before = self._snapshot(conn, invoice_id)
             # inventory_movements uses SET NULL, so remove invoice movements first;
             # otherwise they would become fake manual adjustments after deletion.
             conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (invoice_id,))
@@ -368,7 +371,33 @@ class InvoiceService:
                 (invoice_id, f"{old['type']}:{old['total']}"),
             )
         invalidate_insights()
-        event_bus.publish(event_bus.INVOICE_DELETED, {"invoice_id": invoice_id, "invoice_type": old["type"]})
+        event_bus.publish(event_bus.INVOICE_DELETED, {"invoice_id": invoice_id, "invoice_type": old["type"], "before": before})
+
+    @staticmethod
+    def _snapshot(conn, invoice_id: int) -> dict | None:
+        """A serialisable before/after image of an invoice (for undo/redo)."""
+        row = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if row is None:
+            return None
+        lines = [
+            dict(line)
+            for line in conn.execute(
+                "SELECT item_id,unit_id,quantity,unit_price,description,conversion_factor "
+                "FROM invoice_lines WHERE invoice_id=? ORDER BY id",
+                (invoice_id,),
+            ).fetchall()
+        ]
+        return {
+            "type": row["type"],
+            "customer_id": row["customer_id"],
+            "supplier_id": row["supplier_id"],
+            "invoice_date": row["invoice_date"],
+            "reference": row["reference"],
+            "notes": row["notes"],
+            "paid": float(row["initial_paid_amount"] or 0),
+            "allow_negative": bool(row["allow_negative_stock"]),
+            "lines": lines,
+        }
 
     def _validate_and_prepare(
         self,

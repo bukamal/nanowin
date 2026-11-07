@@ -1730,10 +1730,21 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             navigate("dashboard")
 
     # ---------------- Ctrl+K command palette + global shortcuts ----------------
+    from nano_offline.core import undo as undo_engine
+
+    def _palette_select(key: str) -> None:
+        if key in ("undo", "redo"):
+            label = undo_engine.undo() if key == "undo" else undo_engine.redo()
+            verb = "التراجع" if key == "undo" else "الإعادة"
+            notify(f"تم {verb}: {label}" if label else f"لا يوجد إجراء ل{verb}")
+            return
+        navigate(key)
+
     command_palette = CommandPalette(
         page,
-        [(key, label_map[key], icon_map[key]) for key in allowed_keys],
-        on_select=navigate,
+        [(key, label_map[key], icon_map[key]) for key in allowed_keys]
+        + [("undo", "تراجع", ft.Icons.UNDO), ("redo", "إعادة", ft.Icons.REDO)],
+        on_select=_palette_select,
     )
     open_command_palette = command_palette.open
 
@@ -1853,6 +1864,14 @@ def main(page: ft.Page):
     # exact instance, and it needs to already be mounted in page.overlay
     # for invoke_method_async to reach anything on the Dart side.
     sound.attach_context(page, ctx, native_files)
+
+    # Session undo/redo (invoices today) fed by the domain event bus.
+    try:
+        from nano_offline.core import undo as undo_engine
+
+        undo_engine.install(ctx)
+    except Exception:
+        pass
 
     async def _preload_sound_pools():
         # Best-effort: warms up the four native AudioPools (see

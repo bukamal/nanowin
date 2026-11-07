@@ -274,3 +274,26 @@ def test_invoice_editor_builds_for_existing_invoice():
         assert getattr(sheet, "content", None) is not None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_items_bulk_sheet_builds_for_add_and_edit():
+    from nano_offline.views.items_view import ItemsCenter
+
+    ctx, tmp = _ctx()
+    try:
+        page, content = FakePage(), ft.Container(expand=True)
+        center = ItemsCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
+        center.show_center()
+
+        center.show_bulk_sheet()
+        assert page.opened and getattr(page.opened[-1], "content", None) is not None
+
+        unit = ctx.definitions.create_unit("كيلو", "كغ")
+        item = ctx.items.create(
+            name="مادة", purchase_price=2.0, selling_price=3.0, quantity=0.0,
+            base_unit_id=unit, barcode="BULK-1",
+        )
+        center.show_bulk_sheet(edit_item=ctx.items.get(item))
+        assert getattr(page.opened[-1], "content", None) is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

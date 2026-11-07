@@ -250,6 +250,17 @@ class ItemsCenter:
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
+    def show_bulk_sheet(self, edit_item: dict | None = None) -> None:
+        """Open the bulk add/edit table sheet.
+
+        The sheet is a nested closure defined while rendering the center, so
+        this re-exposes it (used by the shell and by build-smoke tests). Call
+        after :meth:`show_center`.
+        """
+        opener = getattr(self, "_open_bulk_sheet", None)
+        if callable(opener):
+            opener(edit_item=edit_item)
+
     def show_center(self, prefill_barcode: str | None = None) -> None:
         page = self.page
         ctx = self.ctx
@@ -3412,6 +3423,9 @@ class ItemsCenter:
                 notify("لا توجد أرصدة افتتاحية قابلة للتحويل", kind="warning")
 
         refresh()
+        # Expose the bulk add/edit sheet opener for the shell/tests (the bulk
+        # table is defined above as a nested closure).
+        self._open_bulk_sheet = open_bulk_add_sheet
         # Publish this section's contextual ribbon actions (desktop). The
         # shell resets them to its own defaults on the next navigation, so
         # these closures are only ever invoked while items is on screen.
