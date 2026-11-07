@@ -74,7 +74,9 @@ class UndoManager:
 
 
 _MANAGER = UndoManager()
-_INSTALLED: set[int] = set()
+# Idempotency key: the database path (stable per install), NOT id(ctx) -- object
+# ids get reused after garbage collection, which would wrongly skip install.
+_INSTALLED: set[str] = set()
 # While undo/redo runs it re-publishes domain events; don't record those.
 _SUSPENDED = {"value": False}
 
@@ -127,10 +129,18 @@ def _apply_invoice(ctx, invoice_id: int, snapshot: dict) -> None:
 
 
 def install(ctx) -> None:
-    """Subscribe the invoice events for ``ctx`` (idempotent per context)."""
-    if ctx is None or id(ctx) in _INSTALLED:
+    """Subscribe the invoice events for ``ctx`` (idempotent per database)."""
+    if ctx is None:
         return
-    _INSTALLED.add(id(ctx))
+    try:
+        key = str(ctx.db.path)
+    except Exception:
+        key = ""
+    if not key:
+        key = f"id{id(ctx)}"
+    if key in _INSTALLED:
+        return
+    _INSTALLED.add(key)
     bus = event_bus.bus()
 
     def on_created(event: str, payload: dict) -> None:
