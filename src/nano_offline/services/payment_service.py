@@ -4,6 +4,7 @@ from datetime import date
 
 from nano_offline.core.database import Database
 from nano_offline.core import currency
+from nano_offline.core import event_bus
 from nano_offline.core import money
 from nano_offline.services.accounting_rebuilder import AccountingRebuilder, EPSILON
 
@@ -154,7 +155,8 @@ class PaymentService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','voucher',?,?)",
                 (voucher_id, f"{voucher_type}:{amount_value}"),
             )
-            return voucher_id
+        event_bus.publish(event_bus.VOUCHER_CREATED, {"voucher_id": voucher_id, "voucher_type": voucher_type, "amount": amount_value})
+        return voucher_id
 
     def update_voucher(
         self,
@@ -223,6 +225,7 @@ class PaymentService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','voucher',?,?)",
                 (voucher_id, f"{old['voucher_type']}:{old['amount']} -> {voucher_type}:{amount_value}"),
             )
+        event_bus.publish(event_bus.VOUCHER_UPDATED, {"voucher_id": voucher_id, "voucher_type": voucher_type, "amount": amount_value})
 
     def delete_voucher(self, voucher_id: int) -> None:
         with self.db.transaction() as conn:
@@ -236,6 +239,7 @@ class PaymentService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','voucher',?,?)",
                 (voucher_id, f"{old['voucher_type']}:{old['amount']}"),
             )
+        event_bus.publish(event_bus.VOUCHER_DELETED, {"voucher_id": voucher_id, "voucher_type": old["voucher_type"]})
 
     def register_invoice_payment(
         self,

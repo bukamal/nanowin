@@ -4,6 +4,7 @@ import sqlite3
 
 from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
+from nano_offline.core import event_bus
 from nano_offline.core import money
 from nano_offline.core import search_index
 
@@ -489,7 +490,8 @@ class ItemRepository(Offloadable):
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','item',?,?)",
                 (item_id, name),
             )
-            return item_id
+        event_bus.publish(event_bus.ITEM_CREATED, {"item_id": item_id, "name": name})
+        return item_id
 
     @blocking
     def update(
@@ -553,6 +555,7 @@ class ItemRepository(Offloadable):
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','item',?,?)",
                 (item_id, name),
             )
+        event_bus.publish(event_bus.ITEM_UPDATED, {"item_id": item_id, "name": name})
 
     @blocking
     def delete(self, item_id: int) -> None:
@@ -575,6 +578,7 @@ class ItemRepository(Offloadable):
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','item',?,NULL)",
                 (item_id,),
             )
+        event_bus.publish(event_bus.ITEM_DELETED, {"item_id": item_id})
 
     @blocking
     def delete_opening_balance(self, item_id: int) -> dict:

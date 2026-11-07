@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
+from nano_offline.core import event_bus
 from nano_offline.core import search_index
 
 
@@ -11,6 +12,10 @@ class PartyRepository(Offloadable):
             raise ValueError(table)
         self.db = db
         self.table = table
+
+    @property
+    def party_type(self) -> str:
+        return "customer" if self.table == "customers" else "supplier"
 
     @blocking
     def list(self, search: str = "", limit: int | None = None, offset: int = 0) -> list[dict]:
@@ -137,7 +142,8 @@ class PartyRepository(Offloadable):
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create',?,?,?)",
                 (self.table[:-1], party_id, name),
             )
-            return party_id
+        event_bus.publish(event_bus.PARTY_CREATED, {"party_type": self.party_type, "party_id": party_id, "name": name})
+        return party_id
 
     @blocking
     def update(self, party_id: int, name: str, phone: str | None = None, address: str | None = None) -> None:
@@ -153,6 +159,7 @@ class PartyRepository(Offloadable):
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update',?,?,?)",
                 (self.table[:-1], party_id, name),
             )
+        event_bus.publish(event_bus.PARTY_UPDATED, {"party_type": self.party_type, "party_id": party_id, "name": name})
 
     @blocking
     def delete(self, party_id: int) -> None:
@@ -163,3 +170,4 @@ class PartyRepository(Offloadable):
             if invoice or payment:
                 raise ValueError("لا يمكن الحذف لوجود حركات مالية مرتبطة")
             conn.execute(f"DELETE FROM {self.table} WHERE id=?", (party_id,))
+        event_bus.publish(event_bus.PARTY_DELETED, {"party_type": self.party_type, "party_id": party_id})

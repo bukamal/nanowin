@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from nano_offline.core.database import Database
+from nano_offline.core import event_bus
 from nano_offline.core import money
 from nano_offline.services.accounting_rebuilder import EPSILON
 
@@ -116,7 +117,8 @@ class ExpenseService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','expense',?,?)",
                 (expense_id, f"{category_name or ''}:{amount_value}"),
             )
-            return expense_id
+        event_bus.publish(event_bus.EXPENSE_CREATED, {"expense_id": expense_id, "amount": amount_value})
+        return expense_id
 
     def update_expense(
         self,
@@ -163,6 +165,7 @@ class ExpenseService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','expense',?,?)",
                 (expense_id, f"{old['amount']} -> {amount_value}"),
             )
+        event_bus.publish(event_bus.EXPENSE_UPDATED, {"expense_id": expense_id, "amount": amount_value})
 
     def delete_expense(self, expense_id: int) -> None:
         with self.db.transaction() as conn:
@@ -175,6 +178,7 @@ class ExpenseService:
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','expense',?,?)",
                 (expense_id, str(old["amount"])),
             )
+        event_bus.publish(event_bus.EXPENSE_DELETED, {"expense_id": expense_id})
 
     def set_expense_receipt(
         self, expense_id: int, image_bytes: bytes | None, name: str | None = None

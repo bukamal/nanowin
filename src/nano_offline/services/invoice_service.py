@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from nano_offline.core.database import Database
 from nano_offline.core import currency
+from nano_offline.core import event_bus
 from nano_offline.core import invoice_settings
 from nano_offline.core import money
 from nano_offline.core.expiring import invalidate_insights
@@ -189,7 +190,8 @@ class InvoiceService:
             # Dashboard insights (receivables, pulse, alerts) are cached for
             # a short TTL; a fresh sale must not wait it out.
             invalidate_insights()
-            return invoice_id
+        event_bus.publish(event_bus.INVOICE_CREATED, {"invoice_id": invoice_id, "invoice_type": invoice_type, "total": total})
+        return invoice_id
 
     def convert_opening_balances(
         self, *, item_ids: list[int] | None = None, reference: str = "أول المدة"
@@ -349,6 +351,7 @@ class InvoiceService:
                 (invoice_id, f"{old['type']}:{old['total']} -> {invoice_type}:{total}"),
             )
         invalidate_insights()
+        event_bus.publish(event_bus.INVOICE_UPDATED, {"invoice_id": invoice_id, "invoice_type": invoice_type, "total": total})
 
     def delete_invoice(self, invoice_id: int) -> None:
         with self.db.transaction() as conn:
@@ -365,6 +368,7 @@ class InvoiceService:
                 (invoice_id, f"{old['type']}:{old['total']}"),
             )
         invalidate_insights()
+        event_bus.publish(event_bus.INVOICE_DELETED, {"invoice_id": invoice_id, "invoice_type": old["type"]})
 
     def _validate_and_prepare(
         self,

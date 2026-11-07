@@ -185,6 +185,23 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         animate_opacity=180,
     )
 
+    # Domain events -> invalidate the tab surface cache. Subscribed once per
+    # page (build_shell can run again on a theme change); any create/update/
+    # delete in the services bumps the data version read by render_route, so a
+    # cached tab refreshes instead of showing stale data.
+    if not getattr(page, "_nano_event_bus_subscribed", False):
+        from nano_offline.core import event_bus as _event_bus
+
+        def _on_domain_event(_event: str, _payload: dict) -> None:
+            try:
+                page._nano_data_version = int(getattr(page, "_nano_data_version", 0)) + 1
+            except Exception:
+                pass
+
+        for _event_name in _event_bus.MUTATION_EVENTS:
+            _event_bus.bus().subscribe(_event_name, _on_domain_event)
+        page._nano_event_bus_subscribed = True
+
     header_title = ft.Text("الرئيسية", size=22, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY)
     header_subtitle = ft.Text("نظرة عامة على أداء عملك", size=12, color=Colors.TEXT_SECONDARY)
 
