@@ -217,3 +217,60 @@ def test_stocktake_screen_builds():
         _assert_built(center, content)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+def _last_opened_sheet(page):
+    assert page.opened, "no sheet was opened"
+    return page.opened[-1]
+
+
+def test_invoice_table_sheet_builds_for_sale_and_purchase():
+    from nano_offline.views.invoice_view import InvoiceCenter
+
+    ctx, tmp = _ctx()
+    try:
+        page, content = FakePage(), ft.Container(expand=True)
+        center = InvoiceCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
+        for kind in ("sale", "purchase"):
+            center.show_table_invoice_sheet(kind)
+            sheet = _last_opened_sheet(page)
+            assert getattr(sheet, "content", None) is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_new_invoice_paged_sheet_builds():
+    from nano_offline.views.invoice_view import InvoiceCenter
+
+    ctx, tmp = _ctx()
+    try:
+        page, content = FakePage(), ft.Container(expand=True)
+        center = InvoiceCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
+        center.show_new_invoice_sheet("sale")
+        sheet = _last_opened_sheet(page)
+        assert getattr(sheet, "content", None) is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_invoice_editor_builds_for_existing_invoice():
+    from nano_offline.views.invoice_view import InvoiceCenter
+    from nano_offline.services.invoice_service import InvoiceLineInput
+
+    ctx, tmp = _ctx()
+    try:
+        unit = ctx.definitions.create_unit("قطعة", "ق")
+        customer = ctx.customers.create("عميل")
+        item = ctx.items.create(name="مادة", purchase_price=2.0, selling_price=3.0, quantity=10.0, base_unit_id=unit, barcode="UIE-1")
+        ctx.invoices.convert_opening_balances(item_ids=[item], reference="أول المدة")
+        sale = ctx.invoices.create_invoice(
+            invoice_type="sale", customer_id=customer, paid_amount=0,
+            lines=[InvoiceLineInput(description="x", item_id=item, quantity=1, unit_price=3.0, unit_id=unit)],
+        )
+
+        page, content = FakePage(), ft.Container(expand=True)
+        center = InvoiceCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
+        center.show_editor(sale, "sale")
+        sheet = _last_opened_sheet(page)
+        assert getattr(sheet, "content", None) is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
