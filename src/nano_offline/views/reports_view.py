@@ -11,7 +11,6 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import DataGrid, GridColumn, SmartDateField, empty_state, metric_row
-from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import privacy
@@ -71,7 +70,7 @@ class ReportsCenter:
         self.report_chips: dict[str, ft.Container] = {}
         self.date_from: ft.TextField | None = None
         self.date_to: ft.TextField | None = None
-        self.date_presets: dict[str, ft.OutlinedButton] = {}
+        self.date_preset: ft.Dropdown | None = None
         self.body = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
         # NOTE: no wrap=True on this Row. Two fixed action buttons always
         # fit one line, and combining wrap=True with expand=True children
@@ -83,7 +82,6 @@ class ReportsCenter:
         # class of bug and why SegmentedToggle deliberately never wraps).
         # That combination was the root cause of the reports tab's gray
         # screen -- this Row is the fix.
-        self.export_actions = ft.Row(spacing=10)
 
     def _set_header(self, title: str, subtitle: str = "") -> None:
         if self.on_title_change:
@@ -204,6 +202,7 @@ class ReportsCenter:
         rows: list[dict],
         *,
         on_row_activate=None,
+        row_action_label: str = "فتح المرتبط",
         height: int = 340,
     ) -> ft.Control:
         grid = DataGrid(
@@ -213,6 +212,13 @@ class ReportsCenter:
             boxed=True,
             center_cells=True,
             on_row_activate=on_row_activate,
+            on_row_menu=(
+                lambda row: [
+                    (row_action_label, ft.Icons.OPEN_IN_NEW_ROUNDED,
+                     lambda selected=row: on_row_activate(selected))
+                ]
+                if on_row_activate is not None else []
+            ),
             formatter=lambda col, value, _row: (
                 self.money(value) if col.kind == "money"
                 else f"{float(value or 0):,.1f}%" if col.key.endswith("_percent") or col.key == "margin_percent"
@@ -381,10 +387,17 @@ class ReportsCenter:
             ("previous_month", "الشهر السابق"),
             ("all", "كل الفترة"),
         ]
-        self.date_presets = {
-            key: ft.OutlinedButton(label, on_click=lambda _, selected=key: self._apply_date_preset(selected))
-            for key, label in presets
-        }
+        self.date_preset = ft.Dropdown(
+            label="الفترة",
+            value=None,
+            options=[ft.dropdown.Option(key=key, text=label) for key, label in presets],
+            width=165,
+            filled=True,
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.MD,
+            border_color=Colors.BORDER,
+        )
+        self.date_preset.on_change = lambda e: self._apply_date_preset(e.control.value)
 
         self.report_chips = {}
         report_picker = ft.Row(
@@ -396,21 +409,40 @@ class ReportsCenter:
             scroll=ft.ScrollMode.AUTO,
         )
 
-        # Sticky header: the report picker + date range stay reachable while
-        # scrolling a long report, matching the same sticky_top/bottom_bar
-        # treatment used on the items and stocktake screens -- only the
-        # report body itself scrolls in between.
+        # Report type buttons live directly under the page title; date,
+        # preset, refresh and export controls share one toolbar row.
         sticky_top = ft.Container(
             ft.Column(
                 [
                     report_picker,
-                    ft.Row(list(self.date_presets.values()), spacing=6, scroll=ft.ScrollMode.AUTO),
-                    ft.ResponsiveRow(
+                    ft.Row(
                         [
-                            ft.Container(self.date_from, col={"xs": 6, "md": 6}),
-                            ft.Container(self.date_to, col={"xs": 6, "md": 6}),
+                            ft.Container(self.date_from, width=190),
+                            ft.Container(self.date_to, width=190),
+                            self.date_preset,
+                            ft.IconButton(
+                                icon=ft.Icons.REFRESH,
+                                tooltip="تحديث التقرير",
+                                on_click=self._refresh,
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.PRINT_OUTLINED,
+                                tooltip="طباعة التقرير",
+                                on_click=lambda _: self.page.run_task(self._print_report),
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.PICTURE_AS_PDF_OUTLINED,
+                                tooltip="مشاركة PDF",
+                                on_click=lambda _: self.page.run_task(self._share_report_pdf),
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.DOWNLOAD_OUTLINED,
+                                tooltip="تصدير CSV",
+                                on_click=lambda _: self.page.run_task(self._export_csv),
+                            ),
                         ],
-                        spacing=10, run_spacing=10,
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=12,
@@ -420,16 +452,8 @@ class ReportsCenter:
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
         )
 
-        # Primary actions (تحديث / طباعة / مشاركة PDF) live in the shell's
-        # command strip under the tab, consistent with every other screen --
-        # not in an in-content footer.
         if self.on_context_actions is not None:
-            self.on_context_actions([
-                RibbonAction("refresh", "تحديث", ft.Icons.REFRESH, on_click=lambda _=None: self._refresh()),
-                RibbonAction("print", "طباعة التقرير", ft.Icons.PRINT_OUTLINED, on_click=lambda _=None: self.page.run_task(self._print_report)),
-                RibbonAction("pdf", "مشاركة PDF", ft.Icons.PICTURE_AS_PDF_OUTLINED, on_click=lambda _=None: self.page.run_task(self._share_report_pdf)),
-                RibbonAction("csv", "تصدير CSV", ft.Icons.DOWNLOAD_OUTLINED, on_click=lambda _=None: self.page.run_task(self._export_csv)),
-            ])
+            self.on_context_actions([])
 
         self.content.content = ft.Column(
             [
@@ -446,6 +470,8 @@ class ReportsCenter:
         self._refresh()
 
     def _apply_date_preset(self, key: str) -> None:
+        if not key:
+            return
         today = date.today()
         if key == "today":
             start = end = today
@@ -465,12 +491,6 @@ class ReportsCenter:
             start = end = None
         self.date_from.value = start.isoformat() if start else ""
         self.date_to.value = end.isoformat() if end else ""
-        for preset, button in self.date_presets.items():
-            active = preset == key
-            button.style = ft.ButtonStyle(
-                color=Colors.WHITE if active else Colors.TEXT_MUTED,
-                bgcolor=Colors.PRIMARY if active else Colors.WHITE,
-            )
         self._refresh()
 
     def _report_chip(self, key: str, label: str, icon: str) -> ft.Container:
@@ -587,10 +607,6 @@ class ReportsCenter:
             self.notify(str(exc), kind="error")
             controls = [self._error_card(exc)]
         self.body.controls = controls
-        self.export_actions.controls = [
-            ft.Container(ft.OutlinedButton("طباعة التقرير", icon=ft.Icons.PRINT_OUTLINED, on_click=self._print_report), expand=True),
-            ft.Container(ft.OutlinedButton("مشاركة PDF", icon=ft.Icons.PICTURE_AS_PDF_OUTLINED, on_click=self._share_report_pdf), expand=True),
-        ]
         self.page.update()
 
     async def _report_html(self) -> str:

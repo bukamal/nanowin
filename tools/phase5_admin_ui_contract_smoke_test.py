@@ -12,6 +12,9 @@ for needle in ["إنشاء المدير الأول", "تسجيل الدخول ا
 for needle in ["المستخدمون المحليون", "النسخ الاحتياطي والاسترجاع", "سجل التدقيق", "create_backup", "restore_backup"]:
     assert needle in admin, needle
 assert "ترخيص كاشير" in admin
-assert "audit_rows_view = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, height=400)" in admin
-assert "ft.DataTable(" in admin and "تحميل المزيد" in admin
+assert "audit_rows_view = DataGrid(" in admin
+assert "users_grid = DataGrid(" in admin and "backup_grid = DataGrid(" in admin
+assert "section_nav," in admin and "_render_section_nav()" in admin
+assert "audit_rows_view.on_row_menu" in admin and "users_grid.on_row_menu" in admin
+assert "RibbonAction" not in admin and "تحميل المزيد" in admin
 print("phase5_admin_ui_contract_smoke_test passed")

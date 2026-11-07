@@ -26,7 +26,9 @@ for token in [
     '"حركة وتقييم المخزون"',
     '"ذمم العملاء والموردين"',
     '"حركة الصندوق"',
-    "ResponsiveRow",
+    "ft.Row(",
+    "report_picker",
+    "تصدير CSV",
     "date_from",
     "date_to",
 ]:

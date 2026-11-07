@@ -51,7 +51,8 @@ READ_METHODS = frozenset({
     "dashboard.summary", "dashboard.today_summary", "dashboard.sales_trend",
     "dashboard.restock_predictions", "dashboard.purchase_list", "dashboard.weekly_owner_summary",
     "reports.income_statement", "reports.top_selling_items", "reports.cash_movement",
-    "reports.outstanding_invoices",
+    "reports.outstanding_invoices", "reports.collection_priorities",
+    "reports.cash_commitments", "reports.expense_anomalies",
     "forecast.seasonal_forecast", "forecast.forecast_accuracy",
     # settings / auth
     "settings.get", "settings.get_all", "auth.has_users", "auth.list_users", "auth.audit_entries",

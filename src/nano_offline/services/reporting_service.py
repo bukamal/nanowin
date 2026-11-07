@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
+from nano_offline.core import invoice_settings
 from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
@@ -387,7 +389,7 @@ class ReportingService(Offloadable):
         else:
             raise ValueError("نوع الحساب غير صحيح")
         with self.db.connect() as conn:
-            sql = f"""SELECT i.id,i.invoice_date,i.reference,i.total,i.{column} AS party_id,p.name AS party_name,
+            sql = f"""SELECT i.id,i.invoice_date,i.reference,i.total,i.print_options,i.{column} AS party_id,p.name AS party_name,
                               COALESCE((SELECT SUM(pa.amount)
                                         FROM payment_allocations pa
                                         JOIN payments pay ON pay.id=pa.payment_id
@@ -486,6 +488,205 @@ class ReportingService(Offloadable):
                 {"days": days, "balance": balance + daily_net * days}
                 for days in (7, 30, 90)
             ],
+        }
+
+    @blocking
+    def collection_priorities(self, *, as_of: str | None = None) -> dict:
+        """Rank unpaid customer invoices by actual configured due date.
+
+        Legacy invoices without a due-date snapshot use the current default
+        due-days setting. If no due-date policy is configured, age is shown
+        but the invoice is not represented as contractually overdue.
+        """
+        end = date.fromisoformat(as_of) if as_of else date.today()
+        rows = self.outstanding_invoices("customer", as_of=end.isoformat())
+        with self.db.connect() as conn:
+            setting = conn.execute(
+                "SELECT value FROM settings WHERE key='invoice_default_due_days'"
+            ).fetchone()
+            try:
+                default_days = max(0, int(setting["value"])) if setting else 0
+            except (TypeError, ValueError):
+                default_days = 0
+
+        for row in rows:
+            try:
+                snapshot = json.loads(row.get("print_options") or "{}")
+                due_days = max(0, int(snapshot.get("due_days", default_days)))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                due_days = default_days
+            due = invoice_settings.due_date_from_days(row.get("invoice_date"), due_days)
+            row["due_date"] = due.isoformat() if due else None
+            row["days_overdue"] = max(0, (end - due).days) if due else 0
+            row["days_until_due"] = (due - end).days if due else None
+            row["due_status"] = (
+                "overdue" if due and due < end else
+                "due_today" if due and due == end else
+                "upcoming" if due else "no_due_date"
+            )
+        priorities = sorted(
+            rows,
+            key=lambda row: (
+                {"overdue": 0, "due_today": 1, "upcoming": 2, "no_due_date": 3}[row["due_status"]],
+                row["due_date"] or "9999-12-31",
+                -float(row["remaining_amount"]),
+            ),
+        )
+        return {
+            "as_of": end.isoformat(),
+            "basis": "configured_due_date",
+            "default_due_days": default_days,
+            "total_outstanding": sum(float(row["remaining_amount"]) for row in rows),
+            "overdue_total": sum(
+                float(row["remaining_amount"]) for row in rows if row["due_status"] == "overdue"
+            ),
+            "invoices": priorities,
+        }
+
+    @blocking
+    def expense_anomalies(self, *, as_of: str | None = None, months: int = 3) -> dict:
+        """Compare month-to-date spend with a day-normalized recent baseline."""
+        end = date.fromisoformat(as_of) if as_of else date.today()
+        months = max(2, min(int(months), 12))
+        month_start = end.replace(day=1)
+        baseline_month_index = month_start.year * 12 + month_start.month - 1 - months
+        baseline_year, baseline_month_zero = divmod(baseline_month_index, 12)
+        baseline_start = date(baseline_year, baseline_month_zero + 1, 1)
+        with self.db.connect() as conn:
+            current_rows = conn.execute(
+                """SELECT COALESCE(ec.name,e.category,'بلا تصنيف') AS category,
+                          SUM(e.amount) AS amount
+                   FROM expenses e LEFT JOIN expense_categories ec ON ec.id=e.category_id
+                   WHERE e.expense_date>=? AND e.expense_date<=?
+                   GROUP BY COALESCE(ec.name,e.category,'بلا تصنيف')""",
+                (month_start.isoformat(), end.isoformat()),
+            ).fetchall()
+            history = conn.execute(
+                """SELECT substr(e.expense_date,1,7) AS month,
+                          COALESCE(ec.name,e.category,'بلا تصنيف') AS category,
+                          SUM(e.amount) AS amount
+                   FROM expenses e LEFT JOIN expense_categories ec ON ec.id=e.category_id
+                   WHERE e.expense_date>=? AND e.expense_date<?
+                   GROUP BY substr(e.expense_date,1,7),COALESCE(ec.name,e.category,'بلا تصنيف')""",
+                (baseline_start.isoformat(), month_start.isoformat()),
+            ).fetchall()
+
+        current = {str(row["category"]): float(row["amount"] or 0) for row in current_rows}
+        history_by_category: dict[str, list[float]] = {}
+        for row in history:
+            category, month = str(row["category"]), str(row["month"])
+            history_by_category.setdefault(category, []).append(float(row["amount"] or 0))
+
+        elapsed_days = end.day
+        baseline_months = months
+        anomalies = []
+        for category in set(current) | set(history_by_category):
+            current_amount = current.get(category, 0.0)
+            monthly_history = history_by_category.get(category, [])
+            if not monthly_history:
+                continue
+            avg_full_month = sum(monthly_history) / baseline_months if monthly_history else 0.0
+            expected_to_date = avg_full_month * elapsed_days / 30.0
+            difference = current_amount - expected_to_date
+            ratio = current_amount / expected_to_date if expected_to_date > 1e-9 else (float("inf") if current_amount > 0 else 0.0)
+            if difference >= max(10.0, expected_to_date * 0.5) and ratio >= 1.5:
+                anomalies.append({
+                    "category": category,
+                    "current_month_to_date": current_amount,
+                    "expected_to_date": expected_to_date,
+                    "difference": difference,
+                    "increase_percent": (ratio - 1) * 100 if ratio != float("inf") else None,
+                    "baseline_months": baseline_months,
+                })
+        anomalies.sort(key=lambda row: row["difference"], reverse=True)
+        return {
+            "as_of": end.isoformat(),
+            "elapsed_days": elapsed_days,
+            "baseline_months": baseline_months,
+            "anomalies": anomalies,
+        }
+
+    @blocking
+    def cash_commitments(self, *, as_of: str | None = None) -> dict:
+        """Summarize dated open invoices; this is not a full cash-flow forecast."""
+        end = date.fromisoformat(as_of) if as_of else date.today()
+        with self.db.connect() as conn:
+            default_row = conn.execute(
+                "SELECT value FROM settings WHERE key='invoice_default_due_days'"
+            ).fetchone()
+            try:
+                default_days = max(0, int(default_row["value"])) if default_row else 0
+            except (TypeError, ValueError):
+                default_days = 0
+            invoice_rows = conn.execute(
+                """SELECT i.id,i.type,i.invoice_date,i.total,i.paid_amount,i.print_options,
+                          COALESCE(c.name,s.name,'') AS party_name
+                   FROM invoices i
+                   LEFT JOIN customers c ON i.type='sale' AND c.id=i.customer_id
+                   LEFT JOIN suppliers s ON i.type='purchase' AND s.id=i.supplier_id
+                   WHERE i.invoice_date<=? AND i.total-i.paid_amount>1e-9
+                     AND COALESCE(i.notes,'') NOT LIKE ?
+                   ORDER BY i.invoice_date,i.id""",
+                (end.isoformat(), f"%{OPENING_BALANCE_MARKER}%"),
+            ).fetchall()
+            cash = float(conn.execute(
+                "SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries "
+                "WHERE account_code='CASH' AND entry_date<=?",
+                (end.isoformat(),),
+            ).fetchone()[0] or 0)
+
+        buckets = {
+            "overdue_receivables": 0.0, "overdue_payables": 0.0,
+            "next_7_receivables": 0.0, "next_7_payables": 0.0,
+            "next_30_receivables": 0.0, "next_30_payables": 0.0,
+            "undated_receivables": 0.0, "undated_payables": 0.0,
+        }
+        due_rows: list[dict] = []
+        excluded_undated = 0
+        for raw in invoice_rows:
+            row = dict(raw)
+            try:
+                snapshot = json.loads(row.get("print_options") or "{}")
+                due_days = max(0, int(snapshot.get("due_days", default_days)))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                due_days = default_days
+            due = invoice_settings.due_date_from_days(row["invoice_date"], due_days)
+            remaining = max(0.0, float(row["total"] or 0) - float(row["paid_amount"] or 0))
+            if due is None:
+                excluded_undated += 1
+                buckets["undated_receivables" if row["type"] == "sale" else "undated_payables"] += remaining
+                continue
+            delta = (due - end).days
+            side = "receivables" if row["type"] == "sale" else "payables"
+            if delta < 0:
+                buckets[f"overdue_{side}"] += remaining
+            elif delta <= 7:
+                buckets[f"next_7_{side}"] += remaining
+            elif delta <= 30:
+                buckets[f"next_30_{side}"] += remaining
+            due_rows.append({
+                "invoice_id": int(row["id"]),
+                "invoice_type": str(row["type"]),
+                "party_name": str(row["party_name"]),
+                "due_date": due.isoformat(),
+                "days_until_due": delta,
+                "remaining_amount": remaining,
+            })
+        due_rows.sort(key=lambda row: (row["due_date"], row["invoice_type"], row["invoice_id"]))
+        return {
+            "as_of": end.isoformat(),
+            "book_cash": cash,
+            "due_days_policy": default_days,
+            "undated_invoice_count": excluded_undated,
+            "buckets": buckets,
+            "net_overdue": buckets["overdue_receivables"] - buckets["overdue_payables"],
+            "net_next_7_days": buckets["next_7_receivables"] - buckets["next_7_payables"],
+            "net_next_30_days": (
+                buckets["next_7_receivables"] + buckets["next_30_receivables"]
+                - buckets["next_7_payables"] - buckets["next_30_payables"]
+            ),
+            "scenario_only": True,
+            "rows": due_rows,
         }
 
     @blocking

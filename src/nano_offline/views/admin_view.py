@@ -12,8 +12,7 @@ import flet as ft
 
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField
-from nano_offline.components.command_bar import RibbonAction
+from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, DataGrid, GridColumn, SmartDateField
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
@@ -153,47 +152,154 @@ class AdminCenter:
             choices=[(k, v) for k, v in ROLE_LABELS.items()],
             allow_clear=False,
         )
-        users_list = ft.Column(spacing=8)
+        users_grid = DataGrid(
+            columns=[
+                GridColumn("full_name", "الاسم"),
+                GridColumn("username", "اسم المستخدم", width=170),
+                GridColumn("role_label", "الدور", width=150, align="center"),
+                GridColumn("status_label", "الحالة", width=100, align="center", kind="badge"),
+            ],
+            rows=[],
+            viewport_height=340,
+            boxed=True,
+            center_cells=True,
+            empty_text="لا يوجد مستخدمون",
+            activate_tooltip="تفاصيل المستخدم",
+            formatter=lambda col, value, row: (
+                (str(value), Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
+                if col.key == "status_label" and value == "نشط"
+                else (str(value), Colors.TEXT_SECONDARY, Colors.BACKGROUND)
+                if col.key == "status_label"
+                else None
+            ),
+        )
+        def sort_users(key: str | None, direction: str | None):
+            rows = [
+                {
+                    **user,
+                    "role_label": ROLE_LABELS.get(str(user["role"]), str(user["role"])),
+                    "status_label": "نشط" if bool(user["is_active"]) else "موقوف",
+                }
+                for user in self.ctx.auth.list_users()
+            ]
+            if key:
+                rows.sort(
+                    key=lambda row: str(row.get(key) or "").casefold(),
+                    reverse=direction == "desc",
+                )
+            users_grid.set_rows(rows)
+
+        users_grid.on_sort = sort_users
 
         def refresh_users():
-            users_list.controls = []
-            for user in self.ctx.auth.list_users():
-                active = bool(user["is_active"])
+            users = self.ctx.auth.list_users()
+            rows = [
+                {
+                    **user,
+                    "role_label": ROLE_LABELS.get(str(user["role"]), str(user["role"])),
+                    "status_label": "نشط" if bool(user["is_active"]) else "موقوف",
+                }
+                for user in users
+            ]
+            users_grid.set_rows(rows)
 
-                def toggle(e, user_id=int(user["id"])):
-                    try:
-                        self.ctx.auth.set_active(user_id, bool(e.control.value))
-                        refresh_users()
-                        self.page.update()
-                    except Exception as exc:
-                        self._notify(str(exc), kind="error")
-                        refresh_users()
-                        self.page.update()
+        def user_row_menu(user: dict) -> list:
+            user_id = int(user["id"])
+            active = bool(user.get("is_active"))
 
-                users_list.controls.append(
-                    ft.Container(
+            def toggle_user():
+                try:
+                    self.ctx.auth.set_active(user_id, not active)
+                    refresh_users()
+                    self._notify("تم تفعيل المستخدم" if not active else "تم إيقاف المستخدم")
+                    self.page.update()
+                except Exception as exc:
+                    self._notify(str(exc), kind="error")
+
+            def show_user_details():
+                from nano_offline.components import sheets
+
+                sheet, _ = sheets.new_desktop_sheet(self.page)
+                sheet.content = sheets.sheet_frame(
+                    ft.Column(
+                        [
+                            sheets.sheet_handle(),
+                            ft.Text(str(user.get("full_name") or ""), size=18, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"اسم المستخدم: {user.get('username') or '—'}"),
+                            ft.Text(f"الدور: {ROLE_LABELS.get(str(user.get('role')), str(user.get('role') or '—'))}"),
+                            ft.Text(f"الحالة: {'نشط' if active else 'موقوف'}"),
+                            ft.Text(f"آخر دخول: {user.get('last_login') or 'غير متوفر'}"),
+                            ft.Row(
+                                [
+                                    ft.OutlinedButton(
+                                        "إغلاق",
+                                        on_click=lambda _: self.page.close(sheet),
+                                    ),
+                                    secondary_button(
+                                        "تغيير الحالة",
+                                        icon=ft.Icons.BLOCK if active else ft.Icons.CHECK_CIRCLE_OUTLINE,
+                                        on_click=lambda _: (self.page.close(sheet), toggle_user()),
+                                    ),
+                                ],
+                                spacing=8,
+                            ),
+                        ],
+                        spacing=12,
+                    ),
+                    width=560,
+                )
+                self.page.open(sheet)
+
+            return [
+                ("تفاصيل المستخدم", ft.Icons.PERSON_OUTLINE, show_user_details),
+                None,
+                ("إيقاف المستخدم" if active else "تفعيل المستخدم",
+                 ft.Icons.BLOCK if active else ft.Icons.CHECK_CIRCLE_OUTLINE, toggle_user),
+            ]
+
+        users_grid.on_row_menu = user_row_menu
+        users_grid.on_row_activate = lambda user: user_row_menu(user)[0][2]()
+        users_grid.activate_tooltip = "تفاصيل المستخدم"
+        user_sheet = {"control": None}
+
+        def open_create_user_sheet(_=None):
+            from nano_offline.components import sheets
+
+            sheet, _width = sheets.new_desktop_sheet(self.page)
+            user_sheet["control"] = sheet
+            sheet.content = sheets.sheet_frame(
+                ft.Column(
+                    [
+                        sheets.sheet_handle(),
+                        ft.Text("إنشاء مستخدم", size=18, weight=ft.FontWeight.BOLD),
+                        ft.ResponsiveRow(
+                            [
+                                ft.Container(username, col={"xs": 12, "md": 6}),
+                                ft.Container(full_name, col={"xs": 12, "md": 6}),
+                                ft.Container(password, col={"xs": 12, "md": 6}),
+                                ft.Container(role, col={"xs": 12, "md": 6}),
+                            ],
+                            spacing=10,
+                        ),
                         ft.Row(
                             [
-                                ft.Column(
-                                    [
-                                        ft.Text(str(user["full_name"]), weight=ft.FontWeight.BOLD),
-                                        ft.Text(
-                                            f"{user['username']} • {ROLE_LABELS.get(str(user['role']), user['role'])}",
-                                            size=12,
-                                            color=Colors.TEXT_SECONDARY,
-                                        ),
-                                    ],
-                                    expand=True,
-                                    spacing=2,
+                                ft.TextButton("إلغاء", on_click=lambda _: self.page.close(sheet)),
+                                primary_button(
+                                    "إنشاء المستخدم",
+                                    icon=ft.Icons.PERSON_ADD,
+                                    on_click=create_user,
+                                    width=None,
                                 ),
-                                ft.Switch(value=active, label="نشط", on_change=toggle),
-                            ]
+                            ],
+                            alignment=ft.MainAxisAlignment.END,
+                            spacing=8,
                         ),
-                        padding=10,
-                        border=ft.border.all(1, Colors.BORDER_ALT),
-                        border_radius=10,
-                    )
-                )
+                    ],
+                    spacing=12,
+                ),
+                width=720,
+            )
+            self.page.open(sheet)
 
         def create_user(_):
             try:
@@ -204,6 +310,8 @@ class AdminCenter:
                     role=role.value or "accountant",
                 )
                 username.value = full_name.value = password.value = ""
+                if user_sheet["control"] is not None:
+                    self.page.close(user_sheet["control"])
                 refresh_users()
                 self._notify("تم إنشاء المستخدم")
                 self.page.update()
@@ -214,7 +322,33 @@ class AdminCenter:
 
         backup_name = SelectAllTextField(label="اسم النسخة", value="nano_backup")
         backup_info = ft.Text("", size=12, color=Colors.TEXT_SECONDARY)
-        backup_cards = ft.Column(spacing=8)
+        backup_grid = DataGrid(
+            columns=[
+                GridColumn("name", "اسم النسخة"),
+                GridColumn("modified", "آخر تحديث", width=190),
+                GridColumn("size", "الحجم", width=110, align="end"),
+                GridColumn("status", "سلامة النسخة", width=110, align="center", kind="badge"),
+            ],
+            rows=[],
+            viewport_height=330,
+            boxed=True,
+            center_cells=True,
+            empty_text="لا توجد نسخ احتياطية بعد",
+            activate_tooltip="إجراءات النسخة",
+        )
+        backup_paths: dict[str, Path] = {}
+        backup_rows_data: list[dict] = []
+
+        def sort_backup_rows(key: str | None, direction: str | None):
+            rows = list(backup_rows_data)
+            if key:
+                rows.sort(
+                    key=lambda row: str(row.get(key) or "").casefold(),
+                    reverse=direction == "desc",
+                )
+            backup_grid.set_rows(rows)
+
+        backup_grid.on_sort = sort_backup_rows
         backup_warning_banner = ft.Container(visible=False, padding=10, border_radius=10, bgcolor=Colors.WARNING_BG, border=ft.border.all(1, Colors.WARNING))
 
         def _human_when(mtime: float) -> str:
@@ -235,39 +369,34 @@ class AdminCenter:
                 return f"{kb:.0f} KB"
             return f"{kb / 1024:.1f} MB"
 
-        def _backup_card(path: Path) -> ft.Container:
-            try:
-                stat = path.stat()
-            except FileNotFoundError:
-                return ft.Container(width=0, height=0)
-            try:
-                self.ctx.backup.validate_backup(path)
-                verified = True
-            except Exception:
-                verified = False
+        def backup_row_menu(row: dict) -> list:
+            path = backup_paths.get(str(row.get("name") or ""))
+            if path is None:
+                return []
+            verified = row.get("status") == "سليمة"
 
-            def do_restore(_):
-                # Reuses open_restore_dialog() exactly as-is -- the single
-                # mutated-in-place AlertDialog instance documented above --
-                # only the entry point (a card button instead of a shared
-                # dropdown + separate button) changed.
-                open_restore_dialog(path)
+            def restore():
+                if verified:
+                    open_restore_dialog(path)
+                else:
+                    self._notify("لا يمكن استعادة نسخة لم تجتز التحقق", kind="error")
 
-            async def do_share(_):
+            async def share():
                 if self.native_files is None:
                     self._notify("مشاركة الملفات الأصلية غير مهيأة في هذا البناء")
                     return
                 try:
                     self.ctx.backup.validate_backup(path)
                     await self.native_files.share_file(
-                        str(path), mime_type="application/zip", text=f"نسخة احتياطية من {branding.APP_BRAND}", subject=path.name
+                        str(path), mime_type="application/zip",
+                        text=f"نسخة احتياطية من {branding.APP_BRAND}", subject=path.name,
                     )
                 except Exception as exc:
                     self._notify(str(exc), kind="error")
 
-            def do_delete(_):
-                def confirm_delete(_ev=None):
-                    self.page.close(confirm_dialog)
+            def delete():
+                def confirm_delete(_=None):
+                    self.page.close(dialog)
                     try:
                         path.unlink(missing_ok=True)
                         self._notify(f"تم حذف {path.name}", kind="success", sound_kind="delete")
@@ -276,59 +405,31 @@ class AdminCenter:
                     except Exception as exc:
                         self._notify(str(exc), kind="error")
 
-                confirm_dialog = ft.AlertDialog(
+                dialog = ft.AlertDialog(
                     modal=True,
                     title=ft.Text("حذف النسخة الاحتياطية"),
                     content=ft.Text(f"سيتم حذف {path.name} نهائيًا من هذا الجهاز. لا يمكن التراجع."),
                     actions=[
-                        ft.TextButton("إلغاء", on_click=lambda _: self.page.close(confirm_dialog)),
-                        danger_button("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=confirm_delete),
+                        ft.TextButton("إلغاء", on_click=lambda _: self.page.close(dialog)),
+                        danger_button(
+                            "حذف",
+                            icon=ft.Icons.DELETE_OUTLINE,
+                            on_click=confirm_delete,
+                        ),
                     ],
                 )
-                self.page.open(confirm_dialog)
+                self.page.open(dialog)
 
-            badge_icon, badge_text, badge_color, badge_bg = (
-                (ft.Icons.VERIFIED_ROUNDED, "سليمة", Colors.SUCCESS_DARKER, Colors.SUCCESS_BG)
-                if verified
-                else (ft.Icons.ERROR_OUTLINE_ROUNDED, "تالفة", Colors.DANGER_DARKER, Colors.DANGER_BG)
-            )
+            return [
+                ("استعادة", ft.Icons.RESTORE, restore),
+                ("مشاركة", ft.Icons.SHARE_OUTLINED, share),
+                None,
+                ("حذف", ft.Icons.DELETE_OUTLINE, delete),
+            ]
 
-            return ft.Container(
-                ft.Column(
-                    [
-                        ft.Row(
-                            [
-                                ft.Container(
-                                    ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, color=Colors.PRIMARY, size=20),
-                                    width=38, height=38, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=12,
-                                ),
-                                ft.Column(
-                                    [
-                                        ft.Text(path.name, size=13, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                                        ft.Text(f"{_human_when(stat.st_mtime)} • {_human_size(stat.st_size)}", size=11, color=Colors.TEXT_SECONDARY),
-                                    ],
-                                    spacing=1, expand=True,
-                                ),
-                                ft.Container(
-                                    ft.Row([ft.Icon(badge_icon, size=12, color=badge_color), ft.Text(badge_text, size=10, color=badge_color)], spacing=3, tight=True),
-                                    padding=ft.padding.symmetric(horizontal=8, vertical=4), bgcolor=badge_bg, border_radius=10,
-                                ),
-                            ],
-                            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        ft.Row(
-                            [
-                                ft.OutlinedButton("استرجاع", icon=ft.Icons.RESTORE, on_click=do_restore, disabled=not verified),
-                                ft.OutlinedButton("مشاركة", icon=ft.Icons.SHARE_OUTLINED, on_click=do_share),
-                                ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color=Colors.DANGER, on_click=do_delete, tooltip="حذف"),
-                            ],
-                            spacing=6, wrap=True,
-                        ),
-                    ],
-                    spacing=8,
-                ),
-                padding=12, border=ft.border.all(1, Colors.BORDER_ALT), border_radius=14, bgcolor=Colors.WHITE, shadow=Shadow.SM,
-            )
+        backup_grid.on_row_menu = backup_row_menu
+        backup_grid.on_row_activate = lambda row: backup_row_menu(row)[0][2]()
+        backup_grid.activate_tooltip = "استعادة النسخة"
 
         def refresh_backups():
             files = sorted(
@@ -336,11 +437,27 @@ class AdminCenter:
                 key=lambda p: p.stat().st_mtime if p.exists() else 0,
                 reverse=True,
             )
-            backup_cards.controls = (
-                [_backup_card(p) for p in files]
-                if files
-                else [ft.Container(ft.Text("لا توجد نسخ احتياطية بعد — أنشئ أول نسخة أدناه.", size=12, color=Colors.TEXT_SECONDARY), padding=14, alignment=ft.alignment.center)]
-            )
+            backup_paths.clear()
+            rows = []
+            for path in files:
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue
+                try:
+                    self.ctx.backup.validate_backup(path)
+                    status = "سليمة"
+                except Exception:
+                    status = "تالفة"
+                backup_paths[path.name] = path
+                rows.append({
+                    "name": path.name,
+                    "modified": _human_when(stat.st_mtime),
+                    "size": _human_size(stat.st_size),
+                    "status": status,
+                })
+            backup_rows_data[:] = rows
+            backup_grid.set_rows(rows)
 
             cfg = self.ctx.notifications.get_config()
             backup_cfg = cfg.get("backup", {})
@@ -1712,12 +1829,28 @@ class AdminCenter:
             except Exception as exc:
                 self._notify(str(exc), kind="error")
 
-        audit_rows_view = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, height=400)
+        audit_rows_view = DataGrid(
+            columns=[
+                GridColumn("created_at", "التاريخ", width=185),
+                GridColumn("action_label", "العملية", width=150, kind="badge"),
+                GridColumn("entity_label", "العنصر", width=150),
+                GridColumn("username", "المنفذ", width=140),
+                GridColumn("details", "التفاصيل"),
+            ],
+            rows=[],
+            viewport_height=420,
+            boxed=True,
+            center_cells=True,
+            empty_text="لا توجد أحداث مطابقة",
+            activate_tooltip="تفاصيل سجل التدقيق",
+        )
         audit_search = SelectAllTextField(
             label="بحث في السجل",
             hint_text="إجراء، نوع، مستخدم، تفاصيل…",
             prefix_icon=ft.Icons.SEARCH,
         )
+        audit_from_field = SmartDateField(label="من تاريخ", hint_text="YYYY-MM-DD")
+        audit_to_field = SmartDateField(label="إلى تاريخ", hint_text="YYYY-MM-DD")
         audit_entity_dd = ft.Dropdown(
             label="النوع",
             value="all",
@@ -1741,6 +1874,7 @@ class AdminCenter:
         audit_page_size = 60
         audit_data = {"rows": [], "offset": 0, "has_more": True}
         audit_has_more = {"value": False}
+        audit_filtered_rows: list[dict] = []
         audit_load_more = ft.OutlinedButton(
             "تحميل المزيد",
             icon=ft.Icons.EXPAND_MORE_ROUNDED,
@@ -1787,14 +1921,73 @@ class AdminCenter:
         def _audit_entity_label(entity: str) -> str:
             return _ENTITY_AR.get(str(entity or ""), str(entity or "—"))
 
+        def sort_audit_rows(key: str | None, direction: str | None):
+            rows = list(audit_filtered_rows)
+            if key:
+                rows.sort(
+                    key=lambda row: str(row.get(key) or "").casefold(),
+                    reverse=direction == "desc",
+                )
+            audit_rows_view.set_rows(rows)
+
+        audit_rows_view.on_sort = sort_audit_rows
+        audit_rows_view.formatter = lambda col, value, row: (
+            (str(value), _ACTION_COLOR.get(str(row.get("action") or ""), Colors.TEXT_SECONDARY),
+             Colors.BACKGROUND_ALT)
+            if col.key == "action_label" else None
+        )
+
+        def open_audit_details(row: dict):
+            from nano_offline.components import sheets
+
+            sheet, _width = sheets.new_desktop_sheet(self.page)
+            sheet.content = sheets.sheet_frame(
+                ft.Column(
+                    [
+                        sheets.sheet_handle(),
+                        ft.Text("تفاصيل سجل التدقيق", size=18, weight=ft.FontWeight.BOLD),
+                        ft.Text(f"الوقت: {row.get('created_at') or '—'}"),
+                        ft.Text(f"العملية: {_audit_action_label(str(row.get('action') or ''))}"),
+                        ft.Text(f"العنصر: {_audit_entity_label(str(row.get('entity_type') or ''))} #{row.get('entity_id') or '—'}"),
+                        ft.Text(f"المنفذ: {row.get('username') or 'النظام'}"),
+                        ft.Text(
+                            str(row.get("details") or "لا توجد تفاصيل إضافية"),
+                            selectable=True,
+                        ),
+                        ft.Row(
+                            [
+                                ft.OutlinedButton(
+                                    "إغلاق", on_click=lambda _: self.page.close(sheet)
+                                )
+                            ],
+                            alignment=ft.MainAxisAlignment.END,
+                        ),
+                    ],
+                    spacing=12,
+                ),
+                width=720,
+            )
+            self.page.open(sheet)
+
+        audit_rows_view.on_row_activate = open_audit_details
+        audit_rows_view.on_row_menu = lambda row: [
+            ("عرض التفاصيل", ft.Icons.OPEN_IN_NEW_ROUNDED, lambda r=row: open_audit_details(r))
+        ]
+
         def render_audit():
-            audit_rows_view.controls = []
             q = (audit_search.value or "").strip().casefold()
             ent = audit_entity_dd.value or "all"
+            start = (audit_from_field.value or "").strip()
+            end = (audit_to_field.value or "").strip()
             filtered_rows = []
             for row in audit_data["rows"]:
                 entity = str(row.get("entity_type") or "")
                 if ent != "all" and entity != ent:
+                    continue
+                event_date = str(row.get("created_at") or "")[:10]
+                if start and event_date < start:
+                    continue
+                if end and event_date > end:
                     continue
                 action = str(row.get("action") or "")
                 actor = row.get("username") or "النظام"
@@ -1802,127 +1995,17 @@ class AdminCenter:
                 hay = " ".join([action, entity, actor, details, str(row.get("entity_id") or "")]).casefold()
                 if q and q not in hay:
                     continue
-                filtered_rows.append(row)
+                filtered_rows.append({
+                    **row,
+                    "action_label": _audit_action_label(action),
+                    "entity_label": _audit_entity_label(entity) + (
+                        f" #{row.get('entity_id')}" if row.get("entity_id") not in (None, "") else ""
+                    ),
+                    "username": row.get("username") or "النظام",
+                })
 
-            if not filtered_rows:
-                audit_rows_view.controls.append(
-                    ft.Container(
-                        ft.Column(
-                            [
-                                ft.Icon(ft.Icons.HISTORY_ROUNDED, size=28, color=Colors.TEXT_FAINT),
-                                ft.Text("لا توجد أحداث مطابقة", size=12, color=Colors.TEXT_FAINT),
-                            ],
-                            spacing=8,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        alignment=ft.alignment.center,
-                        padding=24,
-                    )
-                )
-            else:
-                table_rows = []
-                for row in filtered_rows:
-                    action = str(row.get("action") or "")
-                    entity = str(row.get("entity_type") or "")
-                    actor = str(row.get("username") or "النظام")
-                    entity_id = row.get("entity_id")
-                    entity_label = _audit_entity_label(entity)
-                    if entity_id not in (None, ""):
-                        entity_label += f" #{entity_id}"
-                    accent = _ACTION_COLOR.get(action, Colors.TEXT_SECONDARY)
-                    table_rows.append(
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(
-                                    ft.Container(
-                                        ft.Text(
-                                            str(row.get("created_at") or "—"),
-                                            size=11,
-                                            color=Colors.TEXT_SECONDARY,
-                                            max_lines=2,
-                                            overflow=ft.TextOverflow.ELLIPSIS,
-                                        ),
-                                        width=142,
-                                    )
-                                ),
-                                ft.DataCell(
-                                    ft.Container(
-                                        ft.Text(
-                                            _audit_action_label(action),
-                                            size=11,
-                                            weight=ft.FontWeight.W_600,
-                                            color=accent,
-                                            max_lines=2,
-                                            overflow=ft.TextOverflow.ELLIPSIS,
-                                        ),
-                                        width=125,
-                                    )
-                                ),
-                                ft.DataCell(
-                                    ft.Container(
-                                        ft.Text(
-                                            entity_label,
-                                            size=11,
-                                            max_lines=2,
-                                            overflow=ft.TextOverflow.ELLIPSIS,
-                                        ),
-                                        width=120,
-                                    )
-                                ),
-                                ft.DataCell(
-                                    ft.Container(
-                                        ft.Text(
-                                            actor,
-                                            size=11,
-                                            max_lines=2,
-                                            overflow=ft.TextOverflow.ELLIPSIS,
-                                        ),
-                                        width=120,
-                                    )
-                                ),
-                                ft.DataCell(
-                                    ft.Container(
-                                        ft.Text(
-                                            str(row.get("details") or "—"),
-                                            size=11,
-                                            color=Colors.TEXT_SECONDARY,
-                                            max_lines=2,
-                                            overflow=ft.TextOverflow.ELLIPSIS,
-                                            tooltip=str(row.get("details") or ""),
-                                        ),
-                                        width=280,
-                                    )
-                                ),
-                            ],
-                        )
-                    )
-                audit_rows_view.controls.append(
-                    ft.Row(
-                        [
-                            ft.DataTable(
-                                columns=[
-                                    ft.DataColumn(ft.Text("التاريخ")),
-                                    ft.DataColumn(ft.Text("العملية")),
-                                    ft.DataColumn(ft.Text("العنصر")),
-                                    ft.DataColumn(ft.Text("المنفذ")),
-                                    ft.DataColumn(ft.Text("التفاصيل")),
-                                ],
-                                rows=table_rows,
-                                column_spacing=12,
-                                horizontal_margin=12,
-                                heading_row_height=44,
-                                data_row_min_height=54,
-                                data_row_max_height=70,
-                                divider_thickness=1,
-                                heading_row_color=Colors.BACKGROUND_ALT,
-                                border=ft.border.all(1, Colors.BORDER),
-                                border_radius=Radius.MD,
-                                show_bottom_border=True,
-                            )
-                        ],
-                        scroll=ft.ScrollMode.AUTO,
-                    )
-                )
+            audit_filtered_rows[:] = filtered_rows
+            audit_rows_view.set_rows(filtered_rows)
 
             audit_has_more["value"] = audit_data["has_more"]
             audit_load_more.visible = audit_has_more["value"]
@@ -1962,6 +2045,20 @@ class AdminCenter:
         def refresh_audit(_=None):
             fetch_audit_page(reset=True)
 
+        def set_audit_period(period: str):
+            today_value = datetime.now().date()
+            if period == "month":
+                audit_from_field.value = today_value.replace(day=1).isoformat()
+                audit_to_field.value = today_value.isoformat()
+            elif period == "30":
+                from datetime import timedelta
+                audit_from_field.value = (today_value - timedelta(days=29)).isoformat()
+                audit_to_field.value = today_value.isoformat()
+            else:
+                audit_from_field.value = ""
+                audit_to_field.value = ""
+            refresh_audit_from_filter()
+
         def load_more_audit(_=None):
             if not audit_has_more["value"]:
                 return
@@ -1974,6 +2071,8 @@ class AdminCenter:
 
         audit_search.on_change = refresh_audit_from_filter
         audit_entity_dd.on_change = refresh_audit_from_filter
+        audit_from_field.on_change = refresh_audit_from_filter
+        audit_to_field.on_change = refresh_audit_from_filter
         refresh_audit()
 
         # --- Modern layout: one focused section at a time behind a
@@ -2618,16 +2717,20 @@ class AdminCenter:
             "users": self._section(
                 "المستخدمون المحليون",
                 [
-                    ft.ResponsiveRow(
+                    ft.Row(
                         [
-                            ft.Container(username, col={"xs": 12, "md": 3}),
-                            ft.Container(full_name, col={"xs": 12, "md": 3}),
-                            ft.Container(password, col={"xs": 12, "md": 3}),
-                            ft.Container(role, col={"xs": 12, "md": 3}),
+                            ft.Text("المستخدمون والصلاحيات", size=13, color=Colors.TEXT_SECONDARY),
+                            ft.Container(expand=True),
+                            primary_button(
+                                "مستخدم جديد",
+                                icon=ft.Icons.PERSON_ADD,
+                                on_click=open_create_user_sheet,
+                                width=None,
+                                size="md",
+                            ),
                         ]
                     ),
-                    primary_button("إنشاء مستخدم", icon=ft.Icons.PERSON_ADD, on_click=create_user, width=None, size="md"),
-                    users_list,
+                    users_grid,
                 ],
             ),
             "backup": self._section(
@@ -2650,7 +2753,7 @@ class AdminCenter:
                     ),
                     primary_button("استيراد نسخة من الجهاز", icon=ft.Icons.UPLOAD_FILE, on_click=import_external_backup, width=None, size="md"),
                     ft.Text("النسخ المحفوظة", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
-                    backup_cards,
+                    backup_grid,
                     backup_info,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("إعدادات النسخ الاحتياطي", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
@@ -2838,6 +2941,11 @@ class AdminCenter:
                         [
                             ft.Container(audit_search, width=280),
                             audit_entity_dd,
+                            audit_from_field,
+                            audit_to_field,
+                            ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_audit_period("month")),
+                            ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_audit_period("30")),
+                            ft.OutlinedButton("كل الفترة", on_click=lambda _: set_audit_period("all")),
                             ft.Container(expand=True),
                             ft.OutlinedButton("تحديث", icon=ft.Icons.REFRESH, on_click=refresh_audit),
                         ],
@@ -3162,53 +3270,41 @@ class AdminCenter:
             ("reports", "التقارير", ft.Icons.BAR_CHART_OUTLINED),
             ("audit", "سجل التدقيق", ft.Icons.HISTORY),
         ]
-        # Group the sections so the command strip stays compact (4 group
-        # buttons with submenus) instead of 16 flat buttons.
-        ADMIN_GROUPS = [
-            ("setup", "الإعداد والتخصيص", ft.Icons.TUNE_ROUNDED,
-             ("appearance", "branding", "users", "license")),
-            ("ops", "العمليات والمخزون", ft.Icons.STORE_OUTLINED,
-             ("barcode", "invoice", "pos", "lan", "stocktake", "crisis")),
-            ("data", "البيانات والتقارير", ft.Icons.INSERT_CHART_OUTLINED,
-             ("backup", "reports", "audit", "server")),
-            ("assist", "الصوت والمساعد", ft.Icons.RECORD_VOICE_OVER_OUTLINED,
-             ("sound", "voice")),
-        ]
         initial = getattr(self, "_pending_section", None) or "users"
         self._pending_section = None
         tab_state = {"active": initial}
+        section_nav = ft.Row(wrap=True, spacing=8, run_spacing=8)
 
         for key, panel in section_panels.items():
             panel.visible = key == tab_state["active"]
 
-        def _publish_actions() -> None:
-            # Compact, grouped navigation in the shell's command strip: four
-            # group buttons, each opening a submenu of its sections (the
-            # active group is accented and its active section is ticked).
-            if not self.on_context_actions:
-                return
-            tabs_map = {key: (label, icon) for key, label, icon in TABS}
-            group_for = {sec: g for g, _l, _i, secs in ADMIN_GROUPS for sec in secs}
-            active_group = group_for.get(tab_state["active"])
-            actions = []
-            for group_key, group_label, group_icon, sections in ADMIN_GROUPS:
-                items = []
-                for section_key in sections:
-                    if section_key not in section_panels or section_key not in tabs_map:
-                        continue
-                    section_label, section_icon = tabs_map[section_key]
-                    prefix = "✓ " if section_key == tab_state["active"] else ""
-                    items.append(
-                        (prefix + section_label, section_icon,
-                         (lambda k=section_key: switch_section(k)))
-                    )
-                actions.append(
-                    RibbonAction(
-                        group_key, group_label, group_icon,
-                        items=items, accent=(group_key == active_group),
+        def _render_section_nav() -> None:
+            section_nav.controls = []
+            for key, label, icon in TABS:
+                active = key == tab_state["active"]
+                section_nav.controls.append(
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(icon, size=15, color=Colors.WHITE if active else Colors.TEXT_MUTED),
+                                ft.Text(
+                                    label,
+                                    size=11,
+                                    weight=ft.FontWeight.W_600,
+                                    color=Colors.WHITE if active else Colors.TEXT_MUTED,
+                                ),
+                            ],
+                            spacing=6,
+                            tight=True,
+                        ),
+                        padding=ft.padding.symmetric(horizontal=12, vertical=9),
+                        bgcolor=Colors.PRIMARY if active else Colors.WHITE,
+                        border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
+                        border_radius=20,
+                        ink=True,
+                        on_click=lambda _, section=key: switch_section(section),
                     )
                 )
-            self.on_context_actions(actions)
 
         def switch_section(key: str):
             if key == tab_state["active"] or key not in section_panels:
@@ -3216,17 +3312,23 @@ class AdminCenter:
             tab_state["active"] = key
             for k, panel in section_panels.items():
                 panel.visible = k == key
-            _publish_actions()
+            _render_section_nav()
             self.page.update()
 
-        _publish_actions()
+        _render_section_nav()
+        if self.on_context_actions:
+            self.on_context_actions([])
 
         self.content.content = ft.Column(
             [
                 status_strip,
-                ft.Column(list(section_panels.values()), spacing=12),
+                section_nav,
+                ft.Container(
+                    ft.Column(list(section_panels.values()), spacing=12, scroll=ft.ScrollMode.AUTO, expand=True),
+                    expand=True,
+                ),
             ],
-            scroll=ft.ScrollMode.AUTO,
             spacing=14,
+            expand=True,
         )
         self.page.update()

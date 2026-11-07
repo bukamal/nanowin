@@ -25,7 +25,7 @@ assert '"إجمالي الفواتير"' in parties_view
 assert '"آخر الفواتير"' in dashboard_view
 
 for token in [
-    '"سند مصروف"',
+    '"مصروف جديد"',
     '"إجمالي القبض"',
     '"إجمالي الدفع"',
     # Print now goes through the shared paper-profile dialog (sheet/roll,

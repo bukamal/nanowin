@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv as _csv
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import flet as ft
@@ -10,7 +10,6 @@ import flet as ft
 from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SelectAllTextField, SmartAmountField, SmartDateField, empty_state, kpi_card, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
-from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components.money_text import money_row
@@ -48,6 +47,61 @@ EXPENSE_GRID_COLUMNS = [
     GridColumn("reference", "المرجع", width=130, tooltip="رقم أو مرجع المستند — يُخفى تلقائيًا على الشاشات الضيقة"),
     GridColumn("_receipt", "الإيصال", width=80, align="center", kind="badge", sortable=False, tooltip="صورة إيصال مرفقة"),
     GridColumn("amount", "المبلغ", width=120, align="end", kind="money", tooltip="قيمة المصروف"),
+]
+
+PARTY_STATEMENT_GRID_COLUMNS = [
+    GridColumn("entry_date", "التاريخ", width=105, align="center"),
+    GridColumn("source_label", "المصدر", width=95, align="center", kind="badge"),
+    GridColumn("description", "البيان"),
+    GridColumn("debit", "مدين", width=115, align="end", kind="money"),
+    GridColumn("credit", "دائن", width=115, align="end", kind="money"),
+    GridColumn("movement", "الحركة", width=115, align="end", kind="money"),
+    GridColumn("balance", "الرصيد", width=125, align="end", kind="money"),
+]
+
+LEDGER_GRID_COLUMNS = [
+    GridColumn("entry_date", "التاريخ", width=105, align="center"),
+    GridColumn("source_label", "المصدر", width=95, align="center", kind="badge"),
+    GridColumn("party_name", "الطرف", width=170),
+    GridColumn("description", "البيان"),
+    GridColumn("debit", "مدين", width=115, align="end", kind="money"),
+    GridColumn("credit", "دائن", width=115, align="end", kind="money"),
+    GridColumn("movement", "الحركة", width=115, align="end", kind="money"),
+    GridColumn("balance", "الرصيد", width=125, align="end", kind="money"),
+]
+
+TRIAL_BALANCE_GRID_COLUMNS = [
+    GridColumn("code", "الحساب", width=100, align="center"),
+    GridColumn("label", "اسم الحساب"),
+    GridColumn("debit", "مدين", width=145, align="end", kind="money"),
+    GridColumn("credit", "دائن", width=145, align="end", kind="money"),
+    GridColumn("balance", "الرصيد", width=145, align="end", kind="money"),
+]
+
+COLLECTION_GRID_COLUMNS = [
+    GridColumn("invoice_id", "الفاتورة", width=85, align="center", kind="number"),
+    GridColumn("party_name", "العميل"),
+    GridColumn("invoice_date", "تاريخ الفاتورة", width=110, align="center"),
+    GridColumn("due_date", "الاستحقاق", width=110, align="center"),
+    GridColumn("days_until_due", "أيام للاستحقاق", width=110, align="center", kind="number"),
+    GridColumn("remaining_amount", "المتبقي", width=130, align="end", kind="money"),
+]
+
+COMMITMENT_GRID_COLUMNS = [
+    GridColumn("invoice_id", "الفاتورة", width=85, align="center", kind="number"),
+    GridColumn("invoice_type", "النوع", width=95, align="center", kind="badge"),
+    GridColumn("party_name", "الحساب"),
+    GridColumn("due_date", "الاستحقاق", width=110, align="center"),
+    GridColumn("days_until_due", "أيام", width=70, align="center", kind="number"),
+    GridColumn("remaining_amount", "المتبقي", width=130, align="end", kind="money"),
+]
+
+ANOMALY_GRID_COLUMNS = [
+    GridColumn("category", "التصنيف"),
+    GridColumn("current_month_to_date", "هذا الشهر", width=130, align="end", kind="money"),
+    GridColumn("expected_to_date", "المتوقع", width=130, align="end", kind="money"),
+    GridColumn("difference", "الزيادة", width=130, align="end", kind="money"),
+    GridColumn("increase_percent", "نسبة الزيادة", width=110, align="end", kind="number"),
 ]
 
 
@@ -105,6 +159,10 @@ class FinanceCenter:
         if self.on_title_change:
             self.on_title_change(title, subtitle)
 
+    def _clear_context_actions(self) -> None:
+        if self.on_context_actions:
+            self.on_context_actions([])
+
     def _nav_chip(self, label: str, icon, *, active: bool, on_click) -> ft.Container:
         # Same pill language as the filter chips used on this screen (and
         # on items_view's list) -- a page-level tab bar built out of
@@ -129,6 +187,7 @@ class FinanceCenter:
 
     def _section_nav(self, active: str) -> ft.Row:
         items = [
+            ("overview", "المؤشرات المالية", ft.Icons.QUERY_STATS_OUTLINED, self.show_overview),
             ("vouchers", "السندات", ft.Icons.RECEIPT_LONG_OUTLINED, self.show_vouchers),
             ("expenses", "المصروفات", ft.Icons.PAYMENTS_OUTLINED, self.show_expenses),
             ("customers", "كشف العملاء", ft.Icons.PEOPLE_ALT_OUTLINED, lambda: self.show_statements("customer")),
@@ -162,7 +221,321 @@ class FinanceCenter:
     def show_center(self) -> None:
         self.show_vouchers()
 
+    def show_overview(self) -> None:
+        self._clear_context_actions()
+        self._active_finance_view = "overview"
+        self._set_header("المؤشرات المالية", "أولوية التحصيل، الالتزامات المستحقة، ومراجعة الصندوق")
+        today = date.today().isoformat()
+        collections = self.ctx.reports.collection_priorities(as_of=today)
+        commitments = self.ctx.reports.cash_commitments(as_of=today)
+        anomalies = self.ctx.reports.expense_anomalies(as_of=today)
+        last_close = self.ctx.cash_day_close.last_close()
+        buckets = commitments["buckets"]
+
+        def sort_overview_grid(grid, rows: list[dict], key: str | None, direction: str | None) -> None:
+            ordered = list(rows)
+            if key:
+                numeric = {
+                    "invoice_id", "days_overdue", "days_until_due", "remaining_amount",
+                    "days_until_due", "current_month_to_date",
+                    "expected_to_date", "difference", "increase_percent",
+                }
+                ordered.sort(
+                    key=lambda row: (
+                        float(row.get(key) or 0) if key in numeric
+                        else str(row.get(key) or "")
+                    ),
+                    reverse=direction == "desc",
+                )
+            grid.set_rows(ordered)
+
+        summary = metric_row([
+            kpi_card("ذمم العملاء", "", ft.Icons.PEOPLE_ALT_OUTLINED, Colors.PRIMARY,
+                     amount_usd=collections["total_outstanding"], settings=self.ctx.settings),
+            kpi_card("متأخر للتحصيل", "", ft.Icons.SCHEDULE, Colors.DANGER_DARK,
+                     amount_usd=collections["overdue_total"], settings=self.ctx.settings),
+            kpi_card("رصيد الصندوق", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS,
+                     amount_usd=commitments["book_cash"], settings=self.ctx.settings),
+            kpi_card("صافي الاستحقاق خلال 7 أيام", "", ft.Icons.EVENT_NOTE_OUTLINED,
+                     Colors.WARNING_DARK, amount_usd=commitments["net_next_7_days"],
+                     settings=self.ctx.settings),
+            kpi_card("صافي الاستحقاق خلال 30 يومًا", "", ft.Icons.CALENDAR_MONTH_OUTLINED,
+                     Colors.PURPLE, amount_usd=commitments["net_next_30_days"],
+                     settings=self.ctx.settings),
+            kpi_card("مصروفات تستحق المراجعة", str(len(anomalies["anomalies"])),
+                     ft.Icons.TRENDING_UP, Colors.ORANGE),
+        ], spacing=8)
+
+        collection_grid = DataGrid(
+            columns=COLLECTION_GRID_COLUMNS,
+            rows=collections["invoices"],
+            viewport_height=250,
+            boxed=True,
+            center_cells=True,
+            on_sort=lambda key, direction: sort_overview_grid(
+                collection_grid, collections["invoices"], key, direction
+            ),
+            empty_text="لا توجد ذمم مفتوحة",
+            activate_tooltip="فتح الفاتورة",
+            on_row_activate=lambda row: self.on_open_invoice(int(row["invoice_id"]))
+            if self.on_open_invoice else None,
+            on_row_menu=lambda row: [
+                ("فتح الفاتورة", ft.Icons.OPEN_IN_NEW_ROUNDED,
+                 lambda selected=row: self.on_open_invoice(int(selected["invoice_id"])))
+            ] if self.on_open_invoice else [],
+            row_bg=lambda row: (
+                Colors.DANGER_BG if row.get("due_status") == "overdue"
+                else Colors.WARNING_BG if row.get("due_status") == "due_today"
+                else None
+            ),
+            formatter=lambda col, value, row: (
+                self.money(value) if col.kind == "money"
+                else "بلا تاريخ استحقاق" if col.key == "due_date" and not value
+                else f"{value:+d}" if col.key == "days_until_due" and value is not None
+                else str(value or "—")
+            ),
+        )
+        commitment_grid = DataGrid(
+            columns=COMMITMENT_GRID_COLUMNS,
+            rows=commitments["rows"],
+            viewport_height=250,
+            boxed=True,
+            center_cells=True,
+            on_sort=lambda key, direction: sort_overview_grid(
+                commitment_grid, commitments["rows"], key, direction
+            ),
+            empty_text="لا توجد فواتير بتاريخ استحقاق معلوم",
+            activate_tooltip="فتح الفاتورة",
+            on_row_activate=lambda row: self.on_open_invoice(int(row["invoice_id"]))
+            if self.on_open_invoice else None,
+            on_row_menu=lambda row: [
+                ("فتح الفاتورة", ft.Icons.OPEN_IN_NEW_ROUNDED,
+                 lambda selected=row: self.on_open_invoice(int(selected["invoice_id"])))
+            ] if self.on_open_invoice else [],
+            formatter=lambda col, value, row: (
+                self.money(value) if col.kind == "money"
+                else ("بيع — قبض متوقع" if value == "sale" else "شراء — دفع متوقع")
+                if col.key == "invoice_type"
+                else f"{value:+d}" if col.key == "days_until_due" and value is not None
+                else str(value or "—")
+            ),
+            row_bg=lambda row: Colors.DANGER_BG if int(row.get("days_until_due") or 0) < 0 else None,
+        )
+        anomaly_grid = DataGrid(
+            columns=ANOMALY_GRID_COLUMNS,
+            rows=anomalies["anomalies"],
+            viewport_height=210,
+            boxed=True,
+            center_cells=True,
+            on_sort=lambda key, direction: sort_overview_grid(
+                anomaly_grid, anomalies["anomalies"], key, direction
+            ),
+            empty_text="لا توجد زيادة غير معتادة وفق المقارنة المتاحة",
+            formatter=lambda col, value, row: (
+                self.money(value) if col.kind == "money"
+                else f"{float(value):.0f}%" if col.key == "increase_percent" and value is not None
+                else "جديد" if col.key == "increase_percent" and value is None
+                else str(value or "—")
+            ),
+        )
+
+        close_note = (
+            f"آخر إغلاق {last_close.get('date', '—')} — الفرق عند الإغلاق "
+            f"{self.money(last_close.get('variance', 0))}"
+            if last_close else "لم يُسجّل إغلاق للصندوق بعد."
+        )
+        dated_note = (
+            f"الاستحقاقات مبنية على مدد السداد المحددة لكل فاتورة. "
+            f"دون تاريخ استحقاق: {commitments['undated_invoice_count']} فاتورة؛ "
+            "لن تُدرج في صافي الاستحقاق."
+        )
+
+        async def export_finance_snapshot(_=None):
+            if self.native_files is None:
+                self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_finance_overview_{datetime.now():%Y%m%d_%H%M%S}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as stream:
+                    writer = _csv.writer(stream)
+                    writer.writerow(["البيان", "التاريخ", "الطرف/التصنيف", "الاستحقاق", "المبلغ", "ملاحظات"])
+                    for row in collections["invoices"]:
+                        writer.writerow([
+                            "أولوية تحصيل", row.get("invoice_date"), row.get("party_name"),
+                            row.get("due_date") or "بلا استحقاق", row.get("remaining_amount"),
+                            row.get("due_status"),
+                        ])
+                    for row in commitments["rows"]:
+                        writer.writerow([
+                            "التزام/استحقاق", row.get("due_date"), row.get("party_name"),
+                            row.get("due_date"), row.get("remaining_amount"),
+                            "بيع — قبض متوقع" if row["invoice_type"] == "sale" else "شراء — دفع متوقع",
+                        ])
+                    for row in anomalies["anomalies"]:
+                        writer.writerow([
+                            "ارتفاع مصروف", today, row.get("category"), "",
+                            row.get("difference"),
+                            f"الحالي {row['current_month_to_date']}، المتوقع {row['expected_to_date']}",
+                        ])
+                await self.native_files.share_file(
+                    str(path), mime_type="text/csv", subject="تصدير المؤشرات المالية"
+                )
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        def close_cash_day(_=None):
+            counted_field = SelectAllTextField(
+                label=currency.amount_field_label("النقد المعدود", self.ctx.settings),
+                value=currency.to_input_text(commitments["book_cash"], self.ctx.settings),
+                keyboard_type=ft.KeyboardType.NUMBER,
+                prefix_icon=ft.Icons.PAYMENTS_OUTLINED,
+            )
+            note_field = SelectAllTextField(label="ملاحظة", multiline=True, min_lines=1, max_lines=3)
+            post_adjustment = ft.Switch(label="ترحيل تسوية للفرق", value=True)
+            print_after = ft.Switch(label="طباعة تقرير الإغلاق بعد الحفظ", value=True)
+            preview = ft.Text("", color=Colors.TEXT_SECONDARY)
+            dialog = ft.AlertDialog(modal=True, title=ft.Text("مطابقة وإغلاق الصندوق"))
+
+            def update_preview(_=None):
+                try:
+                    counted = currency.parse_display_input(counted_field.value, self.ctx.settings)
+                    variance = counted - float(commitments["book_cash"])
+                    preview.value = f"دفتر الصندوق: {self.money(commitments['book_cash'])} — الفرق: {self.money(variance)}"
+                    preview.color = Colors.SUCCESS if abs(variance) < 1e-6 else Colors.WARNING_DARK
+                except Exception:
+                    preview.value = "أدخل مبلغًا صحيحًا"
+                    preview.color = Colors.DANGER_DARK
+                try:
+                    preview.update()
+                except Exception:
+                    pass
+
+            def save_close(_=None):
+                try:
+                    counted = currency.parse_display_input(counted_field.value, self.ctx.settings)
+                    session = self.ctx.auth.current()
+                    result = self.ctx.cash_day_close.close_day(
+                        counted_cash=counted,
+                        note=note_field.value or "",
+                        post_adjustment=bool(post_adjustment.value),
+                        username=getattr(session, "username", None),
+                        user_id=getattr(session, "id", None),
+                    )
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+                    return
+                self.page.close(dialog)
+                self.notify(
+                    f"تم تسجيل الإغلاق — الفرق {self.money(result['variance'])}"
+                    + (" (رُحّلت تسوية)" if result.get("adjustment_posted") else ""),
+                    kind="success",
+                    sound_kind="save",
+                )
+                if print_after.value and self.native_files is not None:
+                    try:
+                        movement = self.ctx.cash_day_close.today_cash_movement()
+                        try:
+                            today_summary = self.ctx.dashboard.today_summary()
+                            today_summary = {
+                                "today_sales": float(
+                                    today_summary.get("total") or today_summary.get("sales") or 0
+                                )
+                            }
+                        except Exception:
+                            today_summary = {}
+                        html = self.ctx.documents.day_close_html(
+                            result, movement=movement, summary=today_summary
+                        )
+
+                        async def print_selected(layout: str, width: int):
+                            try:
+                                await self.native_files.print_html(
+                                    apply_print_profile(html, layout, width),
+                                    name="nano-day-close",
+                                    paper_layout=layout,
+                                    roll_width_mm=width,
+                                )
+                            except Exception as exc:
+                                self.notify(str(exc), kind="error")
+
+                        open_print_profile_dialog(
+                            self.page,
+                            self.ctx.settings,
+                            print_selected,
+                            surface="dashboard",
+                            native_files=self.native_files,
+                            preview_builder=lambda _layout, _width: html,
+                        )
+                    except Exception as exc:
+                        self.notify(f"تعذر تجهيز تقرير الإغلاق: {exc}", kind="warning")
+                self.show_overview()
+                self._changed()
+
+            counted_field.on_change = update_preview
+            update_preview()
+            dialog.content = ft.Column(
+                [counted_field, note_field, preview, post_adjustment, print_after],
+                tight=True,
+                spacing=10,
+                width=520,
+            )
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=lambda _: self.page.close(dialog)),
+                primary_button("تسجيل الإغلاق", icon=ft.Icons.CHECK, on_click=save_close),
+            ]
+            self.page.open(dialog)
+
+        header = ft.Container(
+            ft.Column(
+                [
+                    self._section_nav("overview"),
+                    ft.Row(
+                        [ft.Text(f"ملخص حتى {today}", color=Colors.TEXT_SECONDARY),
+                         ft.Container(expand=True),
+                         ft.OutlinedButton("تصدير المؤشرات", icon=ft.Icons.DOWNLOAD_OUTLINED, on_click=export_finance_snapshot),
+                         primary_button("مطابقة وإغلاق الصندوق", icon=ft.Icons.CHECK_CIRCLE_OUTLINE, on_click=close_cash_day)],
+                        spacing=10,
+                    ),
+                ],
+                spacing=10,
+            ),
+            padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
+            bgcolor=Colors.WHITE,
+            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+            shadow=Shadow.SM,
+        )
+        body = ft.Column(
+            [
+                summary,
+                ft.Text("أولوية التحصيل", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text("الترتيب حسب الفواتير المتأخرة الفعلية وتاريخ الاستحقاق المحفوظ؛ غير المحدد لا يُعد متأخرًا.", size=11, color=Colors.TEXT_SECONDARY),
+                collection_grid,
+                ft.Text("الالتزامات والاستحقاقات", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text(dated_note, size=11, color=Colors.TEXT_SECONDARY),
+                commitment_grid,
+                ft.Text("مصروفات أعلى من المعتاد", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    f"مقارنة الشهر حتى اليوم بمتوسط {anomalies['baseline_months']} أشهر سابقة مع مراعاة الأيام المنقضية. "
+                    "إشارة للمراجعة وليست حكمًا بوجود خطأ.",
+                    size=11, color=Colors.TEXT_SECONDARY,
+                ),
+                anomaly_grid,
+                ft.Text(close_note, size=11, color=Colors.TEXT_SECONDARY),
+                ft.Container(height=20),
+            ],
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+        self.content.content = ft.Column(
+            [header, ft.Container(body, expand=True, padding=16)],
+            spacing=0,
+            expand=True,
+        )
+        self.page.update()
+
     def show_vouchers(self) -> None:
+        self._clear_context_actions()
         self._active_finance_view = "vouchers"
         self._set_header("السندات", "سندات القبض والدفع والمصروفات وربطها بالفواتير")
         search = SelectAllTextField(
@@ -171,6 +544,8 @@ class FinanceCenter:
             prefix_icon=ft.Icons.SEARCH,
             on_focus=lambda e: grid.disarm(),
         )
+        date_from = SmartDateField(label="من تاريخ", hint_text="YYYY-MM-DD")
+        date_to = SmartDateField(label="إلى تاريخ", hint_text="YYYY-MM-DD")
         summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
         summary_toggle = self._summary_toggle(summary)
         filter_state = {"type": "all"}
@@ -219,7 +594,7 @@ class FinanceCenter:
             columns=VOUCHER_GRID_COLUMNS,
             settings=self.ctx.settings,
             preference_key="ui.vouchers_hidden_columns",
-            auto_hidden={"voucher_date", "unallocated_amount"} if (self.page.width or 1200) < 720 else set(),
+            auto_hidden=set(),
             on_change=lambda: (
                 grid.set_hidden_keys(columns_visibility.hidden_keys),
                 self.page.update(),
@@ -416,23 +791,30 @@ class FinanceCenter:
 
         def refresh(_=None):
             vouchers = self.ctx.payments.list_vouchers()
-            receipts = sum(float(v.get("amount") or 0) for v in vouchers if v.get("voucher_type") == "receipt")
-            payments = sum(float(v.get("amount") or 0) for v in vouchers if v.get("voucher_type") == "payment")
-            unallocated_total = sum(float(v.get("unallocated_amount") or 0) for v in vouchers)
-            summary.controls = metric_controls([
-                kpi_card("إجمالي القبض", "", ft.Icons.ADD_CARD, Colors.SUCCESS, on_tap=lambda _: set_filter("receipt"), amount_usd=receipts, settings=self.ctx.settings),
-                kpi_card("إجمالي الدفع", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER, on_tap=lambda _: set_filter("payment"), amount_usd=payments, settings=self.ctx.settings),
-                kpi_card("رصيد غير موزع", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=unallocated_total, settings=self.ctx.settings),
-            ])
             q = (search.value or "").strip().casefold()
+            start = (date_from.value or "").strip()
+            end = (date_to.value or "").strip()
             filtered = []
             for v in vouchers:
                 if filter_state["type"] != "all" and v.get("voucher_type") != filter_state["type"]:
+                    continue
+                voucher_date = str(v.get("voucher_date") or "")
+                if start and voucher_date < start:
+                    continue
+                if end and voucher_date > end:
                     continue
                 hay = f"{v.get('id','')} {v.get('party_name','')} {v.get('reference','')}".casefold()
                 if q and q not in hay:
                     continue
                 filtered.append(v)
+            receipts = sum(float(v.get("amount") or 0) for v in filtered if v.get("voucher_type") == "receipt")
+            payments = sum(float(v.get("amount") or 0) for v in filtered if v.get("voucher_type") == "payment")
+            unallocated_total = sum(float(v.get("unallocated_amount") or 0) for v in filtered)
+            summary.controls = metric_controls([
+                kpi_card("إجمالي القبض", "", ft.Icons.ADD_CARD, Colors.SUCCESS, on_tap=lambda _: set_filter("receipt"), amount_usd=receipts, settings=self.ctx.settings),
+                kpi_card("إجمالي الدفع", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER, on_tap=lambda _: set_filter("payment"), amount_usd=payments, settings=self.ctx.settings),
+                kpi_card("غير موزع في النتائج", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=unallocated_total, settings=self.ctx.settings),
+            ])
             if grid_sort["key"]:
                 sort_key = grid_sort["key"]
                 reverse = grid_sort["dir"] == "desc"
@@ -489,6 +871,17 @@ class FinanceCenter:
 
         search.on_change = refresh_from_search
 
+        def set_period(period: str):
+            today_value = date.today()
+            if period == "month":
+                date_from.value, date_to.value = today_value.replace(day=1).isoformat(), today_value.isoformat()
+            elif period == "30":
+                date_from.value, date_to.value = (today_value - timedelta(days=29)).isoformat(), today_value.isoformat()
+            else:
+                date_from.value, date_to.value = "", ""
+            render_limit["n"] = 60
+            refresh()
+
         # Same sticky-header / scrolling-body split as invoice_view and
         # items_view: the section tabs, search, and type filters live in a
         # bordered white bar that stays put, while the KPI cards and the
@@ -505,9 +898,40 @@ class FinanceCenter:
                             ft.Container(search, width=280),
                             type_filter,
                             ft.Container(expand=True),
+                            primary_button(
+                                "سند قبض",
+                                icon=ft.Icons.ADD_CARD,
+                                on_click=lambda _: self.show_voucher_dialog(None, "receipt"),
+                                width=None,
+                                size="md",
+                            ),
+                            secondary_button(
+                                "سند دفع",
+                                icon=ft.Icons.PAYMENTS_OUTLINED,
+                                on_click=lambda _: self.show_voucher_dialog(None, "payment"),
+                                width=None,
+                                size="md",
+                            ),
+                            secondary_button(
+                                "مصروف جديد",
+                                icon=ft.Icons.RECEIPT_OUTLINED,
+                                on_click=lambda _: self.show_expense_dialog(),
+                                width=None,
+                                size="md",
+                            ),
                             columns_button,
                             export_button,
                             density_button,
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            date_from, date_to,
+                            ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_period("month")),
+                            ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_period("30")),
+                            ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
+                            ft.FilledButton("تطبيق", icon=ft.Icons.FILTER_ALT_OUTLINED, on_click=refresh_from_search),
                         ],
                         spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -523,6 +947,7 @@ class FinanceCenter:
         scroll_body = ft.Container(
             ft.Column(
                 [
+                    ft.Text("ملخص القيم مطابق لنتائج البحث والتصفية والفترة المحددة.", size=10, color=Colors.TEXT_SECONDARY),
                     summary,
                     list_switch,
                 ],
@@ -538,12 +963,6 @@ class FinanceCenter:
         # Creation actions live in the shell's contextual ribbon now (the old
         # floating speed-dial was mobile chrome): one button per voucher type
         # so قبض / دفع / مصروف stay one click away from any finance tab.
-        if self.on_context_actions is not None:
-            self.on_context_actions([
-                RibbonAction("new_receipt", "سند قبض", ft.Icons.ADD_CARD, accent=True, on_click=lambda _=None: self.show_voucher_dialog(None, "receipt")),
-                RibbonAction("new_payment", "سند دفع", ft.Icons.PAYMENTS_OUTLINED, on_click=lambda _=None: self.show_voucher_dialog(None, "payment")),
-                RibbonAction("new_expense", "سند مصروف", ft.Icons.RECEIPT_OUTLINED, on_click=lambda _=None: self.show_expense_dialog()),
-            ])
         refresh()
 
     def _voucher_html(self, voucher: dict) -> str:
@@ -879,6 +1298,7 @@ class FinanceCenter:
         self.page.open(dialog)
 
     def show_expenses(self) -> None:
+        self._clear_context_actions()
         self._active_finance_view = "expenses"
         self._set_header("المصروفات", "تسجيل ومتابعة مصروفات النشاط")
         search = SelectAllTextField(
@@ -887,9 +1307,10 @@ class FinanceCenter:
             prefix_icon=ft.Icons.SEARCH,
             on_focus=lambda e: grid.disarm(),
         )
+        date_from = SmartDateField(label="من تاريخ", hint_text="YYYY-MM-DD")
+        date_to = SmartDateField(label="إلى تاريخ", hint_text="YYYY-MM-DD")
         summary = ft.ResponsiveRow(spacing=8, run_spacing=8)
         summary_toggle = self._summary_toggle(summary)
-        filter_state = {"month_only": False}
         # Same client-visible paging as parties/items/invoices/vouchers —
         # see parties_view.py.
         render_limit = {"n": 60}
@@ -903,7 +1324,7 @@ class FinanceCenter:
             columns=EXPENSE_GRID_COLUMNS,
             settings=self.ctx.settings,
             preference_key="ui.expenses_hidden_columns",
-            auto_hidden={"reference"} if (self.page.width or 1200) < 720 else set(),
+            auto_hidden=set(),
             on_change=lambda: (
                 grid.set_hidden_keys(columns_visibility.hidden_keys),
                 self.page.update(),
@@ -1085,28 +1506,28 @@ class FinanceCenter:
         desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
         list_switch = ft.Container(content=desktop_list)
 
-        def toggle_month(_=None):
-            filter_state["month_only"] = not filter_state["month_only"]
+        def set_period(period: str):
+            today_value = date.today()
+            if period == "month":
+                date_from.value, date_to.value = today_value.replace(day=1).isoformat(), today_value.isoformat()
+            elif period == "30":
+                date_from.value, date_to.value = (today_value - timedelta(days=29)).isoformat(), today_value.isoformat()
+            else:
+                date_from.value, date_to.value = "", ""
             render_limit["n"] = 60
             refresh()
 
         def refresh(_=None):
             expenses = self.ctx.expenses.list_expenses()
             q = (search.value or "").strip().casefold()
-            current_month = date.today().isoformat()[:7]
+            start = (date_from.value or "").strip()
+            end = (date_to.value or "").strip()
             filtered = [
                 e for e in expenses
                 if (not q or q in f"{e.get('description','')} {e.get('category_name','')} {e.get('reference','')}".casefold())
-                and (not filter_state["month_only"] or str(e.get("expense_date") or "").startswith(current_month))
+                and (not start or str(e.get("expense_date") or "") >= start)
+                and (not end or str(e.get("expense_date") or "") <= end)
             ]
-            total = sum(float(e.get("amount") or 0) for e in expenses)
-            categories = {str(e.get("category_name") or "بلا تصنيف") for e in expenses}
-            month_total = sum(float(e.get("amount") or 0) for e in expenses if str(e.get("expense_date") or "").startswith(current_month))
-            summary.controls = metric_controls([
-                kpi_card("إجمالي المصروفات", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER_DARK, amount_usd=total, settings=self.ctx.settings),
-                kpi_card("هذا الشهر", "", ft.Icons.CALENDAR_MONTH_OUTLINED, Colors.ORANGE, on_tap=lambda _: toggle_month(), amount_usd=month_total, settings=self.ctx.settings),
-                kpi_card("التصنيفات", str(len(categories)), ft.Icons.CATEGORY_OUTLINED, Colors.PURPLE),
-            ])
             if grid_sort["key"]:
                 sort_key = grid_sort["key"]
                 reverse = grid_sort["dir"] == "desc"
@@ -1120,6 +1541,13 @@ class FinanceCenter:
                     return str(expense.get(sort_key) or "")
 
                 filtered.sort(key=sort_value, reverse=reverse)
+            total = sum(float(e.get("amount") or 0) for e in filtered)
+            categories = {str(e.get("category_name") or "بلا تصنيف") for e in filtered}
+            summary.controls = metric_controls([
+                kpi_card("إجمالي المصروفات في النتائج", "", ft.Icons.PAYMENTS_OUTLINED, Colors.DANGER_DARK, amount_usd=total, settings=self.ctx.settings),
+                kpi_card("عدد المصروفات", str(len(filtered)), ft.Icons.RECEIPT_OUTLINED, Colors.PRIMARY),
+                kpi_card("التصنيفات", str(len(categories)), ft.Icons.CATEGORY_OUTLINED, Colors.PURPLE),
+            ])
             export_state["rows"] = filtered
             grid.set_hidden_keys(columns_visibility.hidden_keys)
             if not filtered:
@@ -1172,10 +1600,27 @@ class FinanceCenter:
                     ft.Row(
                         [
                             ft.Container(search, width=280),
+                            primary_button(
+                                "مصروف جديد",
+                                icon=ft.Icons.ADD,
+                                on_click=lambda _: self.show_expense_dialog(),
+                                width=None,
+                                size="md",
+                            ),
                             ft.Container(expand=True),
                             columns_button,
                             export_button,
                             density_button,
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            date_from, date_to,
+                            ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_period("month")),
+                            ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_period("30")),
+                            ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
+                            ft.FilledButton("تطبيق", icon=ft.Icons.FILTER_ALT_OUTLINED, on_click=refresh_from_search),
                         ],
                         spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -1192,7 +1637,6 @@ class FinanceCenter:
             ft.Column(
                 [
                     summary,
-                    ft.Row([ft.FilledButton("مصروف جديد", icon=ft.Icons.ADD, on_click=lambda _: self.show_expense_dialog())]),
                     list_switch,
                     ft.Container(height=24),
                 ],
@@ -1387,6 +1831,7 @@ class FinanceCenter:
         self.page.open(dialog)
 
     def show_statements(self, party_type: str, party_id: int | None = None) -> None:
+        self._clear_context_actions()
         self._active_finance_view = "customers" if party_type == "customer" else "suppliers"
         source = self.ctx.customers.list() if party_type == "customer" else self.ctx.suppliers.list()
         title = "كشف حساب العملاء" if party_type == "customer" else "كشف حساب الموردين"
@@ -1400,13 +1845,79 @@ class FinanceCenter:
         date_to = SmartDateField(label="إلى تاريخ", hint_text="YYYY-MM-DD")
         result = ft.Column(spacing=8)
         export_actions = ft.Row(visible=False, wrap=True)
-        # Same client-visible paging as parties/items/invoices/vouchers/
-        # expenses — see parties_view.py. A long-lived account's full
-        # history can run to hundreds of movements; render a page of the
-        # (already fully computed, running-balance) rows at a time. Print
-        # and PDF export are untouched — they always use the complete
-        # `data["rows"]` regardless of what's currently rendered on screen.
-        render_limit = {"n": 60}
+        statement_rows: list[dict] = []
+        export_rows: list[dict] = []
+        sort_state = {"key": None, "direction": None}
+
+        def open_statement_source(row: dict) -> None:
+            source_type = str(row.get("source_type") or "")
+            try:
+                source_id = int(row["source_id"]) if row.get("source_id") is not None else None
+            except (TypeError, ValueError):
+                source_id = None
+            if source_id is None:
+                return
+            if source_type == "invoice" and self.on_open_invoice:
+                self.on_open_invoice(source_id)
+            elif source_type == "payment":
+                self._open_payment_source(source_id)
+
+        def sort_statement(key: str | None, direction: str | None) -> None:
+            sort_state.update(key=key, direction=direction)
+            export_rows[:] = list(statement_rows)
+            if key:
+                reverse = direction == "desc"
+                export_rows.sort(
+                    key=lambda row: (
+                        float(row.get(key) or 0)
+                        if key in {"debit", "credit", "movement", "balance"}
+                        else str(row.get(key) or "")
+                    ),
+                    reverse=reverse,
+                )
+            statement_grid.set_rows(export_rows)
+
+        statement_grid = DataGrid(
+            columns=PARTY_STATEMENT_GRID_COLUMNS,
+            rows=[],
+            page=self.page,
+            viewport_height=max(320, min(600, int((self.page.height or 760) * 0.55))),
+            boxed=True,
+            center_cells=True,
+            on_sort=sort_statement,
+            on_row_activate=open_statement_source,
+            on_row_menu=lambda row: [
+                ("فتح المستند المصدر", ft.Icons.OPEN_IN_NEW_ROUNDED,
+                 lambda selected=row: open_statement_source(selected))
+            ] if row.get("source_id") is not None and row.get("source_type") in {"invoice", "payment"} else [],
+            activate_tooltip="فتح المستند المصدر",
+            empty_text="لا توجد حركات في الفترة المحددة",
+            formatter=lambda col, value, row: (
+                self.money(value) if col.kind == "money"
+                else str(value or row.get("source_label") or "—")
+            ),
+        )
+
+        async def export_statement_csv(_=None):
+            if not export_rows:
+                self.notify("لا توجد حركات للتصدير", kind="warning")
+                return
+            if self.native_files is None:
+                self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                path = Path(tempfile.gettempdir()) / f"nano_statement_{party_type}_{party_dd.value}_{datetime.now():%Y%m%d_%H%M%S}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as stream:
+                    writer = _csv.writer(stream)
+                    writer.writerow(["التاريخ", "المصدر", "البيان", "مدين", "دائن", "الحركة", "الرصيد"])
+                    for row in export_rows:
+                        writer.writerow([
+                            row.get("entry_date"), row.get("source_label"), row.get("description"),
+                            row.get("debit"), row.get("credit"), row.get("movement"), row.get("balance"),
+                        ])
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير كشف الحساب")
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
 
         def statement_document_html() -> str:
             return self.ctx.documents.statement_html(
@@ -1476,6 +1987,7 @@ class FinanceCenter:
         export_actions.controls = [
             ft.OutlinedButton("طباعة الكشف", icon=ft.Icons.PRINT_OUTLINED, on_click=print_statement),
             ft.OutlinedButton("مشاركة PDF", icon=ft.Icons.PICTURE_AS_PDF_OUTLINED, on_click=share_statement_pdf),
+            ft.OutlinedButton("تصدير CSV", icon=ft.Icons.DOWNLOAD_OUTLINED, on_click=export_statement_csv),
         ]
 
         def render(_=None):
@@ -1492,108 +2004,43 @@ class FinanceCenter:
                     date_to=(date_to.value or "").strip() or None,
                 )
                 export_actions.visible = True
-                balance = float(data["current_balance"])
-                balance_label = "رصيد مستحق" if balance >= 0 else "رصيد دائن للطرف"
                 result.controls.append(
                     metric_row([
-                        kpi_card("الرصيد الحالي", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY if balance >= 0 else Colors.SUCCESS, amount_usd=abs(balance), settings=self.ctx.settings, suffix=balance_label),
-                        kpi_card("الرصيد الافتتاحي للفترة", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings),
+                        kpi_card("رصيد نهاية الفترة", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=data["closing_balance"], settings=self.ctx.settings),
+                        kpi_card("رصيد بداية الفترة", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings),
+                        kpi_card("إجمالي المدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=data["debit_total"], settings=self.ctx.settings),
+                        kpi_card("إجمالي الدائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=data["credit_total"], settings=self.ctx.settings),
                         kpi_card("فواتير مفتوحة", str(len(data["open_invoices"])), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.ORANGE),
                     ])
                 )
-                # Same icon-badge card language as the vouchers/invoices
-                # list rows -- an inflow is styled like a "قبض" row, an
-                # outflow like a "دفع" row, instead of a plain bordered line.
-                for row in data["rows"][: render_limit["n"]]:
-                    movement = float(row["movement"])
-                    inflow = movement >= 0
-                    accent = Colors.SUCCESS if inflow else Colors.DANGER_DARK
-                    # Drill-down like the items/invoices lists: tapping a
-                    # movement opens its source document (invoice or
-                    # voucher). Other source types stay plain rows.
-                    source_type = str(row.get("source_type") or "")
-                    try:
-                        source_id = int(row["source_id"]) if row.get("source_id") is not None else None
-                    except (TypeError, ValueError):
-                        source_id = None
-                    if source_type == "invoice" and source_id is not None:
-                        def _open(_=None, _iid=source_id):
-                            if self.on_open_invoice is not None:
-                                self.on_open_invoice(_iid)
-                            else:
-                                self.notify("عرض الفواتير غير متاح من هنا")
-                        tap, chevron = _open, ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT)
-                    elif source_type == "payment" and source_id is not None:
-                        tap, chevron = (lambda _, _pid=source_id: self._open_payment_source(_pid)), ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT)
-                    else:
-                        tap, chevron = None, ft.Container(width=0)
-                    result.controls.append(
-                        ft.Container(
-                            ft.Row(
-                                [
-                                    ft.Container(ft.Icon(ft.Icons.SOUTH_WEST if inflow else ft.Icons.NORTH_EAST, size=18, color=accent), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.SUCCESS_BG if inflow else Colors.DANGER_BG, border_radius=14),
-                                    ft.Column(
-                                        [
-                                            ft.Text(row["description"] or row["source_label"], size=13, weight=ft.FontWeight.BOLD),
-                                            ft.Text(f"{row['entry_date']} • {row['source_label']} #{row['source_id'] or '—'}", size=10, color=Colors.TEXT_SECONDARY),
-                                        ],
-                                        expand=True,
-                                        spacing=2,
-                                    ),
-                                    ft.Column(
-                                        [
-                                            money_row(abs(movement), self.ctx.settings, size=15, weight=ft.FontWeight.BOLD, color=accent, prefix="+" if inflow else "-"),
-                                            ft.Row(
-                                                [
-                                                    ft.Text("الرصيد ", size=9, color=Colors.TEXT_FAINT),
-                                                    money_row(row["balance"], self.ctx.settings, size=9, color=Colors.TEXT_FAINT),
-                                                ],
-                                                spacing=2, tight=True,
-                                            ),
-                                        ],
-                                        spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END,
-                                    ),
-                                    chevron,
-                                ],
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            padding=12, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM,
-                            on_click=tap, ink=tap is not None,
-                        )
-                    )
-                if not data["rows"]:
-                    result.controls.append(empty_state(
-                        "لا توجد حركات في الفترة المحددة",
-                        icon=ft.Icons.SWAP_VERT_ROUNDED,
-                        hint="جرّب توسيع نطاق التاريخ",
-                    ))
-                elif len(data["rows"]) > render_limit["n"]:
-                    remaining = len(data["rows"]) - render_limit["n"]
-
-                    def load_more(_=None):
-                        render_limit["n"] += 60
-                        render()
-
-                    result.controls.append(
-                        ft.OutlinedButton(
-                            f"تحميل المزيد ({remaining})",
-                            icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                            on_click=load_more,
-                        )
-                    )
+                statement_rows[:] = list(data["rows"])
+                export_rows[:] = list(statement_rows)
+                if sort_state["key"]:
+                    sort_statement(sort_state["key"], sort_state["direction"])
+                else:
+                    statement_grid.set_rows(export_rows)
+                result.controls.append(statement_grid)
             except Exception as exc:
                 export_actions.visible = False
                 self.notify(str(exc), kind="error")
             self.page.update()
 
         def render_from_filters(_=None):
-            # A new account or date range is a fresh query, not a
-            # continuation of whatever page the previous account had
-            # scrolled to — always start back at the first page.
-            render_limit["n"] = 60
             render()
 
         party_dd.on_change = render_from_filters
+        def set_period(period: str):
+            today_value = date.today()
+            if period == "month":
+                date_from.value = today_value.replace(day=1).isoformat()
+                date_to.value = today_value.isoformat()
+            elif period == "30":
+                date_from.value = (today_value - timedelta(days=29)).isoformat()
+                date_to.value = today_value.isoformat()
+            else:
+                date_from.value = ""
+                date_to.value = ""
+            render_from_filters()
         # Same sticky-header / scrolling-body split as the other finance
         # sections: section tabs and the account/date filters stay pinned,
         # the KPI cards and statement rows scroll beneath them.
@@ -1601,14 +2048,21 @@ class FinanceCenter:
             ft.Column(
                 [
                     self._section_nav(active),
-                    ft.ResponsiveRow(
+                    ft.Row(
                         [
-                            ft.Container(party_dd, col={"xs": 12, "md": 6}),
-                            ft.Container(date_from, col={"xs": 6, "md": 3}),
-                            ft.Container(date_to, col={"xs": 6, "md": 3}),
-                        ]
+                            ft.Container(party_dd, width=260),
+                            ft.Container(date_from, width=180),
+                            ft.Container(date_to, width=180),
+                            ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_period("month")),
+                            ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_period("30")),
+                            ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
+                            ft.FilledButton("عرض الكشف", icon=ft.Icons.SEARCH, on_click=render_from_filters),
+                            export_actions,
+                        ],
+                        wrap=True,
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Row([ft.FilledButton("عرض الكشف", icon=ft.Icons.SEARCH, on_click=render_from_filters), export_actions], wrap=True),
                 ],
                 spacing=10,
             ),
@@ -1638,10 +2092,8 @@ class FinanceCenter:
         self.page.update()
 
     def show_ledger(self) -> None:
-        """General-ledger hub inside Finance (option A): trial balance over
-        every posted account plus a per-account chronological statement --
-        the same card language as the customer/supplier statements, so the
-        whole money area reads as one system."""
+        """General-ledger hub with sortable trial-balance and activity tables."""
+        self._clear_context_actions()
         self._active_finance_view = "ledger"
         self._set_header("دفتر الأستاذ", "ميزان المراجعة وكشوف الحسابات من القيود المرحلة")
         account_dd = SearchSelect(
@@ -1651,7 +2103,120 @@ class FinanceCenter:
         date_from = SmartDateField(label="من تاريخ", hint_text="YYYY-MM-DD")
         date_to = SmartDateField(label="إلى تاريخ", hint_text="YYYY-MM-DD")
         result = ft.Column(spacing=8)
-        render_limit = {"n": 60}
+        trial_rows: list[dict] = []
+        account_rows: list[dict] = []
+        export_rows: list[dict] = []
+        trial_sort = {"key": None, "direction": None}
+        ledger_sort = {"key": None, "direction": None}
+
+        def sort_rows(rows: list[dict], key: str | None, direction: str | None, numeric: set[str]) -> list[dict]:
+            ordered = list(rows)
+            if key:
+                ordered.sort(
+                    key=lambda row: float(row.get(key) or 0) if key in numeric else str(row.get(key) or ""),
+                    reverse=direction == "desc",
+                )
+            return ordered
+
+        def sort_trial(key: str | None, direction: str | None) -> None:
+            trial_sort.update(key=key, direction=direction)
+            trial_grid.set_rows(sort_rows(trial_rows, key, direction, {"debit", "credit", "balance"}))
+
+        def sort_ledger(key: str | None, direction: str | None) -> None:
+            ledger_sort.update(key=key, direction=direction)
+            export_rows[:] = sort_rows(account_rows, key, direction, {"debit", "credit", "movement", "balance"})
+            ledger_grid.set_rows(export_rows)
+
+        def pick_account(row: dict) -> None:
+            account_dd.value = str(row.get("code") or "")
+            try:
+                account_dd.update()
+            except Exception:
+                pass
+            render_from_filters()
+
+        def open_ledger_source(row: dict) -> None:
+            source_type = str(row.get("source_type") or "")
+            try:
+                source_id = int(row["source_id"]) if row.get("source_id") is not None else None
+            except (TypeError, ValueError):
+                source_id = None
+            if source_id is None:
+                return
+            if source_type == "invoice" and self.on_open_invoice:
+                self.on_open_invoice(source_id)
+            elif source_type == "payment":
+                self._open_payment_source(source_id)
+
+        trial_grid = DataGrid(
+            columns=TRIAL_BALANCE_GRID_COLUMNS,
+            rows=[],
+            viewport_height=250,
+            boxed=True,
+            center_cells=True,
+            on_sort=sort_trial,
+            on_row_activate=pick_account,
+            on_row_menu=lambda row: [
+                ("عرض حركات الحساب", ft.Icons.OPEN_IN_NEW_ROUNDED,
+                 lambda selected=row: pick_account(selected))
+            ],
+            activate_tooltip="عرض حركات الحساب",
+            empty_text="لا توجد قيود",
+            formatter=lambda col, value, row: self.money(value) if col.kind == "money" else str(value or ""),
+        )
+        ledger_grid = DataGrid(
+            columns=LEDGER_GRID_COLUMNS,
+            rows=[],
+            viewport_height=max(320, min(600, int((self.page.height or 760) * 0.55))),
+            boxed=True,
+            center_cells=True,
+            on_sort=sort_ledger,
+            on_row_activate=open_ledger_source,
+            on_row_menu=lambda row: [
+                ("فتح المستند المصدر", ft.Icons.OPEN_IN_NEW_ROUNDED,
+                 lambda selected=row: open_ledger_source(selected))
+            ] if row.get("source_id") is not None and row.get("source_type") in {"invoice", "payment"} else [],
+            activate_tooltip="فتح المستند المصدر",
+            empty_text="لا توجد حركات لهذا الحساب في الفترة المحددة",
+            formatter=lambda col, value, row: (
+                self.money(value) if col.kind == "money"
+                else str(value or row.get("party_name") or "—")
+            ),
+        )
+        export_button = ft.OutlinedButton("تصدير CSV", icon=ft.Icons.DOWNLOAD_OUTLINED)
+
+        async def export_ledger(_=None):
+            if self.native_files is None:
+                self.notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                return
+            try:
+                if account_dd.value:
+                    rows = export_rows
+                    filename = "nano_general_ledger"
+                    headers = ["التاريخ", "المصدر", "الطرف", "البيان", "مدين", "دائن", "الحركة", "الرصيد"]
+                    values = lambda row: [
+                        row.get("entry_date"), row.get("source_label"), row.get("party_name"),
+                        row.get("description"), row.get("debit"), row.get("credit"),
+                        row.get("movement"), row.get("balance"),
+                    ]
+                else:
+                    rows = sort_rows(trial_rows, trial_sort["key"], trial_sort["direction"], {"debit", "credit", "balance"})
+                    filename = "nano_trial_balance"
+                    headers = ["الحساب", "اسم الحساب", "مدين", "دائن", "الرصيد"]
+                    values = lambda row: [row.get("code"), row.get("label"), row.get("debit"), row.get("credit"), row.get("balance")]
+                if not rows:
+                    self.notify("لا توجد بيانات للتصدير", kind="warning")
+                    return
+                path = Path(tempfile.gettempdir()) / f"{filename}_{datetime.now():%Y%m%d_%H%M%S}.csv"
+                with open(path, "w", encoding="utf-8-sig", newline="") as stream:
+                    writer = _csv.writer(stream)
+                    writer.writerow(headers)
+                    writer.writerows(values(row) for row in rows)
+                await self.native_files.share_file(str(path), mime_type="text/csv", subject="تصدير دفتر الأستاذ")
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+
+        export_button.on_click = export_ledger
 
         def render_trial() -> None:
             tb = self.ctx.statements.trial_balance()
@@ -1666,53 +2231,11 @@ class FinanceCenter:
                     kpi_card("حالة التوازن", "", ft.Icons.CHECK_CIRCLE_OUTLINE if balanced else ft.Icons.WARNING_AMBER_ROUNDED, Colors.SUCCESS if balanced else Colors.DANGER_DARK, amount_usd=abs(tb["difference"]), settings=self.ctx.settings, suffix="متوازن" if balanced else "فرق غير مرحل"),
                 ], spacing=8)
             )
-
-            def pick(code: str):
-                def handler(_=None):
-                    account_dd.value = code
-                    try:
-                        account_dd.update()
-                    except Exception:
-                        pass
-                    render_from_filters()
-                return handler
-
-            for acc in tb["accounts"]:
-                has_activity = abs(float(acc["debit"]) or 0) > 1e-9 or abs(float(acc["credit"]) or 0) > 1e-9
-                result.controls.append(
-                    ft.Container(
-                        ft.Row(
-                            [
-                                ft.Container(
-                                    ft.Text(str(acc["code"]), size=10, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY),
-                                    padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                                    bgcolor=Colors.PRIMARY_BG, border_radius=8,
-                                ),
-                                ft.Column(
-                                    [
-                                        ft.Text(acc["label"], size=13, weight=ft.FontWeight.BOLD, expand=True),
-                                        ft.Row(
-                                            [
-                                                ft.Text("مدين ", size=9, color=Colors.TEXT_FAINT),
-                                                money_row(acc["debit"], self.ctx.settings, size=9, color=Colors.TEXT_FAINT),
-                                                ft.Text(" • دائن ", size=9, color=Colors.TEXT_FAINT),
-                                                money_row(acc["credit"], self.ctx.settings, size=9, color=Colors.TEXT_FAINT),
-                                            ],
-                                            spacing=2, tight=True,
-                                        ),
-                                    ],
-                                    expand=True, spacing=2,
-                                ),
-                                money_row(acc["balance"], self.ctx.settings, size=14, weight=ft.FontWeight.BOLD),
-                                ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=11, bgcolor=Colors.WHITE if has_activity else Colors.BACKGROUND_ALT,
-                        border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM,
-                        on_click=pick(str(acc["code"])), ink=True,
-                    )
-                )
+            trial_rows[:] = list(tb["accounts"])
+            trial_grid.set_rows(sort_rows(
+                trial_rows, trial_sort["key"], trial_sort["direction"], {"debit", "credit", "balance"}
+            ))
+            result.controls.append(trial_grid)
 
         def render_account() -> None:
             data = self.ctx.statements.account_statement(
@@ -1731,80 +2254,13 @@ class FinanceCenter:
                     kpi_card("الرصيد الختامي", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS, amount_usd=data["closing_balance"], settings=self.ctx.settings),
                 ], spacing=8)
             )
-            for row in data["rows"][: render_limit["n"]]:
-                movement = float(row["movement"])
-                inflow = movement >= 0
-                accent = Colors.SUCCESS if inflow else Colors.DANGER_DARK
-                source_type = str(row.get("source_type") or "")
-                try:
-                    source_id = int(row["source_id"]) if row.get("source_id") is not None else None
-                except (TypeError, ValueError):
-                    source_id = None
-                if source_type == "invoice" and source_id is not None:
-                    def _open(_=None, _iid=source_id):
-                        if self.on_open_invoice is not None:
-                            self.on_open_invoice(_iid)
-                        else:
-                            self.notify("عرض الفواتير غير متاح من هنا")
-                    tap, chevron = _open, ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT)
-                elif source_type == "payment" and source_id is not None:
-                    tap, chevron = (lambda _, _pid=source_id: self._open_payment_source(_pid)), ft.Icon(ft.Icons.CHEVRON_LEFT, size=18, color=Colors.TEXT_FAINT)
-                else:
-                    tap, chevron = None, ft.Container(width=0)
-                party = row.get("party_name") or "—"
-                result.controls.append(
-                    ft.Container(
-                        ft.Row(
-                            [
-                                ft.Container(ft.Icon(ft.Icons.SOUTH_WEST if inflow else ft.Icons.NORTH_EAST, size=18, color=accent), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.SUCCESS_BG if inflow else Colors.DANGER_BG, border_radius=14),
-                                ft.Column(
-                                    [
-                                        ft.Text(f"{row['description'] or row['source_label']} • {party}", size=13, weight=ft.FontWeight.BOLD),
-                                        ft.Text(f"{row['entry_date']} • {row['source_label']} #{row['source_id'] or '—'}", size=10, color=Colors.TEXT_SECONDARY),
-                                    ],
-                                    expand=True, spacing=2,
-                                ),
-                                ft.Column(
-                                    [
-                                        money_row(abs(movement), self.ctx.settings, size=15, weight=ft.FontWeight.BOLD, color=accent, prefix="+" if inflow else "-"),
-                                        ft.Row(
-                                            [
-                                                ft.Text("الرصيد ", size=9, color=Colors.TEXT_FAINT),
-                                                money_row(row["balance"], self.ctx.settings, size=9, color=Colors.TEXT_FAINT),
-                                            ],
-                                            spacing=2, tight=True,
-                                        ),
-                                    ],
-                                    spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END,
-                                ),
-                                chevron,
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=12, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=16, shadow=Shadow.SM,
-                        on_click=tap, ink=tap is not None,
-                    )
-                )
-            if not data["rows"]:
-                result.controls.append(empty_state(
-                    "لا توجد حركات لهذا الحساب في الفترة المحددة",
-                    icon=ft.Icons.DESCRIPTION_OUTLINED,
-                    hint="جرّب توسيع نطاق التاريخ",
-                ))
-            elif len(data["rows"]) > render_limit["n"]:
-                remaining = len(data["rows"]) - render_limit["n"]
-
-                def load_more(_=None):
-                    render_limit["n"] += 60
-                    render()
-
-                result.controls.append(
-                    ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})",
-                        icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=load_more,
-                    )
-                )
+            account_rows[:] = list(data["rows"])
+            export_rows[:] = sort_rows(
+                account_rows, ledger_sort["key"], ledger_sort["direction"],
+                {"debit", "credit", "movement", "balance"},
+            )
+            ledger_grid.set_rows(export_rows)
+            result.controls.append(ledger_grid)
 
         def render(_=None):
             result.controls = []
@@ -1817,22 +2273,41 @@ class FinanceCenter:
             self.page.update()
 
         def render_from_filters(_=None):
-            render_limit["n"] = 60
             render()
 
         account_dd.on_change = render_from_filters
+        def set_period(period: str):
+            today_value = date.today()
+            if period == "month":
+                date_from.value = today_value.replace(day=1).isoformat()
+                date_to.value = today_value.isoformat()
+            elif period == "30":
+                date_from.value = (today_value - timedelta(days=29)).isoformat()
+                date_to.value = today_value.isoformat()
+            else:
+                date_from.value = ""
+                date_to.value = ""
+            render_from_filters()
+
         sticky_header = ft.Container(
             ft.Column(
                 [
                     self._section_nav("ledger"),
-                    ft.ResponsiveRow(
+                    ft.Row(
                         [
-                            ft.Container(account_dd, col={"xs": 12, "md": 6}),
-                            ft.Container(date_from, col={"xs": 6, "md": 3}),
-                            ft.Container(date_to, col={"xs": 6, "md": 3}),
-                        ]
+                            ft.Container(account_dd, width=260),
+                            ft.Container(date_from, width=180),
+                            ft.Container(date_to, width=180),
+                            ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_period("month")),
+                            ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_period("30")),
+                            ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
+                            export_button,
+                            ft.FilledButton("عرض", icon=ft.Icons.SEARCH, on_click=render_from_filters),
+                        ],
+                        wrap=True,
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Row([ft.FilledButton("عرض", icon=ft.Icons.SEARCH, on_click=render_from_filters)], wrap=True),
                 ],
                 spacing=10,
             ),

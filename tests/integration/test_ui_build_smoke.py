@@ -132,6 +132,16 @@ def test_finance_screen_builds():
         page, content = FakePage(), ft.Container(expand=True)
         center = FinanceCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
         _assert_built(center, content)
+        for build_section in (
+            center.show_overview,
+            center.show_vouchers,
+            center.show_expenses,
+            lambda: center.show_statements("customer"),
+            lambda: center.show_statements("supplier"),
+            center.show_ledger,
+        ):
+            build_section()
+            assert content.content is not None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -187,6 +197,9 @@ def test_admin_screen_builds():
             on_theme_changed=lambda: None, on_context_actions=lambda *a: None,
         )
         _assert_built(center, content)
+        for section in ("users", "backup", "audit", "appearance", "reports"):
+            center.show_center(section=section)
+            assert content.content is not None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

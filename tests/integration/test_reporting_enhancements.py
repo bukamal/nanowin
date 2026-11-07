@@ -123,3 +123,62 @@ def test_forecast_backtest_reports_error_only_with_enough_months(tmp_path):
     assert result["mae"] > 0
     assert result["wape_percent"] > 0
     assert 0 <= result["accuracy_percent"] <= 100
+
+
+def test_finance_priorities_use_due_dates_and_flag_expense_spikes(tmp_path):
+    ctx, item, customer, supplier = _context(tmp_path)
+    ctx.settings.set("invoice_default_due_days", "7")
+    today = date.today()
+
+    ctx.invoices.create_invoice(
+        invoice_type="purchase",
+        supplier_id=supplier,
+        invoice_date=(today - timedelta(days=15)).isoformat(),
+        lines=[InvoiceLineInput(description="مخزون", item_id=item, quantity=5, unit_price=10)],
+    )
+    overdue_sale = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        customer_id=customer,
+        invoice_date=(today - timedelta(days=10)).isoformat(),
+        lines=[InvoiceLineInput(description="متأخر", item_id=item, quantity=1, unit_price=40)],
+    )
+    upcoming_sale = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        customer_id=customer,
+        invoice_date=(today - timedelta(days=3)).isoformat(),
+        lines=[InvoiceLineInput(description="قريب", item_id=item, quantity=1, unit_price=20)],
+    )
+
+    month_index = today.year * 12 + today.month - 1
+    for months_ago in (1, 2, 3):
+        year, month_zero = divmod(month_index - months_ago, 12)
+        expense_day = date(year, month_zero + 1, 5)
+        ctx.expenses.create_expense(
+            amount=20,
+            description="مصروف اعتيادي",
+            expense_date=expense_day.isoformat(),
+        )
+    ctx.expenses.create_expense(
+        amount=200,
+        description="ارتفاع هذا الشهر",
+        expense_date=today.isoformat(),
+    )
+
+    priorities = ctx.reports.collection_priorities(as_of=today.isoformat())
+    assert priorities["overdue_total"] == pytest.approx(40)
+    assert priorities["invoices"][0]["id"] == overdue_sale
+    assert priorities["invoices"][0]["due_status"] == "overdue"
+    assert priorities["invoices"][0]["days_overdue"] == 3
+
+    commitments = ctx.reports.cash_commitments(as_of=today.isoformat())
+    assert commitments["buckets"]["overdue_receivables"] == pytest.approx(40)
+    assert commitments["buckets"]["overdue_payables"] == pytest.approx(50)
+    assert commitments["net_overdue"] == pytest.approx(-10)
+    assert commitments["buckets"]["next_7_receivables"] == pytest.approx(20)
+    assert commitments["net_next_7_days"] == pytest.approx(20)
+    assert any(row["invoice_id"] == upcoming_sale for row in commitments["rows"])
+
+    anomalies = ctx.reports.expense_anomalies(as_of=today.isoformat())
+    assert anomalies["baseline_months"] == 3
+    assert anomalies["anomalies"][0]["category"] == "بلا تصنيف"
+    assert anomalies["anomalies"][0]["difference"] > 0
