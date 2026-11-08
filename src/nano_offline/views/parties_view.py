@@ -25,7 +25,7 @@ from nano_offline.core import privacy
 PARTY_GRID_COLUMNS = [
     GridColumn("name", "الاسم", tooltip="اسم العميل أو المورد — اضغط للترتيب"),
     GridColumn("phone", "الهاتف", width=120, align="center", tooltip="رقم الهاتف المسجّل — يُخفى تلقائيًا على الشاشات الضيقة"),
-    GridColumn("balance", "الرصيد", width=120, align="end", kind="money", tooltip="الرصيد الحالي: موجب يعني مبلغًا مستحقًا على الطرف"),
+    GridColumn("balance", "الرصيد", width=120, align="end", kind="money", color_role="signed", tooltip="الرصيد الحالي: موجب يعني مبلغًا مستحقًا على الطرف"),
     GridColumn("_grade", "التقييم", width=170, align="center", kind="badge", sortable=False, tooltip="تقييم انتظام السداد بناءً على الفواتير غير المسددة"),
 ]
 

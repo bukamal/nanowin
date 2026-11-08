@@ -53,6 +53,33 @@ def test_first_cell_is_highlighted_on_build():
     assert g._cell_boxes[(1, 0)].bgcolor is None
 
 
+def test_column_headers_use_data_type_accents_without_tinting_neutral_cells():
+    g = make_grid()
+    header_cells = g._header.content.controls
+    assert header_cells[0].content.color == Colors.TEXT_MUTED_DARK
+    assert header_cells[2].content.color == Colors.PRIMARY
+    assert g._cell_boxes[(0, 2)].content.color == Colors.TEXT_PRIMARY
+
+
+def test_explicit_and_signed_column_roles_color_plain_cell_values():
+    columns = [
+        GridColumn("profit", "الربح", kind="money", color_role="signed"),
+        GridColumn("expense", "المصروف", kind="money", color_role="danger"),
+        GridColumn("conditional", "المستحق", kind="money", color_role=lambda value, row: "warning" if value else None),
+    ]
+    g = DataGrid(
+        columns=columns,
+        rows=[
+            {"profit": 12, "expense": 4, "conditional": 2},
+            {"profit": -3, "expense": 0, "conditional": 0},
+        ],
+    )
+    assert g._cell_boxes[(0, 0)].content.color == Colors.SUCCESS_DARKER
+    assert g._cell_boxes[(1, 0)].content.color == Colors.DANGER_DARKER
+    assert g._cell_boxes[(0, 1)].content.color == Colors.DANGER_DARKER
+    assert g._cell_boxes[(1, 2)].content.color == Colors.TEXT_PRIMARY
+
+
 def test_unarmed_grid_ignores_navigation():
     g = make_grid()
     g._handle_key(FakeKey("Arrow Down"))

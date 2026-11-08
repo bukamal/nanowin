@@ -20,6 +20,11 @@ The interaction model is the spreadsheet one users already know from Excel:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, Literal
+
+
+ColorRole = Literal["primary", "success", "danger", "warning", "purple", "signed"]
+ColorRoleResolver = Callable[[object, dict], ColorRole | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +34,8 @@ class GridColumn:
     ``width=None`` means "flex to fill the leftover space" (the renderer
     expands exactly one such column); an int pins a fixed pixel width.
     ``editable`` marks the cells Tab stops on and Enter may open for input.
+    ``color_role`` optionally colors values by meaning; ``"signed"`` colors
+    positive and negative values with the shared success/danger palette.
     """
 
     key: str
@@ -39,6 +46,7 @@ class GridColumn:
     kind: str = "text"  # text | number | money | badge
     sortable: bool = True
     tooltip: str | None = None
+    color_role: ColorRole | ColorRoleResolver | None = None
 
 
 class GridNavigator:

@@ -34,9 +34,17 @@ VOUCHER_GRID_COLUMNS = [
     GridColumn("voucher_type", "النوع", width=80, align="center", kind="badge", tooltip="قبض (من الحساب) أو دفع (إلى الحساب)"),
     GridColumn("party_name", "الحساب", tooltip="الطرف المرتبط بالسند — نقدي عند عدم التحديد"),
     GridColumn("voucher_date", "التاريخ", width=98, align="center", tooltip="تاريخ السند — يُخفى تلقائيًا على الشاشات الضيقة"),
-    GridColumn("amount", "المبلغ", width=110, align="end", kind="money", tooltip="قيمة السند الإجمالية"),
+    GridColumn(
+        "amount", "المبلغ", width=110, align="end", kind="money",
+        color_role=lambda _value, row: "success" if row.get("voucher_type") == "receipt" else "danger",
+        tooltip="قيمة السند الإجمالية",
+    ),
     GridColumn("allocated_amount", "موزّع", width=100, align="end", kind="money", tooltip="الجزء الموزّع على فواتير"),
-    GridColumn("unallocated_amount", "على الحساب", width=110, align="end", kind="money", tooltip="رصيد غير موزّع — الصف مُظلَّل عند وجوده"),
+    GridColumn(
+        "unallocated_amount", "على الحساب", width=110, align="end", kind="money",
+        color_role=lambda value, _row: "warning" if float(value or 0) > 0 else None,
+        tooltip="رصيد غير موزّع — الصف مُظلَّل عند وجوده",
+    ),
 ]
 
 # Desktop grid columns for the expenses screen.
@@ -46,7 +54,7 @@ EXPENSE_GRID_COLUMNS = [
     GridColumn("expense_date", "التاريخ", width=100, align="center", tooltip="تاريخ المصروف"),
     GridColumn("reference", "المرجع", width=130, tooltip="رقم أو مرجع المستند — يُخفى تلقائيًا على الشاشات الضيقة"),
     GridColumn("_receipt", "الإيصال", width=80, align="center", kind="badge", sortable=False, tooltip="صورة إيصال مرفقة"),
-    GridColumn("amount", "المبلغ", width=120, align="end", kind="money", tooltip="قيمة المصروف"),
+    GridColumn("amount", "المبلغ", width=120, align="end", kind="money", color_role="danger", tooltip="قيمة المصروف"),
 ]
 
 PARTY_STATEMENT_GRID_COLUMNS = [
@@ -84,7 +92,7 @@ COLLECTION_GRID_COLUMNS = [
     GridColumn("invoice_date", "تاريخ الفاتورة", width=110, align="center"),
     GridColumn("due_date", "الاستحقاق", width=110, align="center"),
     GridColumn("days_until_due", "أيام للاستحقاق", width=110, align="center", kind="number"),
-    GridColumn("remaining_amount", "المتبقي", width=130, align="end", kind="money"),
+    GridColumn("remaining_amount", "المتبقي", width=130, align="end", kind="money", color_role="warning"),
 ]
 
 COMMITMENT_GRID_COLUMNS = [
@@ -93,15 +101,15 @@ COMMITMENT_GRID_COLUMNS = [
     GridColumn("party_name", "الحساب"),
     GridColumn("due_date", "الاستحقاق", width=110, align="center"),
     GridColumn("days_until_due", "أيام", width=70, align="center", kind="number"),
-    GridColumn("remaining_amount", "المتبقي", width=130, align="end", kind="money"),
+    GridColumn("remaining_amount", "المتبقي", width=130, align="end", kind="money", color_role="warning"),
 ]
 
 ANOMALY_GRID_COLUMNS = [
     GridColumn("category", "التصنيف"),
     GridColumn("current_month_to_date", "هذا الشهر", width=130, align="end", kind="money"),
     GridColumn("expected_to_date", "المتوقع", width=130, align="end", kind="money"),
-    GridColumn("difference", "الزيادة", width=130, align="end", kind="money"),
-    GridColumn("increase_percent", "نسبة الزيادة", width=110, align="end", kind="number"),
+    GridColumn("difference", "الزيادة", width=130, align="end", kind="money", color_role="danger"),
+    GridColumn("increase_percent", "نسبة الزيادة", width=110, align="end", kind="number", color_role="danger"),
 ]
 
 

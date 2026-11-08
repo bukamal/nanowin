@@ -76,7 +76,11 @@ INVOICE_GRID_COLUMNS = [
     GridColumn("party_name", "الطرف", tooltip="العميل في المبيعات أو المورد في المشتريات — نقدي عند عدم التحديد"),
     GridColumn("invoice_date", "التاريخ", width=98, align="center", tooltip="تاريخ الفاتورة — الافتراضي ترتيب زمني مع تجميع (اليوم/أمس…)"),
     GridColumn("total", "الإجمالي", width=106, align="end", kind="money", tooltip="إجمالي الفاتورة بالمبلغ المعروض"),
-    GridColumn("remaining_amount", "المتبقي", width=106, align="end", kind="money", tooltip="ما لم يُسدَّد بعد — أحمر عند التأخر عن السداد"),
+    GridColumn(
+        "remaining_amount", "المتبقي", width=106, align="end", kind="money",
+        color_role=lambda value, _row: "warning" if float(value or 0) > 0 else None,
+        tooltip="ما لم يُسدَّد بعد — أحمر عند التأخر عن السداد",
+    ),
     GridColumn("payment_status", "الحالة", width=142, align="center", kind="badge", sortable=False, tooltip="حالة السداد، وتظهر مؤشرات التأخير بالأيام"),
 ]
 

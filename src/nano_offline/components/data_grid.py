@@ -34,7 +34,7 @@ from typing import Callable
 import flet as ft
 
 from nano_offline.core.theme import Colors, Radius, Shadow
-from nano_offline.components.grid_model import GridColumn, GridNavigator
+from nano_offline.components.grid_model import ColorRole, GridColumn, GridNavigator
 from nano_offline.components.status_pill import status_pill
 
 
@@ -53,6 +53,13 @@ _ON_DEMAND_THRESHOLD = 150
 # Nominal width (as a flex weight) for columns that declare no width when
 # fit-to-width is on.
 _FIT_DEFAULT_WEIGHT = 160
+_COLOR_ROLE_TOKENS = {
+    "primary": "PRIMARY",
+    "success": "SUCCESS_DARKER",
+    "danger": "DANGER_DARKER",
+    "warning": "WARNING_DARKER",
+    "purple": "PURPLE",
+}
 
 # Standard Arabic (Windows 101) keyboard: physical latin key -> Arabic letter.
 # Used ONLY to seed the first character of a type-to-edit when the runtime
@@ -561,12 +568,35 @@ class DataGrid(ft.Column):
             return ft.MainAxisAlignment.CENTER
         return ft.MainAxisAlignment.END if col.align == "end" else ft.MainAxisAlignment.START
 
+    @staticmethod
+    def _header_color(col: GridColumn) -> str | None:
+        role = col.color_role if isinstance(col.color_role, str) else None
+        token = _COLOR_ROLE_TOKENS.get(role or "")
+        if token is None:
+            token = {"money": "PRIMARY", "number": "PURPLE"}.get(col.kind)
+        return getattr(Colors, token) if token else None
+
+    @staticmethod
+    def _cell_color(col: GridColumn, value, row: dict) -> str | None:
+        role: ColorRole | None = col.color_role
+        if callable(role):
+            role = role(value, row)
+        if role == "signed":
+            try:
+                number = float(value or 0)
+            except (TypeError, ValueError):
+                number = 0
+            role = "success" if number > 0 else "danger" if number < 0 else None
+        token = _COLOR_ROLE_TOKENS.get(role or "")
+        return getattr(Colors, token) if token else None
+
     def _header_cell(self, col: GridColumn) -> ft.Control:
+        accent = self._header_color(col)
         label = ft.Text(
             col.label,
             size=12,
             weight=ft.FontWeight.W_700,
-            color=Colors.TEXT_MUTED_DARK,
+            color=accent or Colors.TEXT_MUTED_DARK,
             max_lines=1,
             overflow=ft.TextOverflow.ELLIPSIS,
         )
@@ -595,6 +625,7 @@ class DataGrid(ft.Column):
             tooltip=(col.tooltip or (f"ترتيب حسب {col.label}" if sortable else None)),
             ink=bool(sortable),
             on_click=(lambda _, c=col: self._header_click(c)) if sortable else None,
+            border=ft.border.only(bottom=ft.BorderSide(2, accent)) if accent else None,
             **self._cell_kwargs(col),
         )
 
@@ -949,15 +980,16 @@ class DataGrid(ft.Column):
                 text, fg, bg = out
                 return status_pill(str(text), fg, bg, size=10)
             if out is None:
-                return self._text(col, _default_text(col, value))
-            return self._text(col, str(out))
-        return self._text(col, _default_text(col, value))
+                return self._text(col, _default_text(col, value), row=row, value_raw=value)
+            return self._text(col, str(out), row=row, value_raw=value)
+        return self._text(col, _default_text(col, value), row=row, value_raw=value)
 
-    def _text(self, col: GridColumn, value) -> ft.Text:
+    def _text(self, col: GridColumn, value, *, row: dict | None = None, value_raw=None) -> ft.Text:
         """Cell text; money/number cells get a medium weight so a column of
         figures scans as a tidy block instead of a wall of thin digits."""
         weight = ft.FontWeight.W_600 if col.kind in ("money", "number") else None
-        return ft.Text(str(value), size=12.5, color=Colors.TEXT_PRIMARY, weight=weight, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        color = self._cell_color(col, value_raw, row or {}) if row is not None else None
+        return ft.Text(str(value), size=12.5, color=color or Colors.TEXT_PRIMARY, weight=weight, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
 
     def _make_cell(self, r: int, c: int, col: GridColumn, row: dict) -> ft.Container:
         box = ft.Container(
