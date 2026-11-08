@@ -205,6 +205,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     notification_center = NotificationCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_navigate=lambda key: navigate(key),
+        on_open_settings=lambda: open_admin_section("notifications"),
     )
     # Latest badge refresher for the event bus (updated on every rebuild so a
     # theme-driven rebuild doesn't leave it pointing at a stale center).
@@ -265,7 +266,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         on_open_statement=open_statement, on_open_invoice=invoice_center.show_invoice_detail,
         on_context_actions=lambda actions: set_context_actions(actions),
     )
-    admin_center = AdminCenter(page, ctx, content, on_logout=on_logout, native_files=native_files, on_theme_changed=on_theme_changed, on_context_actions=lambda actions: set_context_actions(actions))
+    admin_center = AdminCenter(
+        page, ctx, content, on_logout=on_logout, native_files=native_files,
+        on_theme_changed=on_theme_changed, on_context_actions=lambda actions: set_context_actions(actions),
+        notification_center=notification_center,
+    )
     party_center = PartyCenter(
         page, ctx, content,
         native_files=native_files,

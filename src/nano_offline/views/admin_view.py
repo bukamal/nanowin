@@ -40,7 +40,7 @@ from nano_offline.core.barcode128 import code128b_bars
 
 
 class AdminCenter:
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, on_logout, native_files=None, on_theme_changed=None, on_context_actions=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, on_logout, native_files=None, on_theme_changed=None, on_context_actions=None, notification_center=None):
         self.page = page
         self.ctx = ctx
         self.content = content
@@ -50,6 +50,7 @@ class AdminCenter:
         # command strip (under the الإدارة tab), the same mechanism the items
         # screen uses, so its navigation matches the rest of the app.
         self.on_context_actions = on_context_actions
+        self.notification_center = notification_center
         # Called after the night-mode preference/schedule is saved so the
         # whole app can be torn down and rebuilt with the new palette right
         # away (see main.py's build_shell/open_shell) -- optional purely so
@@ -3068,6 +3069,19 @@ class AdminCenter:
                     primary_button("حفظ إعدادات الجرد", icon=ft.Icons.SAVE_OUTLINED, on_click=save_stocktake_settings, width=None, size="md"),
                 ],
             ),
+            "notifications": self._section(
+                "الإشعارات والتنبيهات",
+                [
+                    ft.Text(
+                        "إدارة قواعد التنبيه وقنوات التوصيل وساعات الهدوء، مع سجل موحّد للتنبيهات ومحاولات الإرسال.",
+                        size=12,
+                        color=Colors.TEXT_SECONDARY,
+                    ),
+                    self.notification_center.show_settings(embedded=True)
+                    if self.notification_center
+                    else ft.Text("إعدادات الإشعارات غير متاحة.", color=Colors.TEXT_MUTED),
+                ],
+            ),
             "sound": self._section(
                 "النظام الصوتي",
                 [
@@ -3266,6 +3280,7 @@ class AdminCenter:
             ("server", "الخادم والعميل", ft.Icons.CLOUD_OUTLINED),
             ("stocktake", "الجرد", ft.Icons.FACT_CHECK_OUTLINED),
             ("sound", "الصوت", ft.Icons.VOLUME_UP_OUTLINED),
+            ("notifications", "الإشعارات", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
             ("voice", "الذاكرة الصوتية", ft.Icons.RECORD_VOICE_OVER_OUTLINED),
             ("reports", "التقارير", ft.Icons.BAR_CHART_OUTLINED),
             ("audit", "سجل التدقيق", ft.Icons.HISTORY),

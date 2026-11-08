@@ -6,6 +6,7 @@ invoice = (ROOT / "src/nano_offline/views/invoice_view.py").read_text(encoding="
 finance = (ROOT / "src/nano_offline/views/finance_view.py").read_text(encoding="utf-8")
 reports = (ROOT / "src/nano_offline/views/reports_view.py").read_text(encoding="utf-8")
 admin = (ROOT / "src/nano_offline/views/admin_view.py").read_text(encoding="utf-8")
+notifications = (ROOT / "src/nano_offline/views/notifications_view.py").read_text(encoding="utf-8")
 docs = (ROOT / "src/nano_offline/services/document_service.py").read_text(encoding="utf-8")
 
 for needle in [
@@ -27,6 +28,8 @@ assert "RibbonAction" not in finance and "RibbonAction" not in reports
 assert "on_row_menu=" in finance and "on_row_menu=" in reports
 assert 'report_picker,' in reports and 'self.date_preset,' in reports
 assert "تصدير CSV" in reports and "تصدير CSV" in finance
+assert "on_open_settings=lambda: open_admin_section(\"notifications\")" in main
+assert "delivery_log(limit=30)" in notifications and "repeat_after_days" in notifications
 for needle in ['استيراد نسخة من الجهاز', 'pick_file', 'share_file', 'nanobackup', 'qeidbackup']:
     assert needle in admin, needle
 for needle in ['lang="ar" dir="rtl"', 'invoice_html', 'statement_html', '@page']:

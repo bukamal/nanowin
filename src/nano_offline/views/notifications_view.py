@@ -9,7 +9,7 @@ import flet as ft
 from nano_offline.core.toast import toast
 from nano_offline.core import sound as sound_engine
 
-from nano_offline.components import SelectAllTextField
+from nano_offline.components import DataGrid, GridColumn, SelectAllTextField
 from nano_offline.components.buttons import header_close_button
 from nano_offline.components.form_sheet import new_form_sheet
 from nano_offline.core.platform_capabilities import feature_status
@@ -53,6 +53,7 @@ class NotificationCenter:
         native_files=None,
         on_title_change: Callable | None = None,
         on_navigate: Callable[[str], None] | None = None,
+        on_open_settings: Callable[[], None] | None = None,
     ):
         self.page = page
         self.ctx = ctx
@@ -60,6 +61,7 @@ class NotificationCenter:
         self.native_files = native_files
         self.on_title_change = on_title_change
         self.on_navigate = on_navigate
+        self.on_open_settings = on_open_settings
         self.badge = ft.Container(
             width=17, height=17, border_radius=9, bgcolor=Colors.DANGER, visible=False,
             alignment=ft.alignment.center,
@@ -196,6 +198,8 @@ class NotificationCenter:
             min(560, int((self.page.height or 760) * (0.62 if page_width >= 800 else 0.34))),
         )
         sheet.size_constraints = ft.BoxConstraints(min_width=panel_width, max_width=panel_width)
+        current_session = self.ctx.auth.current()
+        can_manage_settings = bool(current_session and current_session.can("admin"))
         decision_column = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, height=panel_height)
         list_column = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, height=panel_height)
         count_text = ft.Text("", size=11, color=Colors.TEXT_FAINT)
@@ -205,7 +209,10 @@ class NotificationCenter:
 
         def open_settings(_=None):
             close()
-            self.show_settings()
+            if self.on_open_settings:
+                self.on_open_settings()
+            else:
+                self.show_settings()
 
         def filtered_rows(filter_key: str) -> list[dict]:
             if filter_key == "unread":
@@ -379,7 +386,7 @@ class NotificationCenter:
                 ft.Row(
                     [
                         ft.Text("التنبيهات", size=16, weight=ft.FontWeight.BOLD, expand=True),
-                        ft.IconButton(ft.Icons.SETTINGS_OUTLINED, icon_size=IconSize.HEADER, icon_color=Colors.TEXT_SECONDARY, on_click=open_settings, tooltip="تخصيص التنبيهات"),
+                        ft.IconButton(ft.Icons.SETTINGS_OUTLINED, icon_size=IconSize.HEADER, icon_color=Colors.TEXT_SECONDARY, on_click=open_settings, tooltip="تخصيص التنبيهات", visible=can_manage_settings),
                         ft.IconButton(ft.Icons.DONE_ALL_ROUNDED, icon_size=IconSize.HEADER, icon_color=Colors.TEXT_SECONDARY, on_click=mark_all, tooltip="تعليم الكل كمقروء"),
                         header_close_button(close),
                     ],
@@ -444,17 +451,11 @@ class NotificationCenter:
         )
 
     # -- settings screen -----------------------------------------------------
-    def show_settings(self) -> None:
-        self._set_header("الإشعارات الذكية", "خصّص كل نوع تنبيه على حدة")
+    def show_settings(self, *, embedded: bool = False) -> ft.Control | None:
+        if not embedded:
+            self._set_header("الإشعارات والتنبيهات", "خصّص القواعد وقنوات التوصيل وساعات الهدوء")
         cfg = self.ctx.notifications.get_config()
         field_refs: dict[str, ft.Control] = {}
-
-        # Ask for Android 13+'s notification permission right here, not at
-        # app launch -- a person opening notification settings has already
-        # signaled they want alerts, so the system prompt has context instead
-        # of appearing out of nowhere on first open.
-        if self.native_files:
-            self.page.run_task(self.native_files.request_notification_permission)
 
         # (seconds, label) -- "فورًا" keeps the original immediate check (app
         # stays open, only proves the notification channel itself works);
@@ -489,6 +490,8 @@ class NotificationCenter:
 
             async def _run():
                 try:
+                    if background_ok:
+                        await self.native_files.request_notification_permission()
                     if delay_seconds <= 0:
                         ok = await self.native_files.send_test_notification(
                             title="إشعار اختبار",
@@ -559,6 +562,21 @@ class NotificationCenter:
             rule = cfg.get(key, {})
             switch = ft.Switch(value=bool(rule.get("enabled", True)), active_color=Colors.PRIMARY)
             field_refs[f"{key}.enabled"] = switch
+            priority = ft.Dropdown(
+                width=118,
+                value=str(rule.get("priority", "warning")),
+                dense=True,
+                border_radius=Radius.SM,
+                filled=True,
+                bgcolor=Colors.BACKGROUND_ALT,
+                border_color=Colors.BORDER,
+                options=[
+                    ft.dropdown.Option(key="info", text="معلومة"),
+                    ft.dropdown.Option(key="warning", text="تحذير"),
+                    ft.dropdown.Option(key="urgent", text="عاجل"),
+                ],
+            )
+            field_refs[f"{key}.priority"] = priority
             return ft.Container(
                 ft.Column(
                     [
@@ -566,7 +584,7 @@ class NotificationCenter:
                             [
                                 ft.Container(ft.Icon(icon, size=18, color=Colors.PRIMARY), width=36, height=36, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=Radius.MD),
                                 ft.Column([ft.Text(title, size=14, weight=ft.FontWeight.BOLD), ft.Text(description, size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
-                                switch,
+                                ft.Column([priority, switch], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                             ],
                             spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
@@ -638,6 +656,35 @@ class NotificationCenter:
         )
 
         daily_hour_field = numeric_field("daily_check_hour", cfg.get("daily_check_hour", 9), suffix="س", width=70)
+        repeat_after_field = numeric_field(
+            "repeat_after_days",
+            cfg.get("repeat_after_days", 1),
+            suffix="يوم",
+            width=80,
+        )
+        repeat_after_card = ft.Container(
+            ft.Row(
+                [
+                    ft.Container(ft.Icon(ft.Icons.SNOOZE_OUTLINED, size=18, color=Colors.PRIMARY), width=36, height=36, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=Radius.MD),
+                    ft.Column(
+                        [
+                            ft.Text("تهدئة تكرار التنبيه", size=14, weight=ft.FontWeight.BOLD),
+                            ft.Text("أعد تذكيرك بالحالة المستمرة بعد هذه المدة، من يوم إلى 30 يومًا.", size=11, color=Colors.TEXT_SECONDARY),
+                        ],
+                        spacing=1,
+                        expand=True,
+                    ),
+                    repeat_after_field,
+                ],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=14,
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.LG,
+            shadow=Shadow.SM,
+        )
         daily_hour_card = ft.Container(
             ft.Row(
                 [
@@ -870,14 +917,126 @@ class NotificationCenter:
                 size=11,
                 color=Colors.TEXT_SECONDARY,
             ),
+        ]
+
+        def rule_summary_rows() -> list[dict]:
+            history = self.ctx.notifications.history(limit=100)
+            labels = {"info": "معلومة", "warning": "تحذير", "urgent": "عاجل"}
+            rows = []
+            for key, title, _description, _icon in _RULE_META:
+                matching = [
+                    record for record in history
+                    if record.get("rule_key") == key or (
+                        key == "receivables" and str(record.get("rule_key") or "").startswith("receivables_")
+                    )
+                ]
+                rule = cfg.get(key, {})
+                rows.append({
+                    "rule_label": title,
+                    "enabled_label": "مفعّل" if rule.get("enabled", True) else "متوقف",
+                    "priority_label": labels.get(str(rule.get("priority", "warning")), "تحذير"),
+                    "last_triggered": str(matching[0].get("created_at") or "—") if matching else "—",
+                })
+            return rows
+
+        rule_summary_grid = DataGrid(
+            columns=[
+                GridColumn("rule_label", "قاعدة التنبيه"),
+                GridColumn("enabled_label", "الحالة", width=90, align="center", kind="badge"),
+                GridColumn("priority_label", "الأهمية", width=100, align="center", kind="badge"),
+                GridColumn("last_triggered", "آخر ظهور", width=170, align="center"),
+            ],
+            rows=rule_summary_rows(),
+            viewport_height=210,
+            boxed=True,
+            center_cells=True,
+            empty_text="لا توجد قواعد تنبيه",
+            on_sort=lambda key, direction: rule_summary_grid.set_rows(
+                sorted(
+                    rule_summary_rows(),
+                    key=lambda row: str(row.get(key) or "").casefold(),
+                    reverse=direction == "desc",
+                )
+            ) if key else None,
+        )
+        settings_cards.extend([
+            ft.Text("ملخص القواعد", size=13, weight=ft.FontWeight.W_600),
+            rule_summary_grid,
             settings_section("قواعد التنبيه الداخلي", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
             card_grid(internal_cards),
+            repeat_after_card,
             settings_section("قنوات الإرسال الخارجية", ft.Icons.CLOUD_OUTLINED),
             ext_header,
             card_grid([telegram_card, email_card, webhook_card]),
             routing_card,
             test_notification_card,
-        ]
+        ])
+
+        def notification_rows() -> list[dict]:
+            labels = {key: title for key, title, *_ in _RULE_META}
+            return [
+                {
+                    **row,
+                    "rule_label": labels.get(row.get("rule_key"), str(row.get("rule_key") or "—")),
+                    "read_label": "مقروء" if row.get("read_at") else "جديد",
+                }
+                for row in self.ctx.notifications.history(limit=30)
+            ]
+
+        notification_grid = DataGrid(
+            columns=[
+                GridColumn("created_at", "الوقت", width=155, align="center"),
+                GridColumn("rule_label", "القاعدة", width=130),
+                GridColumn("title", "التنبيه"),
+                GridColumn("severity", "الأهمية", width=90, align="center", kind="badge"),
+                GridColumn("read_label", "الحالة", width=90, align="center", kind="badge"),
+            ],
+            rows=notification_rows(),
+            viewport_height=250,
+            boxed=True,
+            center_cells=True,
+            empty_text="لا توجد تنبيهات مسجلة",
+            formatter=lambda col, value, row: (
+                {"urgent": "عاجل", "warning": "تحذير", "info": "معلومة"}.get(str(value), str(value))
+                if col.key == "severity"
+                else str(value or "—")
+            ),
+        )
+
+        delivery_labels = {"telegram": "تيليغرام", "email": "البريد", "webhook": "Webhook"}
+        delivery_grid = DataGrid(
+            columns=[
+                GridColumn("created_at", "الوقت", width=155, align="center"),
+                GridColumn("channel_label", "القناة", width=110),
+                GridColumn("title", "التنبيه"),
+                GridColumn("status_label", "النتيجة", width=90, align="center", kind="badge"),
+                GridColumn("attempts", "المحاولات", width=90, align="center", kind="number"),
+            ],
+            rows=[
+                {
+                    **row,
+                    "channel_label": delivery_labels.get(row.get("channel"), str(row.get("channel") or "—")),
+                    "status_label": "تم الإرسال" if row.get("status") == "sent" else "فشل",
+                }
+                for row in self.ctx.external_notifications.delivery_log(limit=30)
+            ],
+            viewport_height=220,
+            boxed=True,
+            center_cells=True,
+            empty_text="لا توجد عمليات إرسال خارجية مسجلة",
+        )
+
+        def refresh_history(_=None):
+            rule_summary_grid.set_rows(rule_summary_rows())
+            notification_grid.set_rows(notification_rows())
+            delivery_grid.set_rows([
+                {
+                    **row,
+                    "channel_label": delivery_labels.get(row.get("channel"), str(row.get("channel") or "—")),
+                    "status_label": "تم الإرسال" if row.get("status") == "sent" else "فشل",
+                }
+                for row in self.ctx.external_notifications.delivery_log(limit=30)
+            ])
 
         def _int(key: str, fallback: int) -> int:
             try:
@@ -888,20 +1047,26 @@ class NotificationCenter:
         def save(_=None):
             new_cfg = self.ctx.notifications.get_config()
             new_cfg["receivables"]["enabled"] = field_refs["receivables.enabled"].value
+            new_cfg["receivables"]["priority"] = field_refs["receivables.priority"].value
             new_cfg["receivables"]["remind_before_days"] = _int("receivables.remind_before_days", new_cfg["receivables"]["remind_before_days"])
             new_cfg["receivables"]["overdue_after_days"] = _int("receivables.overdue_after_days", new_cfg["receivables"]["overdue_after_days"])
             new_cfg["low_stock"]["enabled"] = field_refs["low_stock.enabled"].value
+            new_cfg["low_stock"]["priority"] = field_refs["low_stock.priority"].value
             new_cfg["low_stock"]["default_threshold"] = _int("low_stock.default_threshold", new_cfg["low_stock"]["default_threshold"])
             new_cfg["backup"]["enabled"] = field_refs["backup.enabled"].value
+            new_cfg["backup"]["priority"] = field_refs["backup.priority"].value
             new_cfg["backup"]["remind_after_days"] = _int("backup.remind_after_days", new_cfg["backup"]["remind_after_days"])
             new_cfg["license"]["enabled"] = field_refs["license.enabled"].value
+            new_cfg["license"]["priority"] = field_refs["license.priority"].value
             new_cfg["license"]["remind_before_days"] = _int("license.remind_before_days", new_cfg["license"]["remind_before_days"])
             new_cfg["insights"]["enabled"] = field_refs["insights.enabled"].value
+            new_cfg["insights"]["priority"] = field_refs["insights.priority"].value
             new_cfg["insights"]["drop_percent"] = _int("insights.drop_percent", new_cfg["insights"]["drop_percent"])
             new_cfg["quiet_hours"]["enabled"] = field_refs["quiet_hours.enabled"].value
             new_cfg["quiet_hours"]["start_hour"] = _int("quiet_hours.start_hour", new_cfg["quiet_hours"]["start_hour"])
             new_cfg["quiet_hours"]["end_hour"] = _int("quiet_hours.end_hour", new_cfg["quiet_hours"]["end_hour"])
             new_cfg["daily_check_hour"] = max(0, min(23, _int("daily_check_hour", new_cfg.get("daily_check_hour", 9))))
+            new_cfg["repeat_after_days"] = max(1, min(30, _int("repeat_after_days", 1)))
             self.ctx.notifications.save_config(new_cfg)
             ext_new = self.ctx.external_notifications.get_config()
             ext_new["channels"]["telegram"]["enabled"] = ext_channel_switches["telegram"].value
@@ -927,14 +1092,48 @@ class NotificationCenter:
             self._sync_background_notifications()
             self.notify("تم حفظ إعدادات الإشعارات")
 
-        self.content.content = ft.Column(
+        history_card = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("سجل التنبيهات والتوصيل", size=15, weight=ft.FontWeight.BOLD, expand=True),
+                            ft.OutlinedButton("تحديث السجل", icon=ft.Icons.REFRESH, on_click=refresh_history),
+                        ],
+                        wrap=True,
+                    ),
+                    ft.Text("يعرض التنبيهات الداخلية ومحاولات الإرسال الخارجي دون إظهار بيانات الاعتماد أو تفاصيل الأخطاء الحساسة.", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Text("التنبيهات", size=13, weight=ft.FontWeight.W_600),
+                    notification_grid,
+                    ft.Text("الإرسال الخارجي", size=13, weight=ft.FontWeight.W_600),
+                    delivery_grid,
+                ],
+                spacing=10,
+            ),
+            padding=14,
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.LG,
+            shadow=Shadow.SM,
+        )
+        settings_cards.append(history_card)
+        settings_view = ft.Column(
             [
                 *settings_cards,
                 ft.FilledButton("حفظ الإعدادات", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
             ],
-            spacing=12, scroll=ft.ScrollMode.AUTO, expand=True,
+            spacing=12,
+        )
+        if embedded:
+            return settings_view
+        self.content.content = ft.Column(
+            [settings_view],
+            spacing=12,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
         )
         self.content.update()
+        return None
 
 
 __all__ = ["NotificationCenter"]

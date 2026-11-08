@@ -188,16 +188,26 @@ def test_security_screen_builds():
 
 def test_admin_screen_builds():
     from nano_offline.views.admin_view import AdminCenter
+    from nano_offline.views.notifications_view import NotificationCenter
 
     ctx, tmp = _ctx()
     try:
         page, content = FakePage(), ft.Container(expand=True)
+        notifications = NotificationCenter(
+            page,
+            ctx,
+            content,
+            native_files=None,
+            on_title_change=lambda *a: None,
+            on_navigate=lambda *a: None,
+        )
         center = AdminCenter(
             page, ctx, content, on_logout=lambda: None, native_files=None,
             on_theme_changed=lambda: None, on_context_actions=lambda *a: None,
+            notification_center=notifications,
         )
         _assert_built(center, content)
-        for section in ("users", "backup", "audit", "appearance", "reports"):
+        for section in ("users", "backup", "audit", "appearance", "reports", "notifications"):
             center.show_center(section=section)
             assert content.content is not None
     finally:

@@ -48,6 +48,7 @@ DEFAULT_CONFIG: dict = {
         "priority": "info",
         "drop_percent": 30,          # flag today's sales if this far below the 7-day average
     },
+    "repeat_after_days": 1,
     "quiet_hours": {
         "enabled": False,
         "start_hour": 22,
@@ -186,6 +187,20 @@ class NotificationService:
     def save_config(self, config: dict) -> None:
         self.settings.set(SETTINGS_KEY, json.dumps(_merge_config(config), ensure_ascii=False))
 
+    @staticmethod
+    def _dedupe_key(rule_key: str, today: date, cfg: dict) -> str:
+        try:
+            repeat_days = max(1, min(30, int(cfg.get("repeat_after_days", 1))))
+        except (TypeError, ValueError):
+            repeat_days = 1
+        if repeat_days == 1:
+            bucket_start = today
+        else:
+            anchor = date(1970, 1, 1)
+            elapsed = (today - anchor).days
+            bucket_start = anchor + timedelta(days=(elapsed // repeat_days) * repeat_days)
+        return f"{rule_key}:{bucket_start.isoformat()}"
+
     # -- rule evaluation --------------------------------------------------
     def _receivables_alerts(self, cfg: dict, today: date) -> list[Alert]:
         rule = cfg["receivables"]
@@ -194,22 +209,30 @@ class NotificationService:
         overdue_after = int(rule.get("overdue_after_days", 30))
         remind_before = int(rule.get("remind_before_days", 3))
         try:
-            rows = self.reports.outstanding_invoices("customer")
+            rows = self.reports.collection_priorities(as_of=today.isoformat())["invoices"]
         except Exception:
             return []
 
         overdue: list[dict] = []
         due_soon: list[dict] = []
         for row in rows:
-            raw_date = str(row.get("invoice_date") or "")[:10]
-            try:
-                invoice_date = date.fromisoformat(raw_date)
-            except ValueError:
+            due_raw = str(row.get("due_date") or "")[:10]
+            if due_raw:
+                try:
+                    days_until_due = (date.fromisoformat(due_raw) - today).days
+                except ValueError:
+                    continue
+                if days_until_due < 0:
+                    overdue.append(row)
+                elif days_until_due <= remind_before:
+                    due_soon.append(row)
                 continue
-            age = (today - invoice_date).days
-            if age >= overdue_after:
+
+            # Keep supporting legacy/cash-style invoices that have no
+            # contractual due date, using the existing age threshold.
+            if int(row.get("age_days") or 0) >= overdue_after:
                 overdue.append(row)
-            elif age >= overdue_after - remind_before:
+            elif int(row.get("age_days") or 0) >= overdue_after - remind_before:
                 due_soon.append(row)
 
         alerts: list[Alert] = []
@@ -217,7 +240,7 @@ class NotificationService:
             total = sum(float(r.get("remaining_amount") or 0) for r in overdue)
             # Prefer the customer with the largest remaining balance for a one-tap receipt.
             top = max(overdue, key=lambda r: float(r.get("remaining_amount") or 0))
-            top_id = top.get("party_id")
+            top_id = top.get("id")
             try:
                 top_id = int(top_id) if top_id is not None else None
             except Exception:
@@ -225,11 +248,11 @@ class NotificationService:
             alerts.append(
                 Alert(
                     rule_key="receivables_overdue",
-                    dedupe_key=f"receivables_overdue:{today.isoformat()}",
+                    dedupe_key=self._dedupe_key("receivables_overdue", today, cfg),
                     severity="urgent",
                     title=f"{len(overdue)} فاتورة متأخرة السداد",
-                    body=f"إجمالي المتأخر {total:,.0f} — أقدمها {self._party_hint(overdue)}",
-                    entity_type="customer",
+                    body=f"{total:,.0f} متأخر حسب موعد الاستحقاق — أكبر رصيد لدى {top.get('party_name') or 'عميل'}",
+                    entity_type="invoice",
                     entity_id=top_id,
                 )
             )
@@ -237,11 +260,12 @@ class NotificationService:
             alerts.append(
                 Alert(
                     rule_key="receivables_due_soon",
-                    dedupe_key=f"receivables_due_soon:{today.isoformat()}",
+                    dedupe_key=self._dedupe_key("receivables_due_soon", today, cfg),
                     severity=rule.get("priority", "warning"),
                     title=f"{len(due_soon)} فاتورة تقترب من التأخر",
-                    body="راجع كشوف الحساب قبل أن تتحول لذمم متأخرة.",
-                    entity_type="customer",
+                    body=f"إجماليها {sum(float(r.get('remaining_amount') or 0) for r in due_soon):,.0f} — تستحق خلال {remind_before} يومًا.",
+                    entity_type="invoice",
+                    entity_id=int(max(due_soon, key=lambda r: float(r.get("remaining_amount") or 0))["id"]),
                 )
             )
         return alerts
@@ -274,7 +298,7 @@ class NotificationService:
         return [
             Alert(
                 rule_key="low_stock",
-                dedupe_key=f"low_stock:{date.today().isoformat()}",
+                dedupe_key=self._dedupe_key("low_stock", date.today(), cfg),
                 severity=rule.get("priority", "warning"),
                 title=f"{len(low)} صنف بحاجة تزويد",
                 body=names,
@@ -301,7 +325,7 @@ class NotificationService:
             return [
                 Alert(
                     rule_key="backup_missing",
-                    dedupe_key=f"backup_missing:{today.isoformat()}",
+                    dedupe_key=self._dedupe_key("backup_missing", today, cfg),
                     severity=rule.get("priority", "warning"),
                     title="لا توجد نسخة احتياطية بعد",
                     body="خذ نسخة احتياطية أولى من مركز الإدارة.",
@@ -316,7 +340,7 @@ class NotificationService:
             return [
                 Alert(
                     rule_key="backup_due",
-                    dedupe_key=f"backup_due:{today.isoformat()}",
+                    dedupe_key=self._dedupe_key("backup_due", today, cfg),
                     severity=rule.get("priority", "warning"),
                     title="حان وقت نسخة احتياطية جديدة",
                     body=f"آخر نسخة كانت منذ {days_since} يومًا.",
@@ -348,7 +372,7 @@ class NotificationService:
         return [
             Alert(
                 rule_key="license_expiry",
-                dedupe_key=f"license_expiry:{today.isoformat()}",
+                dedupe_key=self._dedupe_key("license_expiry", today, cfg),
                 severity=severity,
                 title=title,
                 body="جدّد الترخيص لتفادي توقف التفعيل.",
@@ -388,7 +412,7 @@ class NotificationService:
             return [
                 Alert(
                     rule_key="sales_drop",
-                    dedupe_key=f"sales_drop:{today.isoformat()}",
+                    dedupe_key=self._dedupe_key("sales_drop", today, cfg),
                     severity=rule.get("priority", "info"),
                     title="مبيعات اليوم أقل من المعتاد",
                     body=f"أقل من متوسط آخر 7 أيام بنسبة {drop:.0f}%.",
@@ -526,6 +550,10 @@ class NotificationService:
         # so the panel opens immediately with what is already recorded; the
         # newly computed rows appear the next time it is opened/refreshed.
         self.sync_in_background(min_interval=0.0)
+        return self.history(limit)
+
+    def history(self, limit: int = 30) -> list[dict]:
+        """Return recorded alerts without scheduling a rules-engine refresh."""
         with self.db.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM notification_log ORDER BY created_at DESC LIMIT ?",

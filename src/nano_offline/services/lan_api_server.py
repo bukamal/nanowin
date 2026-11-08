@@ -58,7 +58,7 @@ READ_METHODS = frozenset({
     "settings.get", "settings.get_all", "auth.has_users", "auth.list_users", "auth.audit_entries",
     # notifications / assistant / pulse
     "notifications.generate_alerts", "notifications.get_config", "notifications.recent",
-    "notifications.unread_summary",
+    "notifications.unread_summary", "notifications.history",
     "smart_assistant.decisions", "smart_assistant.decision_of_the_day",
     "owner_pulse.generate",
     # expenses (reads)
@@ -130,6 +130,7 @@ WRITE_METHODS: dict[str, str] = {
 READ_PERMISSIONS: dict[str, str] = {
     "auth.list_users": "admin",
     "auth.audit_entries": "admin",
+    "notifications.history": "admin",
     "external_notifications.get_config": "admin",
     "external_notifications.delivery_log": "admin",
 }
