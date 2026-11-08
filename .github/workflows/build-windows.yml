@@ -195,7 +195,10 @@ jobs:
         # src/main.py; only the exe metadata/window-title-before-load are ASCII.
         shell: pwsh
         run: |
-          flet build windows --product "Nano" --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor 2>&1 | Tee-Object -FilePath flet-build.log
+          # -vv is important with the pinned serious_python version: package
+          # errors can be written to stdout while the process exits 0, leaving
+          # Flet to report only that app.zip is missing.
+          flet build windows --product "Nano" --build-number "${{ steps.appver.outputs.build_number }}" --build-version "${{ steps.appver.outputs.build_version }}" --skip-flutter-doctor -vv 2>&1 | Tee-Object -FilePath flet-build.log
           if ($LASTEXITCODE -ne 0) {
             Write-Host "===== flet-build.log tail (last 80 lines) ====="
             Get-Content flet-build.log -Tail 80
