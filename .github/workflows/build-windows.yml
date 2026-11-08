@@ -175,6 +175,48 @@ jobs:
             throw "Visual Studio 2019 C++ tools were not installed; refusing to run a build that will fail in CMake"
           }
 
+      - name: Prepare embedded Python runtime
+        # serious_python 0.9.11 ignores both HTTP and tar extraction failures,
+        # then fails later when it tries to launch python.exe. Stage and verify
+        # its pinned runtime at the cache path before Flet generates the
+        # Flutter project; cookiecutter preserves files not in the template.
+        shell: pwsh
+        run: |
+          $releaseDate = "20250205"
+          $archiveName = "cpython-3.12.9+20250205-x86_64-pc-windows-msvc-shared-install_only_stripped.tar.gz"
+          $buildCache = Join-Path $env:GITHUB_WORKSPACE "build/flutter/build"
+          $pythonDir = Join-Path $buildCache "build_python_3.12.9"
+          $archivePath = Join-Path $buildCache $archiveName
+          $downloadUrl = "https://github.com/astral-sh/python-build-standalone/releases/download/$releaseDate/$archiveName"
+
+          New-Item -ItemType Directory -Force -Path $pythonDir | Out-Null
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          if ((Get-Item $archivePath).Length -lt 10MB) {
+            throw "Python runtime archive is unexpectedly small: $((Get-Item $archivePath).Length) bytes"
+          }
+
+          $archiveEntries = & tar -tzf $archivePath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read the Python runtime archive with tar"
+          }
+          if ($archiveEntries -notcontains "python/python.exe") {
+            throw "Python runtime archive does not contain python/python.exe"
+          }
+
+          & tar -xzf $archivePath -C $pythonDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not extract the Python runtime archive"
+          }
+
+          $pythonExe = Join-Path $pythonDir "python/python.exe"
+          if (-not (Test-Path $pythonExe)) {
+            throw "Embedded Python executable was not created at $pythonExe"
+          }
+          & $pythonExe --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Embedded Python executable failed its version check"
+          }
+
       - name: Build Windows EXE
         # NOTE: the pipe to Tee-Object masks flet's exit code (the step would
         # stay green on a failed build and only blow up later at Inno Setup

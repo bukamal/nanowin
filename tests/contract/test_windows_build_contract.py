@@ -15,6 +15,18 @@ def test_windows_build_fails_if_required_app_bundle_is_missing():
     assert "skipping entry-point guard" not in workflow
 
 
+def test_windows_build_prepares_and_validates_embedded_python():
+    workflow = (ROOT / ".github" / "workflows" / "build-windows.yml").read_text(encoding="utf-8")
+
+    prepare = workflow.index("- name: Prepare embedded Python runtime")
+    build = workflow.index("- name: Build Windows EXE")
+    assert prepare < build
+    assert 'build_python_3.12.9' in workflow[prepare:build]
+    assert 'python/python.exe' in workflow[prepare:build]
+    assert 'tar -tzf $archivePath' in workflow[prepare:build]
+    assert 'tar -xzf $archivePath -C $pythonDir' in workflow[prepare:build]
+
+
 def test_windows_installer_shortcut_names_are_filesystem_safe():
     installer = (ROOT / "windows" / "installer.iss").read_text(encoding="utf-8")
 
