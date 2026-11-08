@@ -92,7 +92,13 @@ class AdminCenter:
         ]
         return ft.ResponsiveRow(columns, spacing=12, run_spacing=10, rtl=True)
 
-    def _section(self, title: str, controls: list[ft.Control]) -> ft.Container:
+    def _section(
+        self,
+        title: str,
+        controls: list[ft.Control],
+        *,
+        responsive: bool = True,
+    ) -> ft.Container:
         section_icons = (
             ("المظهر", ft.Icons.DARK_MODE_OUTLINED),
             ("المستخدمون", ft.Icons.PEOPLE_ALT_OUTLINED),
@@ -127,7 +133,9 @@ class AdminCenter:
                         spacing=10,
                     ),
                     ft.Divider(height=1, color=Colors.BORDER_ALT),
-                    self._settings_columns(controls),
+                    self._settings_columns(controls)
+                    if responsive
+                    else ft.Column(controls, spacing=10),
                 ],
                 spacing=10,
             ),
@@ -3081,6 +3089,7 @@ class AdminCenter:
                     if self.notification_center
                     else ft.Text("إعدادات الإشعارات غير متاحة.", color=Colors.TEXT_MUTED),
                 ],
+                responsive=False,
             ),
             "sound": self._section(
                 "النظام الصوتي",
