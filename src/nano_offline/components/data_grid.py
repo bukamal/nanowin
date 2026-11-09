@@ -1306,7 +1306,7 @@ class DataGrid(ft.Column):
         saves the whole batch at once, so a blank row must be ready for
         typing without a click.
         """
-        blank = {col.key: "" for col in self._columns}
+        blank = {col.key: "" for col in self._all_columns}
         if row:
             # Only keep keys that map to real columns, so a stray field can
             # never leak into the row that gets saved.

@@ -791,10 +791,14 @@ def test_rows_property_returns_copies_but_set_cell_persists_non_column_keys():
     assert g._rows[0]["_id"] == 42
 
 
-def test_set_cell_persists_values_for_hidden_columns():
-    # add_row only keeps visible columns; set_cell must still store a value for
-    # a hidden column (used to prefill every field when editing an item).
-    g = DataGrid(columns=COLS, rows=[], page=None, hidden_keys={"category"})
-    idx = g.add_row()
-    g.set_cell(idx, "category", "قرطاسية", notify=False)
-    assert g._rows[idx]["category"] == "قرطاسية"
+def test_add_row_preserves_values_for_hidden_columns():
+    columns = [
+        GridColumn("name", "الاسم", editable=True),
+        GridColumn("quantity", "الكمية", kind="number", editable=True),
+    ]
+    g = DataGrid(columns=columns, rows=[], page=None, hidden_keys={"quantity"})
+    idx = g.add_row({"name": "مسطرة", "quantity": 3.5})
+    assert g._rows[idx]["quantity"] == 3.5
+
+    g.set_hidden_keys({"name", "quantity"})
+    assert g._rows[idx]["quantity"] == 3.5

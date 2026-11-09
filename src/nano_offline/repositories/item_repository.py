@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 
 from nano_offline.core.asyncdb import Offloadable, blocking
@@ -7,6 +8,7 @@ from nano_offline.core.database import Database
 from nano_offline.core import event_bus
 from nano_offline.core import money
 from nano_offline.core import search_index
+from nano_offline.repositories.inventory_adjustment import record_inventory_adjustment
 
 _ITEM_LIST_SQL = """
 SELECT i.*, c.name AS category_name, u.name AS unit_name, u.abbreviation AS unit_abbreviation,
@@ -506,12 +508,23 @@ class ItemRepository(Offloadable):
         base_unit_id: int | None = None,
         item_units: list[dict] | None = None,
         barcode: str | None = None,
+        quantity: float | None = None,
     ) -> None:
         name = name.strip()
         if not name:
             raise ValueError("اسم المادة مطلوب")
         if item_type not in {"مخزون", "خدمة"}:
             raise ValueError("نوع المادة غير صحيح")
+        requested_quantity = None
+        if quantity is not None:
+            try:
+                requested_quantity = float(quantity)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("الكمية غير صحيحة") from exc
+            if not math.isfinite(requested_quantity) or requested_quantity < 0:
+                raise ValueError("الكمية يجب أن تكون رقمًا صالحًا غير سالب")
+            if item_type == "خدمة" and requested_quantity > 1e-9:
+                raise ValueError("لا يمكن تحديد كمية لمادة من نوع خدمة")
         code = (barcode or "").strip() or None
         with self.db.transaction() as conn:
             old = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
@@ -535,23 +548,40 @@ class ItemRepository(Offloadable):
                     raise ValueError("هذا الباركود مستخدم بالفعل لمادة أخرى") from exc
                 raise
             self._replace_units(conn, item_id, base_unit_id, item_units or [])
+            has_purchases = conn.execute(
+                "SELECT 1 FROM invoice_lines il JOIN invoices inv ON inv.id=il.invoice_id "
+                "WHERE il.item_id=? AND inv.type='purchase' LIMIT 1",
+                (item_id,),
+            ).fetchone()
+
             # Keep the opening-cost baseline (which rebuild_inventory uses to
             # value the opening stock) in sync with a manually edited purchase
             # price, otherwise the next rebuild would revert purchase_price /
             # average_cost to the ORIGINAL opening cost. Real purchase
             # invoices remain authoritative (their weighted average wins).
             opening_qty = float(old["opening_quantity"] or 0)
-            has_purchases = conn.execute(
-                "SELECT 1 FROM invoice_lines il JOIN invoices inv ON inv.id=il.invoice_id "
-                "WHERE il.item_id=? AND inv.type='purchase' LIMIT 1",
-                (item_id,),
-            ).fetchone()
             if not has_purchases and opening_qty > 0:
                 new_cost = money.quantized(purchase_price or 0)
                 conn.execute(
                     "UPDATE items SET opening_unit_cost=?,average_cost=? WHERE id=?",
                     (new_cost, new_cost, item_id),
                 )
+            if requested_quantity is not None and item_type == "مخزون":
+                old_quantity = float(old["quantity"] or 0)
+                diff = requested_quantity - old_quantity
+                if abs(diff) >= 1e-9:
+                    average_cost = float(old["average_cost"] or 0)
+                    unit_cost = (
+                        average_cost
+                        if has_purchases and average_cost > 0
+                        else money.quantized(purchase_price or 0)
+                    )
+                    record_inventory_adjustment(conn, item_id, diff, unit_cost)
+                    if abs(old_quantity) < 1e-9 and requested_quantity > 1e-9:
+                        conn.execute(
+                            "UPDATE items SET average_cost=? WHERE id=?",
+                            (unit_cost, item_id),
+                        )
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','item',?,?)",
                 (item_id, name),

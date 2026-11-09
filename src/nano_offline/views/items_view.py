@@ -2751,6 +2751,8 @@ class ItemsCenter:
                         )
                         if row_id:
                             # Edit mode: update the existing item in place.
+                            if fields["item_type"] == "مخزون":
+                                fields["quantity"] = float(row.get("quantity") or 0)
                             ctx.items.update(int(row_id), **fields)
                             updated_count += 1
                             item_id = int(row_id)

@@ -9,6 +9,8 @@ the user saw "changed/decreased" after adding or reopening the app.
 """
 from __future__ import annotations
 
+import pytest
+
 from nano_offline.app_context import AppContext
 
 
@@ -58,3 +60,47 @@ def test_edited_purchase_price_survives_rebuild(tmp_path):
     assert float(row["purchase_price"]) == 250
     assert float(row["average_cost"]) == 250
     assert float(row["quantity"]) == 10
+
+
+def test_editing_zero_quantity_item_adds_rebuildable_stock_adjustment(tmp_path):
+    ctx = AppContext.create(tmp_path / "nano.db")
+    unit = ctx.definitions.create_unit("قطعة", "ق")
+    item_id = ctx.items.create(
+        name="مادة بلا مخزون",
+        purchase_price=25,
+        selling_price=40,
+        quantity=0,
+        base_unit_id=unit,
+    )
+
+    ctx.items.update(
+        item_id,
+        name="مادة بلا مخزون",
+        purchase_price=25,
+        selling_price=40,
+        base_unit_id=unit,
+        quantity=5,
+    )
+    row = ctx.items.get(item_id)
+    assert row is not None
+    assert float(row["quantity"]) == 5
+    assert float(row["opening_quantity"]) == 5
+    assert float(row["average_cost"]) == 25
+    adjustments = [m for m in ctx.items.movements(item_id) if m["movement_type"] == "adjustment"]
+    assert len(adjustments) == 1
+    assert float(adjustments[0]["quantity_delta"]) == 5
+
+    ctx.items.update(
+        item_id,
+        name="مادة بلا مخزون",
+        purchase_price=25,
+        selling_price=40,
+        base_unit_id=unit,
+        quantity=5,
+    )
+    assert len([m for m in ctx.items.movements(item_id) if m["movement_type"] == "adjustment"]) == 1
+
+    reopened = AppContext.create(ctx.db.path)
+    refreshed = reopened.items.get(item_id)
+    assert refreshed is not None
+    assert float(refreshed["quantity"]) == pytest.approx(5)
