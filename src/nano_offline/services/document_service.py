@@ -753,6 +753,8 @@ table th, table td {{ text-align:center; }}
         include_price_qr: bool = False,
         label_size: tuple[int, int] = (210, 54),
         show_text: bool = True,
+        show_price: bool = True,
+        show_company_name: bool = False,
         layout: str = "sheet",
         roll_width_mm: int = 58,
     ) -> str:
@@ -776,6 +778,8 @@ table th, table td {{ text-align:center; }}
         ``label_size``/``show_text``: admin-configurable sticker size
         (core.barcode_settings.label_dimensions) and whether the human-
         readable code is printed under the bars.
+        ``show_price`` and ``show_company_name`` control the corresponding
+        text inside each label; the optional price QR remains independent.
 
         ``layout``: ``"sheet"`` (default, unchanged from before) lays labels
         out on an A4 grid of ``columns`` columns via the shared invoice shell
@@ -791,6 +795,7 @@ table th, table td {{ text-align:center; }}
         """
         settings = self._settings()
         accent = settings.get("invoice_color") or _DEFAULT_ACCENT
+        company = self._e(settings.get("company_name") or branding.DEFAULT_COMPANY_NAME)
         lbl_width, lbl_height = label_size
         is_roll = layout == "roll"
         cells = []
@@ -800,13 +805,19 @@ table th, table td {{ text-align:center; }}
                 continue
             name = self._e(label.get("name") or "")
             price = label.get("price")
+            company_html = f'<div class="lbl-company">{company}</div>' if show_company_name else ""
             price_qr_html = ""
             if price is not None:
-                price_html = f'<div class="lbl-price">{self._money(price)}</div>'
+                price_html = f'<div class="lbl-price">{self._money(price)}</div>' if show_price else ""
+                qr_html = ""
                 if include_price_qr:
                     qr_text = f"{label.get('name') or ''}\nالسعر: {self._money_text(price)}"
                     price_qr = qr_svg(qr_text, size=60, level="M", quiet_zone=1, dark="#0F172A")
-                    price_qr_html = f'<div class="lbl-price-row">{price_html}<div class="lbl-price-qr">{price_qr}</div></div>'
+                    qr_html = f'<div class="lbl-price-qr">{price_qr}</div>'
+                if price_html and qr_html:
+                    price_qr_html = f'<div class="lbl-price-row">{price_html}{qr_html}</div>'
+                elif qr_html:
+                    price_qr_html = f'<div class="lbl-price-row">{qr_html}</div>'
                 else:
                     price_qr_html = price_html
             # On a roll label the barcode is the whole point of the strip, so
@@ -818,6 +829,7 @@ table th, table td {{ text-align:center; }}
             svg = code128b_svg(code, width=svg_width, height=svg_height, show_text=show_text, bar_color="#0F172A")
             cells.append(
                 f'<div class="lbl">'
+                f"{company_html}"
                 f'<div class="lbl-name">{name}</div>'
                 f'<div class="lbl-barcode">{svg}</div>'
                 f"{price_qr_html}"
@@ -839,6 +851,7 @@ table th, table td {{ text-align:center; }}
   text-align:center; page-break-inside:avoid; background:#fff;
   box-shadow: inset 0 0 0 1px {tint};
 }}
+.lbl-company {{ font-size:8px; font-weight:600; color:#64748B; margin-bottom:2px; }}
 .lbl-name {{
   font-size:10.5px; font-weight:700; margin-bottom:4px; color:#0F172A;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
@@ -886,6 +899,7 @@ body {{
   page-break-after:always; break-after:page;
 }}
 .lbl:last-child {{ page-break-after:auto; break-after:auto; }}
+.lbl-company {{ font-size:9px; font-weight:600; color:#64748B; margin-bottom:1mm; }}
 .lbl-name {{
   font-size:12px; font-weight:700; margin-bottom:2mm; color:#0F172A;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;

@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from nano_offline.app_context import AppContext
+from nano_offline.core import barcode_settings
 from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
 from nano_offline.core.database import Database
@@ -69,6 +70,35 @@ def test_thermal_barcode_labels_stack_currency_symbol(tmp_path):
 
     assert ".lbl-price .money-wrap { display:flex; flex-direction:column;" in html
     assert ".lbl-price .money-wrap .amt, .lbl-price .money-wrap .sym { white-space:nowrap; }" in html
+
+
+def test_barcode_label_price_and_company_visibility_are_independent(tmp_path):
+    db = Database(tmp_path / "barcode-label-content.db")
+    db.initialize()
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES('company_name',?)",
+            ("شركة تجريبية",),
+        )
+    documents = DocumentService(db, InvoiceService(db), StatementService(db))
+    labels = [{"name": "مادة", "barcode": "123456", "price": 1250}]
+
+    hidden = documents.barcode_labels_html(
+        labels, layout="roll", show_price=False, show_company_name=False,
+    )
+    assert '<div class="lbl-price">' not in hidden
+    assert '<div class="lbl-company">' not in hidden
+
+    qr_only = documents.barcode_labels_html(
+        labels, layout="roll", include_price_qr=True,
+        show_price=False, show_company_name=True,
+    )
+    assert '<div class="lbl-price">' not in qr_only
+    assert '<div class="lbl-price-qr">' in qr_only
+    assert '<div class="lbl-company">شركة تجريبية</div>' in qr_only
+
+    assert barcode_settings.label_show_price({}) is True
+    assert barcode_settings.label_show_company({}) is False
 
 
 def test_invoice_print_optional_blocks_follow_admin_settings(tmp_path):

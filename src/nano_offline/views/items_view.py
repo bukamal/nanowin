@@ -1459,6 +1459,14 @@ class ItemsCenter:
                 label="إضافة رمز QR للسعر (يمسحه الزبون بكاميرا هاتفه)",
                 value=barcode_settings.label_price_qr_default(ctx.settings),
             )
+            show_price_toggle = ft.Checkbox(
+                label="إظهار سعر البيع في الملصق",
+                value=barcode_settings.label_show_price(ctx.settings),
+            )
+            show_company_toggle = ft.Checkbox(
+                label="إظهار اسم الشركة داخل كل ملصق",
+                value=barcode_settings.label_show_company(ctx.settings),
+            )
             columns_field = SearchSelect(
                 label="عدد الأعمدة",
                 choices=[("2", "٢ أعمدة"), ("3", "٣ أعمدة"), ("4", "٤ أعمدة")],
@@ -1498,6 +1506,8 @@ class ItemsCenter:
                     include_price_qr=price_qr_toggle.value,
                     label_size=barcode_settings.label_dimensions(ctx.settings),
                     show_text=barcode_settings.label_show_text(ctx.settings),
+                    show_price=show_price_toggle.value,
+                    show_company_name=show_company_toggle.value,
                     layout=layout,
                     roll_width_mm=roll_width_mm,
                 )
@@ -1555,7 +1565,10 @@ class ItemsCenter:
                     ft.Text(f"سيتم إنشاء {total} ملصق باركود لِـ {len(usable)} مادة على {surface_label}."),
                     printer_note,
                     *([columns_field] if not is_roll else []),
+                    show_price_toggle,
+                    show_company_toggle,
                     price_qr_toggle,
+                    ft.Text("تغيير هذه الخيارات يؤثر على هذه الطباعة فقط؛ الافتراضيات محفوظة في الإدارة.", size=10, color=Colors.TEXT_SECONDARY),
                 ],
                 spacing=8, tight=True,
             )

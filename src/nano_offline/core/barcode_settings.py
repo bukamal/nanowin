@@ -26,6 +26,8 @@ CHECKSUM_WARNING_KEY = "barcode_checksum_warning"
 LABEL_COLUMNS_KEY = "barcode_label_columns"
 LABEL_PRICE_QR_KEY = "barcode_label_price_qr_default"
 LABEL_SHOW_TEXT_KEY = "barcode_label_show_text"
+LABEL_SHOW_PRICE_KEY = "barcode_label_show_price"
+LABEL_SHOW_COMPANY_KEY = "barcode_label_show_company"
 LABEL_SIZE_KEY = "barcode_label_size"
 # Printer profile: "sheet" is the original A4 multi-column grid meant for
 # sticker sheets on a regular printer; "roll" is a single-column continuous
@@ -53,6 +55,8 @@ DEFAULT_CHECKSUM_WARNING = True
 DEFAULT_LABEL_COLUMNS = 3
 DEFAULT_LABEL_PRICE_QR = False
 DEFAULT_LABEL_SHOW_TEXT = True
+DEFAULT_LABEL_SHOW_PRICE = True
+DEFAULT_LABEL_SHOW_COMPANY = False
 DEFAULT_LABEL_SIZE = "medium"
 DEFAULT_LABEL_LAYOUT = "sheet"
 DEFAULT_LABEL_ROLL_WIDTH = "80"
@@ -128,6 +132,14 @@ def label_show_text(settings) -> bool:
     return _flag(settings, LABEL_SHOW_TEXT_KEY, DEFAULT_LABEL_SHOW_TEXT)
 
 
+def label_show_price(settings) -> bool:
+    return _flag(settings, LABEL_SHOW_PRICE_KEY, DEFAULT_LABEL_SHOW_PRICE)
+
+
+def label_show_company(settings) -> bool:
+    return _flag(settings, LABEL_SHOW_COMPANY_KEY, DEFAULT_LABEL_SHOW_COMPANY)
+
+
 def label_size(settings) -> str:
     value = (settings.get(LABEL_SIZE_KEY, DEFAULT_LABEL_SIZE) or DEFAULT_LABEL_SIZE).strip()
     return value if value in LABEL_SIZE_DIMENSIONS else DEFAULT_LABEL_SIZE
@@ -174,11 +186,13 @@ def stocktake_sound_enabled(settings) -> bool:
 __all__ = [
     "KIND_KEY", "PREFIX_KEY", "AUTO_GENERATE_KEY", "SIMILAR_WARNING_KEY",
     "CHECKSUM_WARNING_KEY", "LABEL_COLUMNS_KEY", "LABEL_PRICE_QR_KEY",
-    "LABEL_SHOW_TEXT_KEY", "LABEL_SIZE_KEY", "LABEL_LAYOUT_KEY",
+    "LABEL_SHOW_TEXT_KEY", "LABEL_SHOW_PRICE_KEY", "LABEL_SHOW_COMPANY_KEY",
+    "LABEL_SIZE_KEY", "LABEL_LAYOUT_KEY",
     "LABEL_ROLL_WIDTH_KEY", "SCAN_FEEDBACK_KEY",
     "DEFAULT_KIND", "DEFAULT_PREFIX", "DEFAULT_AUTO_GENERATE",
     "DEFAULT_SIMILAR_WARNING", "DEFAULT_CHECKSUM_WARNING",
     "DEFAULT_LABEL_COLUMNS", "DEFAULT_LABEL_PRICE_QR", "DEFAULT_LABEL_SHOW_TEXT",
+    "DEFAULT_LABEL_SHOW_PRICE", "DEFAULT_LABEL_SHOW_COMPANY",
     "DEFAULT_LABEL_SIZE", "DEFAULT_LABEL_LAYOUT", "DEFAULT_LABEL_ROLL_WIDTH",
     "DEFAULT_SCAN_FEEDBACK",
     "KIND_LABELS", "LABEL_SIZE_DIMENSIONS", "LABEL_SIZE_LABELS",
@@ -188,7 +202,8 @@ __all__ = [
     "DEFAULT_STOCKTAKE_COOLDOWN_MS", "DEFAULT_STOCKTAKE_SOUND",
     "default_kind", "internal_prefix", "auto_generate_enabled",
     "similar_warning_enabled", "checksum_warning_enabled", "label_columns",
-    "label_price_qr_default", "label_show_text", "label_size",
+    "label_price_qr_default", "label_show_text", "label_show_price",
+    "label_show_company", "label_size",
     "label_dimensions", "label_layout", "label_roll_width",
     "label_roll_width_mm", "scan_feedback_mode",
     "stocktake_cooldown_ms", "stocktake_sound_enabled",

@@ -1158,6 +1158,14 @@ class AdminCenter:
             options=[SegmentOption(k, v) for k, v in barcode_settings.LABEL_SIZE_LABELS.items()],
             value=barcode_settings.label_size(bset),
         )
+        barcode_show_price_switch = ft.Switch(
+            label="إظهار سعر البيع داخل الملصق افتراضيًا",
+            value=barcode_settings.label_show_price(bset),
+        )
+        barcode_show_company_switch = ft.Switch(
+            label="إظهار اسم الشركة داخل كل ملصق افتراضيًا",
+            value=barcode_settings.label_show_company(bset),
+        )
         # Sheet-only controls (columns/size) hide when the roll profile is
         # selected -- a thermal roll is always one continuous strip, so
         # "columns" and a fixed sticker size don't apply to it.
@@ -1235,12 +1243,49 @@ class AdminCenter:
                 prefix=(barcode_prefix_field.value or "") if barcode_kind_field.value == "EAN13" else None,
             )
             if barcode_kind_field.value == "QR":
-                barcode_preview.content = ft.Column(
+                code_preview = ft.Column(
                     [ft.Icon(ft.Icons.QR_CODE_2, size=48, color=Colors.TEXT_SECONDARY), ft.Text(sample, size=11, color=Colors.TEXT_SECONDARY)],
                     spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True,
                 )
             else:
-                barcode_preview.content = _bars_preview(sample, width, height, bool(barcode_show_text_switch.value))
+                code_preview = _bars_preview(sample, width, height, bool(barcode_show_text_switch.value))
+            preview_parts: list[ft.Control] = []
+            if barcode_show_company_switch.value:
+                preview_parts.append(
+                    ft.Text(
+                        (company_name_field.value or branding.DEFAULT_COMPANY_NAME).strip(),
+                        size=8, color=Colors.TEXT_SECONDARY, max_lines=1,
+                    )
+                )
+            preview_parts.extend([
+                ft.Text("مادة تجريبية", size=10, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                code_preview,
+            ])
+            if barcode_show_price_switch.value:
+                preview_parts.append(
+                    ft.Text(
+                        currency.format_amount(
+                            1250,
+                            rate=currency.get_exchange_rate(self.ctx.settings),
+                            symbol=currency.get_display_symbol(self.ctx.settings),
+                            decimals=0,
+                        ),
+                        size=10, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY,
+                    )
+                )
+            barcode_preview.content = ft.Container(
+                ft.Column(
+                    preview_parts,
+                    spacing=2,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    tight=True,
+                ),
+                width=width + 20,
+                padding=8,
+                bgcolor=Colors.WHITE,
+                border=ft.border.all(1, Colors.BORDER),
+                border_radius=8,
+            )
             if barcode_preview.page is not None:
                 barcode_preview.update()
 
@@ -1252,6 +1297,9 @@ class AdminCenter:
         barcode_prefix_field.on_change = barcode_control_changed
         barcode_size_field.on_change = barcode_control_changed
         barcode_show_text_switch.on_change = barcode_control_changed
+        barcode_show_price_switch.on_change = barcode_control_changed
+        barcode_show_company_switch.on_change = barcode_control_changed
+        company_name_field.on_change = barcode_control_changed
         refresh_barcode_preview()
 
         def save_barcode_settings(_):
@@ -1268,6 +1316,8 @@ class AdminCenter:
                     barcode_settings.LABEL_SIZE_KEY: barcode_size_field.value or barcode_settings.DEFAULT_LABEL_SIZE,
                     barcode_settings.LABEL_SHOW_TEXT_KEY: "1" if barcode_show_text_switch.value else "0",
                     barcode_settings.LABEL_PRICE_QR_KEY: "1" if barcode_price_qr_switch.value else "0",
+                    barcode_settings.LABEL_SHOW_PRICE_KEY: "1" if barcode_show_price_switch.value else "0",
+                    barcode_settings.LABEL_SHOW_COMPANY_KEY: "1" if barcode_show_company_switch.value else "0",
                     barcode_settings.SCAN_FEEDBACK_KEY: barcode_scan_feedback_field.value or barcode_settings.DEFAULT_SCAN_FEEDBACK,
                 })
                 self._notify("تم حفظ إعدادات الباركود — تُطبَّق فورًا في المواد ونقطة البيع والطباعة")
@@ -3002,6 +3052,13 @@ class AdminCenter:
                     barcode_layout_field,
                     barcode_sheet_only_box,
                     barcode_roll_only_box,
+                    ft.Text("محتوى كل ملصق", size=11, color=Colors.TEXT_SECONDARY),
+                    barcode_show_price_switch,
+                    barcode_show_company_switch,
+                    ft.Text(
+                        "اسم الشركة داخل الملصق مستقل عن ترويسة صفحة A4.",
+                        size=10, color=Colors.TEXT_SECONDARY,
+                    ),
                     barcode_show_text_switch,
                     barcode_price_qr_switch,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
