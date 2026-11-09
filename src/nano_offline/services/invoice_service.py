@@ -196,22 +196,126 @@ class InvoiceService:
     def convert_opening_balances(
         self, *, item_ids: list[int] | None = None, reference: str = "أول المدة"
     ) -> int | None:
-        """Turn opening-stock balances into an inventory-only purchase invoice.
+        """Create or refresh inventory-only purchase invoices for opening stock.
 
         Items created with an opening quantity carry it in
         ``items.opening_quantity`` (the baseline ``AccountingRebuilder``
-        replays). This converts eligible items -- no invoice history yet --
-        into a single cash-free "أول المدة" purchase invoice priced at each
-        item's opening cost, then zeroes the baseline and removes the opening
-        adjustment movements, all in one transaction so inventory is never
-        double-counted.
+        replays). This converts eligible items into a cash-free "أول المدة"
+        purchase invoice. If an item's balance was edited after conversion,
+        rerunning this action folds that adjustment into its existing opening
+        invoice instead of creating a duplicate or leaving the invoice stale.
 
         The invoice is marked (:data:`OPENING_BALANCE_MARKER`) so the rebuilder
         treats it as inventory-only: it seeds stock/valuation and shows up in
         the purchases list, but posts no cash, payables or period profit.
-        Returns the new invoice id, or ``None`` when nothing was eligible.
+        Returns the new/updated invoice id, or ``None`` when nothing changed.
         """
         with self.db.transaction() as conn:
+            existing_params: list[object] = [EPSILON, OPENING_BALANCE_MARKER]
+            existing_filter = ""
+            if item_ids:
+                filtered_ids = [int(i) for i in item_ids]
+                existing_filter = " AND i.id IN (" + ",".join("?" for _ in filtered_ids) + ")"
+                existing_params.extend(filtered_ids)
+            existing_lines = conn.execute(
+                """SELECT i.id AS item_id,i.name,i.opening_quantity,i.opening_unit_cost,
+                          il.id AS line_id,il.invoice_id,il.quantity_in_base,
+                          il.conversion_factor,il.total
+                   FROM items i
+                   JOIN invoice_lines il ON il.item_id=i.id
+                   JOIN invoices inv ON inv.id=il.invoice_id
+                   WHERE i.item_type='مخزون' AND ABS(i.opening_quantity)>?
+                     AND instr(COALESCE(inv.notes,''),?)>0""" + existing_filter +
+                " ORDER BY il.invoice_id,il.id",
+                existing_params,
+            ).fetchall()
+
+            grouped_lines: dict[int, list[dict]] = {}
+            for row in existing_lines:
+                grouped_lines.setdefault(int(row["item_id"]), []).append(dict(row))
+
+            affected_invoice_ids: set[int] = set()
+            reconciled_item_ids: set[int] = set()
+            updated_invoice_id: int | None = None
+            for current_item_id, rows in grouped_lines.items():
+                if len(rows) != 1:
+                    raise ValueError(
+                        f"لا يمكن تحديث «أول المدة» للمادة «{rows[0]['name']}» "
+                        "لوجود أكثر من بند افتتاحي لها"
+                    )
+
+                row = rows[0]
+                old_base_qty = float(row["quantity_in_base"] or 0)
+                adjustment_qty = float(row["opening_quantity"] or 0)
+                new_base_qty = old_base_qty + adjustment_qty
+                factor = float(row["conversion_factor"] or 1)
+                new_value = float(row["total"] or 0) + (
+                    adjustment_qty * float(row["opening_unit_cost"] or 0)
+                )
+                if new_base_qty < -EPSILON or new_value < -EPSILON:
+                    raise ValueError(
+                        f"لا يمكن تحديث فاتورة «أول المدة» للمادة «{row['name']}» "
+                        "إلى رصيد أو قيمة سالبة"
+                    )
+
+                if new_base_qty <= EPSILON:
+                    conn.execute("DELETE FROM invoice_lines WHERE id=?", (row["line_id"],))
+                else:
+                    display_qty = new_base_qty / factor
+                    unit_price = money.quantized((new_value * factor) / new_base_qty)
+                    line_total = money.quantized(display_qty * unit_price)
+                    conn.execute(
+                        """UPDATE invoice_lines
+                           SET quantity=?,quantity_in_base=?,unit_price=?,total=?
+                           WHERE id=?""",
+                        (display_qty, new_base_qty, unit_price, line_total, row["line_id"]),
+                    )
+
+                conn.execute(
+                    "UPDATE items SET opening_quantity=0,opening_unit_cost=0 WHERE id=?",
+                    (current_item_id,),
+                )
+                conn.execute(
+                    """DELETE FROM inventory_movements
+                       WHERE item_id=? AND invoice_id IS NULL AND movement_type='adjustment'""",
+                    (current_item_id,),
+                )
+                invoice_id = int(row["invoice_id"])
+                affected_invoice_ids.add(invoice_id)
+                reconciled_item_ids.add(current_item_id)
+                updated_invoice_id = invoice_id
+
+            for invoice_id in affected_invoice_ids:
+                line_count = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM invoice_lines WHERE invoice_id=?",
+                        (invoice_id,),
+                    ).fetchone()[0]
+                )
+                if line_count == 0:
+                    conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (invoice_id,))
+                    conn.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
+                    conn.execute(
+                        "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','invoice',?,?)",
+                        (invoice_id, "opening invoice emptied by balance update"),
+                    )
+                else:
+                    invoice_total = float(
+                        conn.execute(
+                            "SELECT COALESCE(SUM(total),0) FROM invoice_lines WHERE invoice_id=?",
+                            (invoice_id,),
+                        ).fetchone()[0]
+                    )
+                    conn.execute(
+                        """UPDATE invoices
+                           SET total=?,initial_paid_amount=?,paid_amount=? WHERE id=?""",
+                        (invoice_total, invoice_total, invoice_total, invoice_id),
+                    )
+                    conn.execute(
+                        "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','invoice',?,?)",
+                        (invoice_id, f"purchase:opening:{invoice_total}"),
+                    )
+
             sql = (
                 "SELECT id,name,opening_quantity,opening_unit_cost,purchase_price,base_unit_id "
                 "FROM items WHERE item_type='مخزون' AND opening_quantity > 1e-9 "
@@ -219,76 +323,80 @@ class InvoiceService:
             )
             params: list[object] = []
             if item_ids:
-                ids_filter = [int(i) for i in item_ids]
-                sql += " AND id IN (" + ",".join("?" for _ in ids_filter) + ")"
-                params.extend(ids_filter)
+                filtered_ids = [int(i) for i in item_ids]
+                sql += " AND id IN (" + ",".join("?" for _ in filtered_ids) + ")"
+                params.extend(filtered_ids)
             candidates = [dict(r) for r in conn.execute(sql, params).fetchall()]
-            if not candidates:
+            candidates = [r for r in candidates if int(r["id"]) not in reconciled_item_ids]
+            if not candidates and not affected_invoice_ids:
                 return None
 
-            ids = [int(r["id"]) for r in candidates]
-            conn.executemany(
-                "UPDATE items SET opening_quantity=0, opening_unit_cost=0 WHERE id=?",
-                [(i,) for i in ids],
-            )
-            for i in ids:
+            invoice_id = updated_invoice_id
+            if candidates:
+                new_item_ids = [int(r["id"]) for r in candidates]
+                conn.executemany(
+                    "UPDATE items SET opening_quantity=0, opening_unit_cost=0 WHERE id=?",
+                    [(i,) for i in new_item_ids],
+                )
+                for i in new_item_ids:
+                    conn.execute(
+                        "DELETE FROM inventory_movements "
+                        "WHERE item_id=? AND invoice_id IS NULL AND movement_type='adjustment'",
+                        (i,),
+                    )
+
+                lines = [
+                    InvoiceLineInput(
+                        description=f'{r["name"]} — أول المدة',
+                        item_id=int(r["id"]),
+                        unit_id=int(r["base_unit_id"]) if r["base_unit_id"] is not None else None,
+                        quantity=float(r["opening_quantity"] or 0),
+                        unit_price=float(r["opening_unit_cost"] or r["purchase_price"] or 0),
+                    )
+                    for r in candidates
+                ]
+                prepared, total, _paid = self._validate_and_prepare(
+                    conn,
+                    invoice_type="purchase",
+                    lines=lines,
+                    customer_id=None,
+                    supplier_id=None,
+                    paid_amount=0,
+                )
+                settings = {
+                    str(r["key"]): str(r["value"])
+                    for r in conn.execute("SELECT key,value FROM settings").fetchall()
+                }
+                print_snapshot = invoice_settings.encode_print_snapshot(
+                    invoice_settings.print_snapshot_from_settings(settings)
+                )
+                cur = conn.execute(
+                    """INSERT INTO invoices(type,customer_id,supplier_id,invoice_date,reference,notes,total,
+                                             initial_paid_amount,paid_amount,allow_negative_stock,
+                                             invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol,
+                                             print_options)
+                       VALUES('purchase',NULL,NULL,?,?,?,?,?,?,0,?,?,?,?)""",
+                    (
+                        date.today().isoformat(),
+                        (reference or "").strip() or "أول المدة",
+                        OPENING_BALANCE_MARKER,
+                        total,
+                        total,
+                        total,
+                        currency.get_exchange_rate(settings),
+                        currency.get_display_currency(settings),
+                        currency.get_display_symbol(settings),
+                        print_snapshot,
+                    ),
+                )
+                invoice_id = int(cur.lastrowid)
+                self._insert_lines(conn, invoice_id, prepared)
                 conn.execute(
-                    "DELETE FROM inventory_movements "
-                    "WHERE item_id=? AND invoice_id IS NULL AND movement_type='adjustment'",
-                    (i,),
+                    "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','invoice',?,?)",
+                    (invoice_id, f"purchase:opening:{total}"),
                 )
 
-            lines = [
-                InvoiceLineInput(
-                    description=f'{r["name"]} — أول المدة',
-                    item_id=int(r["id"]),
-                    unit_id=int(r["base_unit_id"]) if r["base_unit_id"] is not None else None,
-                    quantity=float(r["opening_quantity"] or 0),
-                    unit_price=float(r["opening_unit_cost"] or r["purchase_price"] or 0),
-                )
-                for r in candidates
-            ]
-            prepared, total, _paid = self._validate_and_prepare(
-                conn,
-                invoice_type="purchase",
-                lines=lines,
-                customer_id=None,
-                supplier_id=None,
-                paid_amount=0,
-            )
-            settings = {
-                str(r["key"]): str(r["value"])
-                for r in conn.execute("SELECT key,value FROM settings").fetchall()
-            }
-            print_snapshot = invoice_settings.encode_print_snapshot(
-                invoice_settings.print_snapshot_from_settings(settings)
-            )
-            cur = conn.execute(
-                """INSERT INTO invoices(type,customer_id,supplier_id,invoice_date,reference,notes,total,
-                                         initial_paid_amount,paid_amount,allow_negative_stock,
-                                         invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol,
-                                         print_options)
-                   VALUES('purchase',NULL,NULL,?,?,?,?,?,?,0,?,?,?,?)""",
-                (
-                    date.today().isoformat(),
-                    (reference or "").strip() or "أول المدة",
-                    OPENING_BALANCE_MARKER,
-                    total,
-                    total,
-                    total,
-                    currency.get_exchange_rate(settings),
-                    currency.get_display_currency(settings),
-                    currency.get_display_symbol(settings),
-                    print_snapshot,
-                ),
-            )
-            invoice_id = int(cur.lastrowid)
-            self._insert_lines(conn, invoice_id, prepared)
             AccountingRebuilder.rebuild(conn)
-            conn.execute(
-                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','invoice',?,?)",
-                (invoice_id, f"purchase:opening:{total}"),
-            )
             invalidate_insights()
             return invoice_id
 
@@ -311,6 +419,11 @@ class InvoiceService:
             old = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
             if old is None:
                 raise ValueError("الفاتورة غير موجودة")
+            is_opening_invoice = OPENING_BALANCE_MARKER in str(old["notes"] or "")
+            if is_opening_invoice and (
+                invoice_type != "purchase" or customer_id is not None or supplier_id is not None
+            ):
+                raise ValueError("لا يمكن تغيير نوع أو جهة فاتورة «أول المدة»")
             before = self._snapshot(conn, invoice_id)
             prepared, total, paid_amount = self._validate_and_prepare(
                 conn,
@@ -326,6 +439,12 @@ class InvoiceService:
             self._require_party_for_credit(invoice_type, total, paid_amount, customer_id, supplier_id)
             if allow_negative_stock is None:
                 allow_negative_stock = bool(old["allow_negative_stock"])
+            updated_notes = (notes or "").strip()
+            if (
+                is_opening_invoice
+                and OPENING_BALANCE_MARKER not in updated_notes
+            ):
+                updated_notes = f"{updated_notes} {OPENING_BALANCE_MARKER}".strip()
             conn.execute(
                 """UPDATE invoices
                    SET type=?,customer_id=?,supplier_id=?,invoice_date=?,reference=?,notes=?,total=?,
@@ -337,7 +456,7 @@ class InvoiceService:
                     supplier_id,
                     inv_date,
                     (reference or "").strip() or None,
-                    (notes or "").strip() or None,
+                    updated_notes or None,
                     total,
                     paid_amount,
                     1 if (allow_negative_stock and invoice_type == "sale") else 0,

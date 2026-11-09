@@ -227,3 +227,144 @@ def test_delete_opening_balance_rejects_services(ctx):
     service_id = ctx.items.create(name="خدمة", item_type="خدمة", purchase_price=0, selling_price=20)
     with pytest.raises(ValueError, match="المخزون"):
         ctx.items.delete_opening_balance(service_id)
+
+
+def test_opening_invoice_refreshes_after_item_quantity_edit(ctx):
+    item_id = ctx.items.create(name="مادة افتتاحية قابلة للتعديل", purchase_price=10, quantity=100)
+    other_item_id = ctx.items.create(name="مادة افتتاحية ثابتة", purchase_price=5, quantity=3)
+    opening_id = ctx.invoices.convert_opening_balances()
+    assert opening_id is not None
+
+    ctx.items.update(
+        item_id, name="مادة افتتاحية قابلة للتعديل", purchase_price=10,
+        selling_price=15, quantity=120,
+    )
+    assert float(ctx.items.get(item_id)["quantity"]) == 120
+
+    assert ctx.invoices.convert_opening_balances(item_ids=[item_id]) == opening_id
+    with ctx.db.connect() as conn:
+        invoice_ids = [row["id"] for row in conn.execute(
+            "SELECT DISTINCT invoice_id AS id FROM invoice_lines WHERE item_id=?",
+            (item_id,),
+        )]
+        line = conn.execute(
+            "SELECT quantity_in_base FROM invoice_lines WHERE invoice_id=? AND item_id=?",
+            (opening_id, item_id),
+        ).fetchone()
+        other_line = conn.execute(
+            "SELECT quantity_in_base FROM invoice_lines WHERE invoice_id=? AND item_id=?",
+            (opening_id, other_item_id),
+        ).fetchone()
+        invoice_total = conn.execute(
+            "SELECT total FROM invoices WHERE id=?",
+            (opening_id,),
+        ).fetchone()[0]
+        adjustments = conn.execute(
+            "SELECT COUNT(*) FROM inventory_movements WHERE item_id=? AND movement_type='adjustment'",
+            (item_id,),
+        ).fetchone()[0]
+    assert invoice_ids == [opening_id]
+    assert float(line["quantity_in_base"]) == 120
+    assert float(other_line["quantity_in_base"]) == 3
+    assert float(invoice_total) == 1215
+    assert adjustments == 0
+    assert float(ctx.items.get(item_id)["quantity"]) == 120
+
+    ctx.invoices.delete_invoice(opening_id)
+    assert float(ctx.items.get(item_id)["quantity"]) == 0
+    assert float(ctx.items.get(other_item_id)["quantity"]) == 0
+    ctx.items.delete(item_id)
+    ctx.items.delete(other_item_id)
+    assert ctx.items.get(item_id) is None
+
+
+def test_zero_opening_quantity_removes_empty_opening_invoice(ctx):
+    item_id = ctx.items.create(name="مادة رصيدها صفر", purchase_price=10, quantity=100)
+    opening_id = ctx.invoices.convert_opening_balances(item_ids=[item_id])
+    assert opening_id is not None
+
+    ctx.items.update(
+        item_id, name="مادة رصيدها صفر", purchase_price=10,
+        selling_price=15, quantity=0,
+    )
+    assert ctx.invoices.convert_opening_balances(item_ids=[item_id]) == opening_id
+    assert float(ctx.items.get(item_id)["quantity"]) == 0
+    assert ctx.items.movements(item_id) == []
+    with ctx.db.connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM invoices WHERE id=?",
+            (opening_id,),
+        ).fetchone()[0] == 0
+    ctx.items.delete(item_id)
+
+
+def test_opening_invoice_marker_is_preserved_when_editing_notes(ctx):
+    item_id = ctx.items.create(name="مادة ملاحظاتها", purchase_price=10, quantity=10)
+    opening_id = ctx.invoices.convert_opening_balances(item_ids=[item_id])
+    assert opening_id is not None
+    with ctx.db.connect() as conn:
+        line = conn.execute(
+            "SELECT unit_id FROM invoice_lines WHERE invoice_id=? AND item_id=?",
+            (opening_id, item_id),
+        ).fetchone()
+        invoice = conn.execute(
+            "SELECT total FROM invoices WHERE id=?",
+            (opening_id,),
+        ).fetchone()
+
+    ctx.invoices.update_invoice(
+        opening_id,
+        invoice_type="purchase",
+        lines=[InvoiceLineInput(
+            description="مادة ملاحظاتها", item_id=item_id, unit_id=line["unit_id"],
+            quantity=10, unit_price=10,
+        )],
+        notes="ملاحظة المستخدم",
+        paid_amount=float(invoice["total"]),
+    )
+    with ctx.db.connect() as conn:
+        notes = conn.execute(
+            "SELECT notes FROM invoices WHERE id=?",
+            (opening_id,),
+        ).fetchone()["notes"]
+    assert "ملاحظة المستخدم" in notes
+    assert "__opening_balance__" in notes
+
+    with pytest.raises(ValueError, match="فاتورة «أول المدة»"):
+        ctx.invoices.update_invoice(
+            opening_id,
+            invoice_type="sale",
+            lines=[InvoiceLineInput(
+                description="مادة ملاحظاتها", item_id=item_id, unit_id=line["unit_id"],
+                quantity=10, unit_price=10,
+            )],
+            notes="ملاحظة المستخدم",
+            paid_amount=float(invoice["total"]),
+        )
+
+
+def test_zero_stock_item_with_adjustment_only_history_can_be_deleted(ctx):
+    item_id = ctx.items.create(name="مادة تسويات فقط", purchase_price=10, quantity=100)
+    opening_id = ctx.invoices.convert_opening_balances(item_ids=[item_id])
+    ctx.items.update(
+        item_id, name="مادة تسويات فقط", purchase_price=10,
+        selling_price=15, quantity=120,
+    )
+    ctx.invoices.delete_invoice(opening_id)
+    assert float(ctx.items.get(item_id)["quantity"]) == 20
+    with pytest.raises(ValueError, match="حركات مخزون"):
+        ctx.items.delete(item_id)
+
+    ctx.items.update(
+        item_id, name="مادة تسويات فقط", purchase_price=10,
+        selling_price=15, quantity=0,
+    )
+    assert float(ctx.items.get(item_id)["quantity"]) == 0
+    assert len(ctx.items.movements(item_id)) == 2
+    ctx.items.delete(item_id)
+    assert ctx.items.get(item_id) is None
+    with ctx.db.connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM inventory_movements WHERE item_id=?",
+            (item_id,),
+        ).fetchone()[0] == 0

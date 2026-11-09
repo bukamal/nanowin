@@ -2018,7 +2018,7 @@ class InvoiceCenter:
             value=str(existing["invoice_date"] if existing else date.today().isoformat()),
         )
         reference = SelectAllTextField(label="المرجع", value=(existing.get("reference") or "") if existing else "")
-        notes = SelectAllTextField(label="ملاحظات", value=(existing.get("notes") or "") if existing else "", multiline=True, min_lines=1, max_lines=2)
+        notes = SelectAllTextField(label="ملاحظات", value=(existing.get("notes") or "").replace("__opening_balance__", "").strip() if existing else "", multiline=True, min_lines=1, max_lines=2)
         paid_initial = existing.get("initial_paid_amount", 0) if existing else 0
 
         def party_options() -> None:
@@ -3007,7 +3007,7 @@ class InvoiceCenter:
         suggestions_column = ft.Column([suggestions_mode_row, suggestions_row], spacing=6, visible=False)
         invoice_date = SmartDateField(label="التاريخ", value=str(existing["invoice_date"] if existing else date.today().isoformat()))
         reference = SelectAllTextField(label="المرجع", value=(existing.get("reference") or "") if existing else "")
-        notes = SelectAllTextField(label="ملاحظات", value=(existing.get("notes") or "") if existing else "", multiline=True, min_lines=1, max_lines=3)
+        notes = SelectAllTextField(label="ملاحظات", value=(existing.get("notes") or "").replace("__opening_balance__", "").strip() if existing else "", multiline=True, min_lines=1, max_lines=3)
         line_hidden_state = {
             "keys": set(filter(None, self.ctx.settings.get("ui.invoice_editor_hidden_columns", "").split(",")))
         }

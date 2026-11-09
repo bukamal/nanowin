@@ -3014,14 +3014,15 @@ class ItemsCenter:
                 move_cards = [ft.Text("لا توجد حركات مخزون بعد", size=11, color=Colors.TEXT_SECONDARY)]
             units_text = "، ".join(f"{u['name']} × {float(u.get('conversion_factor') or 1):g}" for u in item_units) or "بلا وحدة"
 
-            # Deletion is only allowed while the item has no history -- the
-            # repository would reject it anyway (see confirm_delete_item).
-            # Derive the flag here because ctx.items.get() (used for `data`
-            # below) does not carry the list query's has_activity column.
-            can_delete = not (
-                bool(item.get("has_activity"))
-                or any(float(stats.get(k) or 0) for k in ("sold_qty", "purchased_qty", "sale_count", "purchase_count"))
-                or bool(movements)
+            # Adjustment-only history may be removed with an explicitly
+            # deleted item once its inventory is empty. Invoice and stocktake
+            # references remain protected by the repository.
+            can_delete = (
+                abs(float(data.get("quantity") or 0)) < 1e-9
+                and abs(float(data.get("opening_quantity") or 0)) < 1e-9
+                and int(stats.get("invoice_line_count") or 0) == 0
+                and int(stats.get("non_adjustment_movement_count") or 0) == 0
+                and int(stats.get("stocktake_line_count") or 0) == 0
             )
             # Opening balance can only be cleared while the item has never
             # been invoiced; removing the baseline under real documents would
@@ -3160,10 +3161,8 @@ class ItemsCenter:
             page.open(detail_sheet)
 
         def confirm_delete_item(item: dict) -> None:
-            # Reachable only for rows with has_activity == 0 (see refresh()
-            # below — items with activity aren't wrapped in a Dismissible
-            # at all), and delete() re-checks anyway, so a race is never
-            # destructive: any failure just restores the row via refresh().
+            # The repository rechecks invoice, stocktake, and balance guards,
+            # so a stale detail sheet cannot delete newly-used history.
             confirm = ft.AlertDialog(modal=True)
 
             def close(_=None):
@@ -3182,7 +3181,10 @@ class ItemsCenter:
                     refresh()
 
             confirm.title = ft.Text("حذف المادة")
-            confirm.content = ft.Text(f"هل تريد حذف «{item['name']}»؟ لن يُسمح بالحذف إذا استُخدمت المادة لاحقًا.")
+            confirm.content = ft.Text(
+                f"هل تريد حذف «{item['name']}»؟ لا يمكن حذفها ما دام لها رصيد أو فواتير أو جرد؛ "
+                "وسيُحذف سجل تسويات المخزون معها."
+            )
             confirm.actions = [ft.TextButton("إلغاء", on_click=close), danger_button("حذف", icon=ft.Icons.DELETE_FOREVER, on_click=remove)]
             page.open(confirm)
 
@@ -3419,7 +3421,7 @@ class ItemsCenter:
                 notify(str(exc), kind="error")
                 return
             if invoice_id:
-                notify("تم إنشاء فاتورة «أول المدة» من الأرصدة الافتتاحية", sound_kind="success")
+                notify("تمت مزامنة فاتورة «أول المدة» مع الأرصدة الافتتاحية", sound_kind="success")
                 refresh()
             else:
                 notify("لا توجد أرصدة افتتاحية قابلة للتحويل", kind="warning")

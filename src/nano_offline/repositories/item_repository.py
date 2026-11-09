@@ -404,6 +404,11 @@ class ItemRepository(Offloadable):
                           COALESCE(SUM(CASE WHEN inv.type='purchase' THEN il.quantity_in_base ELSE 0 END),0) AS purchased_qty,
                           COUNT(DISTINCT CASE WHEN inv.type='sale' THEN inv.id END) AS sale_count,
                           COUNT(DISTINCT CASE WHEN inv.type='purchase' THEN inv.id END) AS purchase_count,
+                          (SELECT COUNT(*) FROM invoice_lines all_lines WHERE all_lines.item_id=i.id) AS invoice_line_count,
+                          (SELECT COUNT(*) FROM inventory_movements other_moves
+                           WHERE other_moves.item_id=i.id AND other_moves.movement_type!='adjustment')
+                            AS non_adjustment_movement_count,
+                          (SELECT COUNT(*) FROM stocktake_lines sl WHERE sl.item_id=i.id) AS stocktake_line_count,
                           MAX(CASE WHEN inv.type='sale' THEN inv.invoice_date END) AS last_sale_date,
                           MAX(CASE WHEN inv.type='purchase' THEN inv.invoice_date END) AS last_purchase_date
                    FROM items i
@@ -612,6 +617,21 @@ class ItemRepository(Offloadable):
                 "SELECT barcode,unit_id FROM item_barcodes WHERE item_id=? ORDER BY id", (item_id,)
             ).fetchall()
         ]
+        movements = [
+            {
+                "movement_type": movement["movement_type"],
+                "quantity_delta": float(movement["quantity_delta"]),
+                "unit_cost": float(movement["unit_cost"] or 0),
+                "value_delta": float(movement["value_delta"] or 0),
+                "movement_date": movement["movement_date"],
+                "invoice_id": movement["invoice_id"],
+            }
+            for movement in conn.execute(
+                """SELECT movement_type,quantity_delta,unit_cost,value_delta,movement_date,invoice_id
+                   FROM inventory_movements WHERE item_id=? ORDER BY id""",
+                (item_id,),
+            ).fetchall()
+        ]
         return {
             "name": row["name"],
             "category_id": row["category_id"],
@@ -623,25 +643,47 @@ class ItemRepository(Offloadable):
             "quantity": float(row["quantity"] or 0),
             "units": units,
             "barcodes": barcodes,
+            "movements": movements,
         }
 
     @blocking
     def delete(self, item_id: int) -> None:
-        # Deliberately narrow: safe only for an item that has never
-        # appeared on an invoice and never generated an inventory movement
-        # (both ON DELETE RESTRICT in the schema). In practice this covers
-        # a service item that was never invoiced, or a stock item created
-        # with a zero opening quantity that was never used — i.e. genuine
-        # "added by mistake" cases, not an undo for real business history.
-        # A non-zero opening quantity already creates an 'adjustment'
-        # movement row at creation time (see create()), so such an item is
-        # excluded here even before any invoice ever touches it.
+        # Invoice and stocktake history must remain attached to its item.
+        # Adjustment-only history can be discarded with an explicitly
+        # deleted item once its current and opening balances are both zero.
         with self.db.transaction() as conn:
+            item = conn.execute(
+                "SELECT quantity,opening_quantity FROM items WHERE id=?",
+                (item_id,),
+            ).fetchone()
+            if item is None:
+                raise ValueError("المادة غير موجودة")
             invoiced = conn.execute("SELECT 1 FROM invoice_lines WHERE item_id=? LIMIT 1", (item_id,)).fetchone()
-            moved = conn.execute("SELECT 1 FROM inventory_movements WHERE item_id=? LIMIT 1", (item_id,)).fetchone()
-            if invoiced or moved:
+            movement_counts = conn.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN movement_type!='adjustment' THEN 1 ELSE 0 END) AS other
+                   FROM inventory_movements WHERE item_id=?""",
+                (item_id,),
+            ).fetchone()
+            stocktake = conn.execute(
+                "SELECT 1 FROM stocktake_lines WHERE item_id=? LIMIT 1", (item_id,)
+            ).fetchone()
+            has_movements = int(movement_counts["total"] or 0) > 0
+            adjustment_only_delete = (
+                has_movements
+                and abs(float(item["quantity"] or 0)) < 1e-9
+                and abs(float(item["opening_quantity"] or 0)) < 1e-9
+                and int(movement_counts["other"] or 0) == 0
+                and not stocktake
+            )
+            if invoiced or stocktake or (has_movements and not adjustment_only_delete):
                 raise ValueError("لا يمكن حذف المادة لوجود حركات مخزون أو فواتير مرتبطة بها")
             before = self._snapshot(conn, item_id)
+            if adjustment_only_delete:
+                conn.execute(
+                    "DELETE FROM inventory_movements WHERE item_id=? AND movement_type='adjustment'",
+                    (item_id,),
+                )
             conn.execute("DELETE FROM items WHERE id=?", (item_id,))
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','item',?,NULL)",

@@ -229,6 +229,28 @@ def test_item_create_and_delete_undo_redo():
         assert undo.redo() == "حذف مادة"
         assert not any(i.get("barcode") == "IC-1" for i in ctx.items.list())
 
+        # A zero-stock item with adjustment-only history can be deleted, and
+        # undo restores its movement audit trail along with the item.
+        adjustable = ctx.items.create(name="تسويات فقط", purchase_price=1.0, base_unit_id=unit)
+        ctx.items.update(
+            adjustable, name="تسويات فقط", purchase_price=1.0,
+            selling_price=2.0, base_unit_id=unit, quantity=5.0,
+        )
+        ctx.items.update(
+            adjustable, name="تسويات فقط", purchase_price=1.0,
+            selling_price=2.0, base_unit_id=unit, quantity=0.0,
+        )
+        assert len(ctx.items.movements(adjustable)) == 2
+        undo.manager().clear()
+        ctx.items.delete(adjustable)
+        assert ctx.items.get(adjustable) is None
+        assert undo.undo() == "حذف مادة"
+        restored = next(i for i in ctx.items.list() if i.get("name") == "تسويات فقط")
+        restored_id = int(restored["id"])
+        assert len(ctx.items.movements(restored_id)) == 2
+        assert undo.redo() == "حذف مادة"
+        assert ctx.items.get(restored_id) is None
+
         # An item created WITH opening stock is not recorded (unsafe to undo
         # without opening-invoice handling).
         undo.manager().clear()

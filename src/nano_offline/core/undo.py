@@ -250,6 +250,26 @@ def _restore_item(ctx, snapshot: dict) -> int:
                 ctx.items.add_barcode(item_id, code, unit_id=bar.get("unit_id"))
             except Exception:
                 pass
+    movements = snapshot.get("movements") or []
+    if movements:
+        with ctx.db.transaction() as conn:
+            conn.executemany(
+                """INSERT INTO inventory_movements(
+                       item_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date,invoice_id
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                [
+                    (
+                        item_id,
+                        movement["movement_type"],
+                        float(movement["quantity_delta"]),
+                        float(movement.get("unit_cost") or 0),
+                        float(movement.get("value_delta") or 0),
+                        movement["movement_date"],
+                        movement.get("invoice_id"),
+                    )
+                    for movement in movements
+                ],
+            )
     return item_id
 
 
