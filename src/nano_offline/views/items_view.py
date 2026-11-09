@@ -1585,6 +1585,27 @@ class ItemsCenter:
                 await asyncio.sleep(0.1)
                 open_barcode_print_dialog(entries, layout=layout, roll_width_mm=width)
 
+            def preview_labels(layout: str, width: int) -> str:
+                labels = [
+                    {"name": item.get("name"), "barcode": item.get("barcode"), "price": item.get("selling_price")}
+                    for item, copies in entries
+                    for _ in range(max(1, int(copies or 1)))
+                    if str(item.get("barcode") or "").strip()
+                ]
+                if not labels:
+                    raise ValueError("لا توجد مواد لها باركود ضمن التحديد")
+                return ctx.documents.barcode_labels_html(
+                    labels,
+                    columns=barcode_settings.label_columns(ctx.settings),
+                    include_price_qr=barcode_settings.label_price_qr_default(ctx.settings),
+                    label_size=barcode_settings.label_dimensions(ctx.settings),
+                    show_text=barcode_settings.label_show_text(ctx.settings),
+                    show_price=barcode_settings.label_show_price(ctx.settings),
+                    show_company_name=barcode_settings.label_show_company(ctx.settings),
+                    layout=layout,
+                    roll_width_mm=width,
+                )
+
             open_print_profile_dialog(
                 page,
                 ctx.settings,
@@ -1594,6 +1615,7 @@ class ItemsCenter:
                 initial_roll_width=barcode_settings.label_roll_width(ctx.settings),
                 surface="label",
                 native_files=self.native_files,
+                preview_builder=preview_labels,
             )
 
         def open_item_card_sheet(item: dict) -> None:

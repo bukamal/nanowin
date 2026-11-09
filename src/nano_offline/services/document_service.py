@@ -317,7 +317,7 @@ table th, table td {{ text-align:center; }}
   {header_number_html}
 </div>
 {body}
-<div class="footer"><span>تم إنشاء المستند محليًا بواسطة {branding.APP_NAME_AR}</span><span>{branding.APP_NAME_EN} Offline</span></div>
+<div class="footer"><span>تم إنشاء المستند محليًا بواسطة {branding.APP_NAME_AR}</span><span>{branding.APP_NAME_EN}</span></div>
 </div></body></html>"""
 
     def invoice_html(self, invoice_id: int) -> str:
@@ -552,11 +552,6 @@ table th, table td {{ text-align:center; }}
                 "</div>"
             )
 
-        notes_html = (
-            f'<div class="note"><b>ملاحظات:</b> {self._e(inv.get("notes"))}</div>'
-            if inv.get("notes")
-            else ""
-        )
         body = f"""
 {watermark_html}
 <div class="meta-row">
@@ -569,7 +564,6 @@ table th, table td {{ text-align:center; }}
 </table>
 {totals_html}
 {progress_html}
-{notes_html}
 {footer_html}
 {sign_row_html}
 """

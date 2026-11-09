@@ -14,7 +14,13 @@ from nano_offline.services.invoice_service import InvoiceLineInput, InvoiceServi
 from nano_offline.services.statement_service import StatementService
 
 
-def _render_invoice(tmp_path, extra_settings: dict[str, str] | None = None) -> str:
+def _render_invoice(
+    tmp_path,
+    extra_settings: dict[str, str] | None = None,
+    *,
+    notes: str | None = None,
+    invoice_type: str = "sale",
+) -> str:
     db = Database(tmp_path / "invoice-print.db")
     db.initialize()
     if extra_settings:
@@ -24,10 +30,21 @@ def _render_invoice(tmp_path, extra_settings: dict[str, str] | None = None) -> s
                 list(extra_settings.items()),
             )
     invoices = InvoiceService(db)
+    supplier_id = None
+    if invoice_type == "purchase":
+        with db.transaction() as conn:
+            supplier_id = int(
+                conn.execute(
+                    "INSERT INTO suppliers(name) VALUES(?)",
+                    ("مورد تجريبي",),
+                ).lastrowid
+            )
     invoice_id = invoices.create_invoice(
-        invoice_type="sale",
+        invoice_type=invoice_type,
+        supplier_id=supplier_id,
         lines=[InvoiceLineInput(description="مادة تجريبية", quantity=2, unit_price=10)],
         paid_amount=5,
+        notes=notes,
     )
     html = DocumentService(db, invoices, StatementService(db)).invoice_html(invoice_id)
     return html.split("<body>", 1)[1]
@@ -47,6 +64,17 @@ def test_invoice_print_defaults_to_clean_layout(tmp_path):
     assert "المتبقي" not in body
 
 
+def test_invoice_print_omits_notes_and_offline_footer_suffix(tmp_path):
+    body = _render_invoice(
+        tmp_path, notes="__opening_balance__", invoice_type="purchase",
+    )
+
+    assert "__opening_balance__" not in body
+    assert "ملاحظات:" not in body
+    assert "Cashir</span>" in body
+    assert "Cashir Offline" not in body
+
+
 def test_invoice_shell_centers_table_headers_and_cells(tmp_path):
     db = Database(tmp_path / "centered-print.db")
     db.initialize()
@@ -56,6 +84,8 @@ def test_invoice_shell_centers_table_headers_and_cells(tmp_path):
     )
 
     assert "table th, table td { text-align:center; }" in html
+    assert "<span>Cashir</span>" in html
+    assert "Cashir Offline" not in html
 
 
 def test_thermal_barcode_labels_stack_currency_symbol(tmp_path):
