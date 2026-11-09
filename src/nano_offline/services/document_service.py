@@ -12,6 +12,7 @@ from nano_offline.core import business_profile
 from nano_offline.core import currency
 from nano_offline.core import font_settings
 from nano_offline.core import invoice_settings
+from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.services.invoice_service import InvoiceService
 from nano_offline.services.statement_service import StatementService
 
@@ -552,6 +553,16 @@ table th, table td {{ text-align:center; }}
                 "</div>"
             )
 
+        # Real user notes belong on the printed invoice, but the internal
+        # opening-balance marker (see accounting_rebuilder) must never leak
+        # onto paper -- it is an implementation detail of converted
+        # opening-stock invoices, not something the customer should read.
+        notes_text = (inv.get("notes") or "").replace(OPENING_BALANCE_MARKER, "").strip()
+        notes_html = (
+            f'<div class="note"><b>ملاحظات:</b> {self._e(notes_text)}</div>'
+            if notes_text
+            else ""
+        )
         body = f"""
 {watermark_html}
 <div class="meta-row">
@@ -564,6 +575,7 @@ table th, table td {{ text-align:center; }}
 </table>
 {totals_html}
 {progress_html}
+{notes_html}
 {footer_html}
 {sign_row_html}
 """
