@@ -224,7 +224,7 @@ class InvoiceService:
                    FROM items i
                    JOIN invoice_lines il ON il.item_id=i.id
                    JOIN invoices inv ON inv.id=il.invoice_id
-                   WHERE i.item_type='مخزون' AND ABS(i.opening_quantity)>?
+                   WHERE i.item_type='مخزون' AND i.is_composite=0 AND ABS(i.opening_quantity)>?
                      AND instr(COALESCE(inv.notes,''),?)>0""" + existing_filter +
                 " ORDER BY il.invoice_id,il.id",
                 existing_params,
@@ -318,7 +318,7 @@ class InvoiceService:
 
             sql = (
                 "SELECT id,name,opening_quantity,opening_unit_cost,purchase_price,base_unit_id "
-                "FROM items WHERE item_type='مخزون' AND opening_quantity > 1e-9 "
+                "FROM items WHERE item_type='مخزون' AND is_composite=0 AND opening_quantity > 1e-9 "
                 "AND id NOT IN (SELECT DISTINCT item_id FROM invoice_lines WHERE item_id IS NOT NULL)"
             )
             params: list[object] = []
@@ -576,10 +576,22 @@ class InvoiceService:
             line_total = money.quantized(qty * price)
             unit_cost = 0.0
             cost_amount = 0.0
+            components: dict[int, float] | None = None
+            is_composite = item is not None and int(item["is_composite"] or 0) == 1
+            if is_composite:
+                # A composite is a recipe, not stock: it is only ever sold
+                # (never purchased) and its sale is exploded into the leaf
+                # materials it consumes. The snapshot is frozen onto the line
+                # so later recipe edits cannot rewrite this invoice's history.
+                if invoice_type == "purchase":
+                    raise ValueError(f"لا يمكن شراء مادة تجميعية: {item['name']} — تُصنع من موادها")
+                from nano_offline.core import bom as _bom
+
+                components = _bom.explode(conn, int(item["id"]), base_qty)
             # Services do not move inventory. Their purchase_price is the
             # standard cost per base unit and is snapshotted into the sale
             # invoice line so future price edits do not rewrite history.
-            if item is not None and item["item_type"] == "خدمة" and invoice_type == "sale":
+            elif item is not None and item["item_type"] == "خدمة" and invoice_type == "sale":
                 unit_cost = money.quantized(float(item["purchase_price"] or 0) * factor)
                 cost_amount = money.quantized(unit_cost * qty)
             prepared.append(
@@ -594,6 +606,7 @@ class InvoiceService:
                     "total": line_total,
                     "unit_cost": unit_cost,
                     "cost_amount": cost_amount,
+                    "components": components,
                 }
             )
             total += money.quantize(line_total)
@@ -669,7 +682,7 @@ class InvoiceService:
     @staticmethod
     def _insert_lines(conn, invoice_id: int, prepared: list[dict]) -> None:
         for line in prepared:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO invoice_lines(
                        invoice_id,item_id,description,unit_id,conversion_factor,quantity,
                        quantity_in_base,unit_price,total,unit_cost,cost_amount
@@ -688,6 +701,13 @@ class InvoiceService:
                     line.get("cost_amount", 0.0),
                 ),
             )
+            components = line.get("components")
+            if components:
+                line_id = int(cur.lastrowid)
+                conn.executemany(
+                    "INSERT INTO invoice_line_components(invoice_line_id,component_item_id,base_qty) VALUES(?,?,?)",
+                    [(line_id, int(cid), float(base_qty)) for cid, base_qty in components.items()],
+                )
 
     def rebuild_derived_state(self) -> None:
         """Reconcile migrated databases and all derived balances/ledger rows."""

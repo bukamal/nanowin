@@ -72,7 +72,7 @@ class AccountingRebuilder:
             SELECT il.*, inv.type AS invoice_type, inv.invoice_date,
                    inv.created_at AS invoice_created_at,
                    inv.allow_negative_stock AS allow_negative_stock,
-                   it.name AS item_name, it.item_type
+                   it.name AS item_name, it.item_type, it.is_composite AS is_composite
             FROM invoice_lines il
             JOIN invoices inv ON inv.id=il.invoice_id
             LEFT JOIN items it ON it.id=il.item_id
@@ -84,10 +84,15 @@ class AccountingRebuilder:
         for raw in rows:
             row = dict(raw)
             item_id = int(row["item_id"])
-            st = get_state(item_id)
             base_qty = float(row["quantity_in_base"])
             line_total = float(row["total"])
             if row["invoice_type"] == "purchase":
+                if int(row.get("is_composite") or 0):
+                    # Composites are recipes, never purchasable (creation
+                    # blocks it). Skip defensively so a rebuild can never
+                    # invent stock for one.
+                    continue
+                st = get_state(item_id)
                 unit_cost = line_total / base_qty if base_qty else 0.0
                 new_qty = st["qty"] + base_qty
                 if new_qty > EPSILON:
@@ -110,7 +115,54 @@ class AccountingRebuilder:
                     (item_id, row["invoice_id"], "purchase", base_qty, unit_cost, line_total, row["invoice_date"]),
                 )
                 conn.execute("UPDATE items SET purchase_price=? WHERE id=?", (unit_cost, item_id))
+            elif int(row.get("is_composite") or 0):
+                # Composite sale: the composite itself holds no stock. Its sale
+                # line carries a frozen snapshot of the leaf materials to
+                # consume; deduct each at its own moving average right here so
+                # the cost reflects the timeline position of this invoice.
+                allow_negative = bool(row.get("allow_negative_stock"))
+                components = conn.execute(
+                    "SELECT component_item_id,base_qty FROM invoice_line_components "
+                    "WHERE invoice_line_id=? ORDER BY id",
+                    (row["id"],),
+                ).fetchall()
+                if not components:
+                    raise ValueError(
+                        f"المادة التجميعية «{row['item_name']}» بلا مكوّنات محفوظة في الفاتورة"
+                    )
+                total_cost = 0.0
+                for comp in components:
+                    comp_id = int(comp["component_item_id"])
+                    comp_qty = float(comp["base_qty"])
+                    comp_state = get_state(comp_id)
+                    if not allow_negative and comp_state["qty"] + EPSILON < comp_qty:
+                        comp_name = conn.execute(
+                            "SELECT name FROM items WHERE id=?", (comp_id,)
+                        ).fetchone()
+                        comp_label = comp_name["name"] if comp_name is not None else comp_id
+                        raise ValueError(
+                            f"المخزون غير كافٍ للمادة: {comp_label} — المتاح "
+                            f"{comp_state['qty']:.3f} والمطلوب {comp_qty:.3f}"
+                        )
+                    comp_unit_cost = comp_state["avg"]
+                    comp_cost = money.quantized(comp_unit_cost * comp_qty)
+                    comp_state["qty"] -= comp_qty
+                    if abs(comp_state["qty"]) <= EPSILON:
+                        comp_state["qty"] = 0.0
+                    conn.execute(
+                        """INSERT INTO inventory_movements(
+                               item_id,invoice_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date
+                           ) VALUES(?,?,?,?,?,?,?)""",
+                        (comp_id, row["invoice_id"], "sale", -comp_qty, comp_unit_cost, -comp_cost, row["invoice_date"]),
+                    )
+                    total_cost += comp_cost
+                unit_cost = total_cost / float(row["quantity"]) if float(row["quantity"]) > EPSILON else 0.0
+                conn.execute(
+                    "UPDATE invoice_lines SET unit_cost=?,cost_amount=? WHERE id=?",
+                    (unit_cost, money.quantized(total_cost), row["id"]),
+                )
             else:
+                st = get_state(item_id)
                 allow_negative = bool(row.get("allow_negative_stock"))
                 if not allow_negative and st["qty"] + EPSILON < base_qty:
                     raise ValueError(

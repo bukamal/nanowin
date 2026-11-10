@@ -76,7 +76,7 @@ def home_widget_snapshot(dashboard, settings=None) -> dict:
                 "FROM invoices WHERE type='sale' AND status!='cancelled' AND (total-paid_amount)>0.0001"
             ).fetchone()
             low = conn.execute(
-                "SELECT COUNT(*) AS c FROM items WHERE item_type='مخزون' AND quantity<=5"
+                "SELECT COUNT(*) AS c FROM items WHERE item_type='مخزون' AND is_composite=0 AND quantity<=5"
             ).fetchone()
         snapshot["overdue_count"] = int(overdue["c"])
         snapshot["overdue_total"] = currency.to_display(float(overdue["t"]), rate)

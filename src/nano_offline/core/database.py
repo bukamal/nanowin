@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 17  # adds per-invoice print-options snapshot
+SCHEMA_VERSION = 18  # adds composite/assembly items (recipes + per-line snapshot)
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS items (
     opening_unit_cost REAL NOT NULL DEFAULT 0,
     base_unit_id INTEGER REFERENCES units(id) ON DELETE RESTRICT,
     barcode TEXT,
+    -- Composite/assembly item: a sellable material built from other stock
+    -- items (see item_components). It never holds stock of its own -- selling
+    -- one explodes into its leaf components and consumes those from stock.
+    is_composite INTEGER NOT NULL DEFAULT 0 CHECK(is_composite IN (0,1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -114,6 +118,27 @@ CREATE TABLE IF NOT EXISTS item_units (
     UNIQUE(item_id, unit_id)
 );
 
+-- Recipe (bill of materials) for a composite item: the stock materials that
+-- go into one base unit of `item_id`. `quantity` is expressed in the
+-- component's `unit_id` (default its base unit) and `conversion_factor` maps
+-- it to the component's base units. Components may themselves be composite
+-- (multi-level assembles) -- cycles are rejected in ItemRepository via
+-- core.bom.assert_acyclic. A composite never carries its own stock; selling
+-- it consumes these leaves (AccountingRebuilder.rebuild_inventory).
+CREATE TABLE IF NOT EXISTS item_components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    component_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
+    quantity REAL NOT NULL CHECK(quantity > 0),
+    unit_id INTEGER REFERENCES units(id) ON DELETE RESTRICT,
+    conversion_factor REAL NOT NULL DEFAULT 1 CHECK(conversion_factor > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(item_id, component_item_id),
+    CHECK(item_id <> component_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_item_components_item ON item_components(item_id);
+CREATE INDEX IF NOT EXISTS idx_item_components_component ON item_components(component_item_id);
+
 CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL CHECK(type IN ('sale','purchase')),
@@ -161,6 +186,21 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
     unit_cost REAL NOT NULL DEFAULT 0,
     cost_amount REAL NOT NULL DEFAULT 0
 );
+
+-- Frozen snapshot of a composite sale line's exploded leaf components, taken
+-- at sale time so a later edit to the composite's recipe can never rewrite
+-- historical stock/COGS. `base_qty` is the total component base units consumed
+-- by the whole line (recipe qty x sold composite qty). The rebuild recomputes
+-- each component's cost from its moving average at this line's position.
+CREATE TABLE IF NOT EXISTS invoice_line_components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_line_id INTEGER NOT NULL REFERENCES invoice_lines(id) ON DELETE CASCADE,
+    component_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
+    base_qty REAL NOT NULL CHECK(base_qty > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ilc_line ON invoice_line_components(invoice_line_id);
+CREATE INDEX IF NOT EXISTS idx_ilc_component ON invoice_line_components(component_item_id);
 
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -685,6 +725,11 @@ class Database:
             # after this and would fail against an old database that doesn't
             # have the column yet.
             conn.execute("ALTER TABLE items ADD COLUMN barcode TEXT")
+
+        # Schema 18: composite/assembly flag. Existing items are plain
+        # (non-composite) stock/service items.
+        if self._table_exists(conn, "items") and not self._has_column(conn, "items", "is_composite"):
+            conn.execute("ALTER TABLE items ADD COLUMN is_composite INTEGER NOT NULL DEFAULT 0")
 
         if self._table_exists(conn, "expenses"):
             if not self._has_column(conn, "expenses", "category_id"):

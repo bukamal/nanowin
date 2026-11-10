@@ -20,7 +20,7 @@ class DashboardService:
             customer_credits = float(conn.execute("SELECT COALESCE(SUM(CASE WHEN balance<0 THEN -balance ELSE 0 END),0) FROM customers").fetchone()[0])
             payables = float(conn.execute("SELECT COALESCE(SUM(CASE WHEN balance>0 THEN balance ELSE 0 END),0) FROM suppliers").fetchone()[0])
             supplier_advances = float(conn.execute("SELECT COALESCE(SUM(CASE WHEN balance<0 THEN -balance ELSE 0 END),0) FROM suppliers").fetchone()[0])
-            inventory = float(conn.execute("SELECT COALESCE(SUM(quantity*average_cost),0) FROM items WHERE item_type='مخزون'").fetchone()[0])
+            inventory = float(conn.execute("SELECT COALESCE(SUM(quantity*average_cost),0) FROM items WHERE item_type='مخزون' AND is_composite=0").fetchone()[0])
             cash = float(conn.execute("SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries WHERE account_code='CASH'").fetchone()[0])
             return {
                 "sales": sales,
@@ -107,7 +107,7 @@ class DashboardService:
                 FROM items it
                 LEFT JOIN inventory_movements im
                        ON im.item_id=it.id AND im.movement_type='sale' AND im.movement_date>=?
-                WHERE it.item_type='مخزون'
+                WHERE it.item_type='مخزون' AND it.is_composite=0
                 GROUP BY it.id, it.name, it.quantity, it.purchase_price, it.average_cost
                 """,
                 (start,),
@@ -199,7 +199,7 @@ class DashboardService:
                 "SELECT COALESCE(SUM(CASE WHEN balance>0 THEN balance ELSE 0 END),0) FROM customers"
             ).fetchone()[0] or 0)
             low_stock = int(conn.execute(
-                "SELECT COUNT(*) FROM items WHERE item_type='مخزون' AND quantity < 5"
+                "SELECT COUNT(*) FROM items WHERE item_type='مخزون' AND is_composite=0 AND quantity < 5"
             ).fetchone()[0] or 0)
         profit = sales - cogs - expenses
         change = None

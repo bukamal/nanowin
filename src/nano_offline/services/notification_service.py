@@ -288,7 +288,9 @@ class NotificationService:
             return []
         low = [
             i for i in all_items
-            if str(i.get("item_type")) == "مخزون" and float(i.get("quantity") or 0) <= threshold
+            if str(i.get("item_type")) == "مخزون"
+            and not int(i.get("is_composite") or 0)
+            and float(i.get("quantity") or 0) <= threshold
         ]
         if not low:
             return []

@@ -86,6 +86,11 @@ class StocktakeService:
             # a silent no-op.
             return {"status": "service", "item": found}
 
+        if int(found.get("is_composite") or 0):
+            # A composite holds no stock of its own (its materials do), so
+            # there is nothing physical to count against this code.
+            return {"status": "composite", "item": found}
+
         item_id = int(found["id"])
         qty_delta = 1.0
         matched_unit_id = found.get("matched_unit_id")

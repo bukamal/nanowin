@@ -292,6 +292,8 @@ class ItemsCenter:
         def _status_tuple(row: dict):
             if row.get("item_type") != "مخزون":
                 return ("خدمة", Colors.PURPLE, Colors.PURPLE_BG)
+            if int(row.get("is_composite") or 0):
+                return ("تجميعية", Colors.PRIMARY, Colors.PRIMARY_BG)
             q = float(row.get("quantity") or 0)
             if q <= 0:
                 return ("نفد", Colors.DANGER_DARK, Colors.DANGER_BG)
@@ -303,12 +305,16 @@ class ItemsCenter:
             if col.key == "_status":
                 return _status_tuple(row)
             if col.key == "item_type":
+                if int(row.get("is_composite") or 0):
+                    return ("تجميعية", Colors.PRIMARY, Colors.PRIMARY_BG)
                 return ("مخزون", Colors.PRIMARY, Colors.PRIMARY_BG) if row.get("item_type") == "مخزون" else ("خدمة", Colors.PURPLE, Colors.PURPLE_BG)
             if col.key == "category_name":
                 return str(value or "بلا تصنيف")
             if col.key == "unit_name":
                 return str(value or "بلا وحدة")
             if col.key == "quantity":
+                if int(row.get("is_composite") or 0):
+                    return "—"
                 return qty_fmt(value) if row.get("item_type") == "مخزون" else "—"
             if col.key in ("_stock_usd", "_stock_syp"):
                 try:
@@ -872,8 +878,11 @@ class ItemsCenter:
 
         def open_item_editor(item: dict | None = None, initial_barcode: str | None = None):
             # Editing an existing material uses the modern table sheet (same
-            # surface as adding), pre-filled with that item's row.
-            if item is not None:
+            # surface as adding), pre-filled with that item's row. Composites
+            # are the exception: their recipe is edited on the paged sheet
+            # below (the bulk grid has no per-row recipe editor), so they fall
+            # through to that item-aware form.
+            if item is not None and not int(item.get("is_composite") or 0):
                 open_bulk_add_sheet(edit_item=item)
                 return
             name = SelectAllTextField(label="اسم المادة / الخدمة *", value=(item or {}).get("name", ""), autofocus=True)
@@ -1108,6 +1117,106 @@ class ItemsCenter:
                 if _b.get("unit_id") is not None:
                     barcode_by_unit[int(_b["unit_id"])] = _b
 
+            # Composite / assembly section: a sellable material whose sale
+            # consumes a recipe of other stock materials instead of holding
+            # any stock of its own. Kept on the price/stock step so the whole
+            # decision lives next to quantity/pricing.
+            _self_id = int(item["id"]) if item else None
+            component_choices = [
+                (str(_ci["id"]), str(_ci["name"]))
+                for _ci in ctx.items.list()
+                if _ci.get("item_type") == "مخزون" and int(_ci["id"]) != (_self_id or -1)
+            ]
+            is_composite_check = ft.Checkbox(
+                label="مادة تجميعية (تُصنع من مواد أولية وتُستهلك موادها عند البيع)",
+                value=bool((item or {}).get("is_composite")),
+            )
+            components_state: list[dict] = []
+            components_column = ft.Column(spacing=6, tight=True)
+            components_hint = ft.Text(
+                "أضف المواد الأولية الداخلة في تصنيع وحدة واحدة من هذه المادة. "
+                "المادة التجميعية لا تحتفظ برصيد؛ عند بيعها تُستهلك موادها تلقائيًا من المخزون.",
+                size=10, color=Colors.TEXT_SECONDARY,
+            )
+
+            def _remove_component_row(state: dict) -> None:
+                if state in components_state:
+                    components_state.remove(state)
+                    components_column.controls.remove(state["card"])
+                    components_column.update()
+
+            def _add_component_row(component_id=None, quantity=1.0) -> dict:
+                comp_sel = SearchSelect(
+                    label="المادة الأولية",
+                    choices=component_choices,
+                    value=str(component_id) if component_id else None,
+                )
+                comp_qty = SelectAllTextField(
+                    label="الكمية لكل وحدة",
+                    value=(f"{float(quantity):g}" if quantity not in (None, "") else "1"),
+                    keyboard_type=ft.KeyboardType.NUMBER,
+                )
+
+                def _row_continue(_=None) -> None:
+                    if comp_sel.value:
+                        _add_component_row()
+                        components_column.update()
+
+                wire_enter_navigation([comp_sel, comp_qty], _row_continue)
+                state: dict = {"component": comp_sel, "quantity": comp_qty}
+                card = ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Container(comp_sel, expand=True),
+                            ft.Container(comp_qty, width=140),
+                            inline_icon_button(
+                                ft.Icons.DELETE_OUTLINE,
+                                lambda _, s=state: _remove_component_row(s),
+                                color=Colors.DANGER,
+                            ),
+                        ],
+                        spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.padding.all(8),
+                    border=ft.border.all(1, Colors.BORDER_ALT),
+                    border_radius=Radius.MD,
+                    bgcolor=Colors.WHITE,
+                )
+                state["card"] = card
+                components_state.append(state)
+                components_column.controls.append(card)
+                return state
+
+            add_component_btn = ft.OutlinedButton(
+                "إضافة مادة أولية",
+                icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+                on_click=lambda _=None: (_add_component_row(), components_column.update()),
+            )
+
+            if item and int(item.get("is_composite") or 0):
+                for _comp in ctx.items.components(int(item["id"])):
+                    _add_component_row(
+                        component_id=int(_comp["component_item_id"]),
+                        quantity=float(_comp.get("quantity") or 1),
+                    )
+
+            def _sync_composite_ui(do_update: bool = True) -> None:
+                active = bool(is_composite_check.value)
+                components_hint.visible = active
+                components_column.visible = active
+                add_component_btn.visible = active
+                qty.visible = (item is None) and not active
+                if do_update:
+                    for _ctrl in (components_hint, components_column, add_component_btn, qty):
+                        _ctrl.update()
+
+            is_composite_check.on_change = lambda _=None: _sync_composite_ui()
+
+            composite_section = ft.Column(
+                [is_composite_check, components_hint, components_column, add_component_btn],
+                spacing=6, tight=True,
+            )
+
             # Sub-units: the old form capped this at ONE alternate unit (a
             # single alt_unit/alt_factor pair) even though the DB
             # (item_units) always supported many. Now it's a repeatable list
@@ -1274,20 +1383,43 @@ class ItemsCenter:
                         _code = (_row["barcode"].value or "").strip()
                         if _code:
                             pending_barcodes.append({"code": _code, "unit_id": int(_uid)})
+                    _is_composite = bool(is_composite_check.value)
+                    composite_components: list[dict] = []
+                    if _is_composite:
+                        for _row in components_state:
+                            _cid = _row["component"].value
+                            if not _cid:
+                                continue
+                            try:
+                                _cqty = float(_row["quantity"].value or 1)
+                            except (TypeError, ValueError):
+                                _cqty = 0
+                            composite_components.append(
+                                {
+                                    "component_item_id": int(_cid),
+                                    "quantity": _cqty,
+                                    "conversion_factor": 1,
+                                }
+                            )
                     kwargs = dict(
-                        name=name.value or "", item_type=kind.value or "مخزون",
+                        name=name.value or "",
+                        item_type="مخزون" if _is_composite else (kind.value or "مخزون"),
                         category_id=int(category.value) if category.value else None,
                         purchase_price=currency.parse_display_input(purchase.value, self.ctx.settings),
                         selling_price=currency.parse_display_input(selling.value, self.ctx.settings),
                         base_unit_id=int(base_unit.value) if base_unit.value else None, item_units=alternate_units,
                         barcode=barcode.value or None,
+                        is_composite=_is_composite,
+                        components=composite_components if _is_composite else None,
                     )
                     if item:
                         ctx.items.update(int(item["id"]), **kwargs)
                         item_id = int(item["id"])
                         msg = "تم تحديث المادة"
                     else:
-                        item_id = ctx.items.create(quantity=float(qty.value or 0), **kwargs)
+                        item_id = ctx.items.create(
+                            quantity=0 if _is_composite else float(qty.value or 0), **kwargs
+                        )
                         msg = "تمت إضافة المادة"
                         # Opening stock shows up in purchases as an inventory-only
                         # "أول المدة" invoice (no cash/payable impact).
@@ -1387,6 +1519,7 @@ class ItemsCenter:
                     return step_label, body, footer
 
                 if idx == 2:
+                    _sync_composite_ui(do_update=False)
                     body = ft.Column(
                         [
                             ft.ResponsiveRow([
@@ -1396,6 +1529,8 @@ class ItemsCenter:
                             ], spacing=7, run_spacing=7),
                             margin_text,
                             ft.Text("الخدمات لا تؤثر في المخزون، وتستخدم تكلفة الخدمة لحساب الربحية.", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Divider(height=1),
+                            composite_section,
                         ],
                         spacing=9, tight=True,
                     )
@@ -3269,17 +3404,32 @@ class ItemsCenter:
             ]
             mode = filter_state["mode"]
             if mode == "stock":
-                filtered = [i for i in filtered if i.get("item_type") == "مخزون"]
+                filtered = [
+                    i for i in filtered
+                    if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0)
+                ]
+            elif mode == "composite":
+                filtered = [
+                    i for i in filtered
+                    if i.get("item_type") == "مخزون" and int(i.get("is_composite") or 0)
+                ]
             elif mode == "service":
                 filtered = [i for i in filtered if i.get("item_type") == "خدمة"]
             elif mode == "low":
-                filtered = [i for i in filtered if i.get("item_type") == "مخزون" and float(i.get("quantity") or 0) < LOW_STOCK]
+                filtered = [
+                    i for i in filtered
+                    if i.get("item_type") == "مخزون"
+                    and not int(i.get("is_composite") or 0)
+                    and float(i.get("quantity") or 0) < LOW_STOCK
+                ]
             elif mode == "no_barcode":
                 filtered = [i for i in filtered if not str(i.get("barcode") or "").strip()]
             elif mode == "no_price":
                 filtered = [
                     i for i in filtered
-                    if i.get("item_type") == "مخزون" and float(i.get("selling_price") or 0) <= 0
+                    if i.get("item_type") == "مخزون"
+                    and not int(i.get("is_composite") or 0)
+                    and float(i.get("selling_price") or 0) <= 0
                 ]
             elif mode == "no_movement":
                 # Items with stock but no sales movement in last 30 days
@@ -3287,6 +3437,7 @@ class ItemsCenter:
                 filtered = [
                     i for i in filtered
                     if i.get("item_type") == "مخزون"
+                    and not int(i.get("is_composite") or 0)
                     and float(i.get("quantity") or 0) > 0
                     and int(i.get("id") or 0) in quiet_ids
                 ]
@@ -3325,8 +3476,8 @@ class ItemsCenter:
                     return str(value or "")
 
                 filtered.sort(key=header_sort_value, reverse=reverse)
-            inventory_value = sum(float(i.get("quantity") or 0) * float(i.get("average_cost") or 0) for i in all_items if i.get("item_type") == "مخزون")
-            low_count = sum(1 for i in all_items if i.get("item_type") == "مخزون" and float(i.get("quantity") or 0) < LOW_STOCK)
+            inventory_value = sum(float(i.get("quantity") or 0) * float(i.get("average_cost") or 0) for i in all_items if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0))
+            low_count = sum(1 for i in all_items if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0) and float(i.get("quantity") or 0) < LOW_STOCK)
             service_count = sum(1 for i in all_items if i.get("item_type") == "خدمة")
             summary_row.controls = metric_controls([
                 kpi_card("عدد المواد", str(len(all_items)), ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY),
@@ -3368,6 +3519,7 @@ class ItemsCenter:
         filters = ft.Row([
             filter_box("all", "الكل", ft.Icons.APPS_ROUNDED),
             filter_box("stock", "مخزون", ft.Icons.INVENTORY_2_OUTLINED),
+            filter_box("composite", "تجميعية", ft.Icons.WIDGETS_OUTLINED),
             filter_box("service", "خدمات", ft.Icons.HANDYMAN_OUTLINED),
             filter_box("low", "منخفض", ft.Icons.WARNING_AMBER_ROUNDED),
             filter_box("restock", "سينفد", ft.Icons.SCHEDULE_ROUNDED),

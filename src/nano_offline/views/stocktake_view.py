@@ -182,6 +182,14 @@ class StocktakeCenter:
                 last_scan_card.border = ft.border.all(1, Colors.WARNING)
                 if barcode_settings.stocktake_sound_enabled(ctx.settings):
                     self.notify("⚠ مادة خدمة", kind="warning")
+            elif status == "composite":
+                last_scan_card.content = ft.Text(
+                    f"⚠ {result['item'].get('name','')} مادة تجميعية ولا تُجرد — جرد موادها", size=12, color=Colors.WARNING_DARK
+                )
+                last_scan_card.bgcolor = Colors.WARNING_BG
+                last_scan_card.border = ft.border.all(1, Colors.WARNING)
+                if barcode_settings.stocktake_sound_enabled(ctx.settings):
+                    self.notify("⚠ مادة تجميعية", kind="warning")
             elif status == "checksum":
                 last_scan_card.content = ft.Text("⚠ أعد المسح — رقم التحقق غير صحيح", size=12, color=Colors.WARNING_DARK)
                 last_scan_card.bgcolor = Colors.WARNING_BG

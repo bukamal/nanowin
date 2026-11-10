@@ -5,6 +5,7 @@ import sqlite3
 
 from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
+from nano_offline.core import bom
 from nano_offline.core import event_bus
 from nano_offline.core import money
 from nano_offline.core import search_index
@@ -238,6 +239,7 @@ class ItemRepository(Offloadable):
                 SELECT it.id
                 FROM items it
                 WHERE it.item_type='مخزون'
+                  AND it.is_composite=0
                   AND NOT EXISTS (
                     SELECT 1 FROM inventory_movements im
                     WHERE im.item_id=it.id
@@ -395,6 +397,78 @@ class ItemRepository(Offloadable):
             return result
 
     @blocking
+    def components(self, item_id: int) -> list[dict]:
+        """Direct components of a composite item (one recipe level)."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT ic.*, it.name AS component_name, it.item_type AS component_type,
+                          it.is_composite AS component_is_composite,
+                          u.name AS unit_name, u.abbreviation AS unit_abbreviation
+                   FROM item_components ic
+                   JOIN items it ON it.id=ic.component_item_id
+                   LEFT JOIN units u ON u.id=ic.unit_id
+                   WHERE ic.item_id=? ORDER BY ic.id""",
+                (item_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def _replace_components(self, conn, item_id: int, components: list[dict]) -> None:
+        conn.execute("DELETE FROM item_components WHERE item_id=?", (item_id,))
+        normalized: list[dict] = []
+        seen: set[int] = set()
+        for raw in components:
+            component_id = int(raw.get("component_item_id") or raw.get("item_id") or 0)
+            if component_id <= 0:
+                raise ValueError("اختر مكوّنًا صالحًا للمادة التجميعية")
+            if component_id == int(item_id):
+                raise ValueError("لا يمكن أن تكون المادة مكوّنًا لنفسها")
+            if component_id in seen:
+                raise ValueError("لا يمكن تكرار المكوّن نفسه في الوصفة")
+            seen.add(component_id)
+            component = conn.execute(
+                "SELECT item_type,name FROM items WHERE id=?", (component_id,)
+            ).fetchone()
+            if component is None:
+                raise ValueError("أحد مكوّنات الوصفة غير موجود")
+            if str(component["item_type"]) != "مخزون":
+                raise ValueError(f"المكوّن «{component['name']}» يجب أن يكون مادة مخزون لا خدمة")
+            try:
+                quantity = float(raw.get("quantity") or 0)
+                factor = float(raw.get("conversion_factor") or 1)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("كمية أحد مكوّنات الوصفة غير صحيحة") from exc
+            if not math.isfinite(quantity) or quantity <= 0:
+                raise ValueError("كمية أحد مكوّنات الوصفة يجب أن تكون أكبر من صفر")
+            if not math.isfinite(factor) or factor <= 0:
+                raise ValueError("معامل تحويل مكوّن الوصفة غير صحيح")
+            unit_id = raw.get("unit_id")
+            normalized.append(
+                {
+                    "component_item_id": component_id,
+                    "quantity": quantity,
+                    "unit_id": int(unit_id) if unit_id not in (None, "") else None,
+                    "conversion_factor": factor,
+                }
+            )
+        if not normalized:
+            raise ValueError("أضف مكوّنًا واحدًا على الأقل للمادة التجميعية")
+        for row in normalized:
+            conn.execute(
+                """INSERT INTO item_components(item_id,component_item_id,quantity,unit_id,conversion_factor)
+                   VALUES(?,?,?,?,?)""",
+                (
+                    item_id,
+                    row["component_item_id"],
+                    row["quantity"],
+                    row["unit_id"],
+                    row["conversion_factor"],
+                ),
+            )
+        # Reject cycles that the just-inserted edges may have introduced
+        # (multi-level recipes are allowed, self-references are not).
+        bom.assert_acyclic(conn, int(item_id))
+
+    @blocking
     def activity_summary(self, item_id: int) -> dict:
         """Return sales/purchase and stock metrics for an item."""
         with self.db.connect() as conn:
@@ -455,13 +529,20 @@ class ItemRepository(Offloadable):
         base_unit_id: int | None = None,
         item_units: list[dict] | None = None,
         barcode: str | None = None,
+        is_composite: bool = False,
+        components: list[dict] | None = None,
     ) -> int:
         name = name.strip()
         if not name:
             raise ValueError("اسم المادة مطلوب")
         if item_type not in {"مخزون", "خدمة"}:
             raise ValueError("نوع المادة غير صحيح")
-        initial_qty = 0.0 if item_type == "خدمة" else float(quantity or 0)
+        composite = bool(is_composite)
+        if composite and item_type != "مخزون":
+            raise ValueError("المادة التجميعية يجب أن تكون من نوع مخزون")
+        if composite and not components:
+            raise ValueError("أضف مكوّنات المادة التجميعية")
+        initial_qty = 0.0 if (item_type == "خدمة" or composite) else float(quantity or 0)
         avg = money.quantized(purchase_price or 0)
         selling = money.quantized(selling_price or 0)
         if initial_qty < 0 or avg < 0 or selling < 0:
@@ -474,11 +555,13 @@ class ItemRepository(Offloadable):
                 cur = conn.execute(
                     """INSERT INTO items(
                            name,category_id,item_type,purchase_price,selling_price,quantity,average_cost,
-                           opening_quantity,opening_unit_cost,base_unit_id,barcode
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                           opening_quantity,opening_unit_cost,base_unit_id,barcode,is_composite
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        name, category_id, item_type, avg, selling, initial_qty, avg,
-                        initial_qty, avg if initial_qty else 0.0, base_unit_id, code,
+                        name, category_id, item_type, avg, selling,
+                        initial_qty, 0.0 if composite else avg,
+                        initial_qty, (0.0 if composite else avg) if initial_qty else 0.0,
+                        base_unit_id, code, 1 if composite else 0,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -487,7 +570,9 @@ class ItemRepository(Offloadable):
                 raise
             item_id = int(cur.lastrowid)
             self._replace_units(conn, item_id, base_unit_id, item_units or [])
-            if initial_qty:
+            if composite:
+                self._replace_components(conn, item_id, components or [])
+            elif initial_qty:
                 conn.execute(
                     """INSERT INTO inventory_movements(item_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date)
                        VALUES(?,?,?,?,?,date('now'))""",
@@ -514,6 +599,8 @@ class ItemRepository(Offloadable):
         item_units: list[dict] | None = None,
         barcode: str | None = None,
         quantity: float | None = None,
+        is_composite: bool | None = None,
+        components: list[dict] | None = None,
     ) -> None:
         name = name.strip()
         if not name:
@@ -535,58 +622,92 @@ class ItemRepository(Offloadable):
             old = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
             if old is None:
                 raise ValueError("المادة غير موجودة")
+            old_composite = bool(old["is_composite"])
+            composite = old_composite if is_composite is None else bool(is_composite)
+            if composite and item_type != "مخزون":
+                raise ValueError("المادة التجميعية يجب أن تكون من نوع مخزون")
             before = self._snapshot(conn, item_id)
-            if old["item_type"] != item_type:
-                used = conn.execute("SELECT 1 FROM invoice_lines WHERE item_id=? LIMIT 1", (item_id,)).fetchone()
+            used = conn.execute(
+                "SELECT 1 FROM invoice_lines WHERE item_id=? LIMIT 1", (item_id,)
+            ).fetchone()
+            if old["item_type"] != item_type and used:
+                raise ValueError("لا يمكن تغيير نوع المادة بعد استخدامها في فاتورة")
+            if composite and not old_composite:
+                # Turning a plain item into a composite: it must have no
+                # document history and no stock, otherwise its old movements
+                # would silently keep moving stock the new recipe now owns.
                 if used:
-                    raise ValueError("لا يمكن تغيير نوع المادة بعد استخدامها في فاتورة")
+                    raise ValueError("لا يمكن تحويل مادة مستخدمة في فواتير إلى مادة تجميعية")
+                if abs(float(old["quantity"] or 0)) > 1e-9 or abs(float(old["opening_quantity"] or 0)) > 1e-9:
+                    raise ValueError("لا يمكن تحويل مادة لها رصيد إلى مادة تجميعية — صفّر رصيدها أولًا")
+                conn.execute(
+                    "DELETE FROM inventory_movements WHERE item_id=? AND invoice_id IS NULL", (item_id,)
+                )
             if code is not None:
                 self._check_barcode_free(conn, code, exclude_item_id=item_id)
             try:
                 conn.execute(
-                    """UPDATE items SET name=?,category_id=?,item_type=?,purchase_price=?,selling_price=?,base_unit_id=?,barcode=?,updated_at=CURRENT_TIMESTAMP
+                    """UPDATE items SET name=?,category_id=?,item_type=?,purchase_price=?,selling_price=?,base_unit_id=?,barcode=?,is_composite=?,updated_at=CURRENT_TIMESTAMP
                        WHERE id=?""",
-                    (name, category_id, item_type, money.quantized(purchase_price or 0), money.quantized(selling_price or 0), base_unit_id, code, item_id),
+                    (
+                        name, category_id, item_type,
+                        money.quantized(purchase_price or 0), money.quantized(selling_price or 0),
+                        base_unit_id, code, 1 if composite else 0, item_id,
+                    ),
                 )
             except sqlite3.IntegrityError as exc:
                 if "barcode" in str(exc):
                     raise ValueError("هذا الباركود مستخدم بالفعل لمادة أخرى") from exc
                 raise
             self._replace_units(conn, item_id, base_unit_id, item_units or [])
-            has_purchases = conn.execute(
-                "SELECT 1 FROM invoice_lines il JOIN invoices inv ON inv.id=il.invoice_id "
-                "WHERE il.item_id=? AND inv.type='purchase' LIMIT 1",
-                (item_id,),
-            ).fetchone()
 
-            # Keep the opening-cost baseline (which rebuild_inventory uses to
-            # value the opening stock) in sync with a manually edited purchase
-            # price, otherwise the next rebuild would revert purchase_price /
-            # average_cost to the ORIGINAL opening cost. Real purchase
-            # invoices remain authoritative (their weighted average wins).
-            opening_qty = float(old["opening_quantity"] or 0)
-            if not has_purchases and opening_qty > 0:
-                new_cost = money.quantized(purchase_price or 0)
+            if composite:
+                if components is not None:
+                    self._replace_components(conn, item_id, components)
+                elif not old_composite:
+                    raise ValueError("أضف مكوّنات المادة التجميعية")
+                # A composite never holds stock of its own.
                 conn.execute(
-                    "UPDATE items SET opening_unit_cost=?,average_cost=? WHERE id=?",
-                    (new_cost, new_cost, item_id),
+                    "UPDATE items SET quantity=0,average_cost=0,opening_quantity=0,opening_unit_cost=0 WHERE id=?",
+                    (item_id,),
                 )
-            if requested_quantity is not None and item_type == "مخزون":
-                old_quantity = float(old["quantity"] or 0)
-                diff = requested_quantity - old_quantity
-                if abs(diff) >= 1e-9:
-                    average_cost = float(old["average_cost"] or 0)
-                    unit_cost = (
-                        average_cost
-                        if has_purchases and average_cost > 0
-                        else money.quantized(purchase_price or 0)
+            else:
+                if old_composite:
+                    conn.execute("DELETE FROM item_components WHERE item_id=?", (item_id,))
+                has_purchases = conn.execute(
+                    "SELECT 1 FROM invoice_lines il JOIN invoices inv ON inv.id=il.invoice_id "
+                    "WHERE il.item_id=? AND inv.type='purchase' LIMIT 1",
+                    (item_id,),
+                ).fetchone()
+
+                # Keep the opening-cost baseline (which rebuild_inventory uses to
+                # value the opening stock) in sync with a manually edited purchase
+                # price, otherwise the next rebuild would revert purchase_price /
+                # average_cost to the ORIGINAL opening cost. Real purchase
+                # invoices remain authoritative (their weighted average wins).
+                opening_qty = float(old["opening_quantity"] or 0)
+                if not has_purchases and opening_qty > 0:
+                    new_cost = money.quantized(purchase_price or 0)
+                    conn.execute(
+                        "UPDATE items SET opening_unit_cost=?,average_cost=? WHERE id=?",
+                        (new_cost, new_cost, item_id),
                     )
-                    record_inventory_adjustment(conn, item_id, diff, unit_cost)
-                    if abs(old_quantity) < 1e-9 and requested_quantity > 1e-9:
-                        conn.execute(
-                            "UPDATE items SET average_cost=? WHERE id=?",
-                            (unit_cost, item_id),
+                if requested_quantity is not None and item_type == "مخزون":
+                    old_quantity = float(old["quantity"] or 0)
+                    diff = requested_quantity - old_quantity
+                    if abs(diff) >= 1e-9:
+                        average_cost = float(old["average_cost"] or 0)
+                        unit_cost = (
+                            average_cost
+                            if has_purchases and average_cost > 0
+                            else money.quantized(purchase_price or 0)
                         )
+                        record_inventory_adjustment(conn, item_id, diff, unit_cost)
+                        if abs(old_quantity) < 1e-9 and requested_quantity > 1e-9:
+                            conn.execute(
+                                "UPDATE items SET average_cost=? WHERE id=?",
+                                (unit_cost, item_id),
+                            )
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','item',?,?)",
                 (item_id, name),
@@ -617,6 +738,19 @@ class ItemRepository(Offloadable):
                 "SELECT barcode,unit_id FROM item_barcodes WHERE item_id=? ORDER BY id", (item_id,)
             ).fetchall()
         ]
+        components = [
+            {
+                "component_item_id": int(c["component_item_id"]),
+                "quantity": float(c["quantity"] or 0),
+                "unit_id": c["unit_id"],
+                "conversion_factor": float(c["conversion_factor"] or 1),
+            }
+            for c in conn.execute(
+                "SELECT component_item_id,quantity,unit_id,conversion_factor "
+                "FROM item_components WHERE item_id=? ORDER BY id",
+                (item_id,),
+            ).fetchall()
+        ]
         movements = [
             {
                 "movement_type": movement["movement_type"],
@@ -641,8 +775,10 @@ class ItemRepository(Offloadable):
             "base_unit_id": row["base_unit_id"],
             "barcode": row["barcode"],
             "quantity": float(row["quantity"] or 0),
+            "is_composite": int(row["is_composite"] or 0),
             "units": units,
             "barcodes": barcodes,
+            "components": components,
             "movements": movements,
         }
 
@@ -710,12 +846,12 @@ class ItemRepository(Offloadable):
         """
         with self.db.transaction() as conn:
             item = conn.execute(
-                "SELECT id,item_type,opening_quantity,opening_unit_cost FROM items WHERE id=?",
+                "SELECT id,item_type,is_composite,opening_quantity,opening_unit_cost FROM items WHERE id=?",
                 (item_id,),
             ).fetchone()
             if item is None:
                 raise ValueError("المادة غير موجودة")
-            if str(item["item_type"]) != "مخزون":
+            if str(item["item_type"]) != "مخزون" or int(item["is_composite"] or 0):
                 raise ValueError("الرصيد الافتتاحي يُطبَّق على مواد المخزون فقط")
             invoiced = conn.execute(
                 "SELECT 1 FROM invoice_lines WHERE item_id=? LIMIT 1", (item_id,)

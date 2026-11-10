@@ -125,6 +125,7 @@ class CrisisModeService:
                     """SELECT id, name, selling_price, average_cost, purchase_price
                        FROM items
                        WHERE item_type='مخزون'
+                         AND is_composite=0
                          AND COALESCE(selling_price,0) > 0
                        ORDER BY selling_price * quantity DESC
                        LIMIT 80"""

@@ -171,6 +171,16 @@ def _apply_item(ctx, item_id: int, snapshot: dict) -> None:
             for unit in snapshot.get("units") or []
         ],
         barcode=snapshot.get("barcode"),
+        is_composite=bool(snapshot.get("is_composite")),
+        components=[
+            {
+                "component_item_id": int(c["component_item_id"]),
+                "quantity": float(c.get("quantity") or 0),
+                "unit_id": c.get("unit_id"),
+                "conversion_factor": float(c.get("conversion_factor") or 1),
+            }
+            for c in snapshot.get("components") or []
+        ],
     )
     # Sync secondary barcodes to the snapshot (best-effort).
     want = {(str(b.get("barcode") or ""), b.get("unit_id")) for b in snapshot.get("barcodes") or []}
@@ -218,8 +228,18 @@ def _item_snapshot(ctx, item_id: int) -> dict | None:
         "quantity": float(item.get("quantity") or 0),
         "base_unit_id": item.get("base_unit_id"),
         "barcode": item.get("barcode"),
+        "is_composite": int(item.get("is_composite") or 0),
         "units": units,
         "barcodes": barcodes,
+        "components": [
+            {
+                "component_item_id": int(c["component_item_id"]),
+                "quantity": float(c.get("quantity") or 0),
+                "unit_id": c.get("unit_id"),
+                "conversion_factor": float(c.get("conversion_factor") or 1),
+            }
+            for c in ctx.items.components(item_id)
+        ],
     }
 
 
@@ -241,6 +261,16 @@ def _restore_item(ctx, snapshot: dict) -> int:
                 "selling_price": unit.get("selling_price"),
             }
             for unit in snapshot.get("units") or []
+        ],
+        is_composite=bool(snapshot.get("is_composite")),
+        components=[
+            {
+                "component_item_id": int(c["component_item_id"]),
+                "quantity": float(c.get("quantity") or 0),
+                "unit_id": c.get("unit_id"),
+                "conversion_factor": float(c.get("conversion_factor") or 1),
+            }
+            for c in snapshot.get("components") or []
         ],
     )
     for bar in snapshot.get("barcodes") or []:

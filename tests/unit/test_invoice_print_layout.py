@@ -8,7 +8,7 @@ from nano_offline.app_context import AppContext
 from nano_offline.core import barcode_settings
 from nano_offline.core import business_profile
 from nano_offline.core import invoice_settings
-from nano_offline.core.database import Database
+from nano_offline.core.database import Database, SCHEMA_VERSION
 from nano_offline.services.document_service import DocumentService
 from nano_offline.services.invoice_service import InvoiceLineInput, InvoiceService
 from nano_offline.services.statement_service import StatementService
@@ -302,7 +302,7 @@ def test_schema_migration_adds_and_backfills_print_options(tmp_path):
         ).fetchone()[0]
 
     assert row["print_options"]
-    assert version == "17"
+    assert version == str(SCHEMA_VERSION)
 
 
 def test_printed_unit_equivalence_is_opt_in(tmp_path):

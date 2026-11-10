@@ -31,7 +31,7 @@ log = get_logger("nano.lan.api")
 READ_METHODS = frozenset({
     # items
     "items.list", "items.get", "items.find_by_barcode", "items.pos_catalog", "items.units",
-    "items.activity_summary", "items.movements", "items.list_barcodes",
+    "items.activity_summary", "items.movements", "items.list_barcodes", "items.components",
     "items.find_similar_names", "items.find_similar_barcodes",
     "items.purchased_by_party", "items.quiet_item_ids",
     "items.build_item_card", "items.verify_item_card",
