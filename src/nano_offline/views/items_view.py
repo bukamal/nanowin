@@ -574,7 +574,7 @@ class ItemsCenter:
             selectable=True,
             on_selection_change=render_bulk_bar,
             on_row_menu=lambda row: [
-                ("تعديل", ft.Icons.EDIT_OUTLINED, lambda r=row: open_item_editor(r)),
+                ("تعديل", ft.Icons.EDIT_OUTLINED, lambda r=row: _choose_item_form(edit_item=r)),
                 ("طباعة باركود", ft.Icons.QR_CODE_2, lambda r=row: open_barcode_with_profile([(r, 1)])),
                 None,
                 ("حذف", ft.Icons.DELETE_OUTLINE, lambda r=row: confirm_delete_item(r)),
@@ -582,7 +582,7 @@ class ItemsCenter:
             row_bg=item_row_bg,
             on_row_expand=item_expand_panel,
             on_search_shortcut=focus_search,
-            on_new_shortcut=lambda: open_item_editor(),
+            on_new_shortcut=lambda: _choose_item_form(),
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -877,14 +877,9 @@ class ItemsCenter:
             page.open(definitions_sheet)
 
         def open_item_editor(item: dict | None = None, initial_barcode: str | None = None):
-            # Editing an existing material uses the modern table sheet (same
-            # surface as adding), pre-filled with that item's row. Composites
-            # are the exception: their recipe is edited on the paged sheet
-            # below (the bulk grid has no per-row recipe editor), so they fall
-            # through to that item-aware form.
-            if item is not None and not int(item.get("is_composite") or 0):
-                open_bulk_add_sheet(edit_item=item)
-                return
+            # Paged (step-by-step) form for a single item -- add or edit. The
+            # caller chooses this surface vs the bulk table sheet through
+            # `_choose_item_form` (see below), so no auto-routing happens here.
             name = SelectAllTextField(label="اسم المادة / الخدمة *", value=(item or {}).get("name", ""), autofocus=True)
             purchase = SmartAmountField(
                 label=currency.amount_field_label("سعر الشراء / تكلفة الخدمة", self.ctx.settings),
@@ -2611,6 +2606,7 @@ class ItemsCenter:
                 GridColumn("barcode", "الباركود", width=150, editable=True, tooltip="الباركود الأساسي (اختياري)"),
                 GridColumn("category_id", "التصنيف", width=140, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للاختيار"),
                 GridColumn("item_type", "النوع", width=100, align="center", editable=True, kind="picker", tooltip="مخزون يُتابع بالمخزون، وخدمة لا"),
+                GridColumn("is_composite", "تجميعية", width=90, align="center", editable=True, kind="picker", tooltip="مادة تُصنع من مواد أولية — اختر «نعم» لتحديد الوصفة"),
                 GridColumn("base_unit_id", "الوحدة", width=110, editable=True, kind="picker", tooltip="الوحدة الأساسية للبيع والشراء"),
                 GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True, tooltip="الكمية الافتتاحية (للمخزون فقط)"),
                 GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
@@ -2642,6 +2638,15 @@ class ItemsCenter:
                     return unit_map.get(str(value)) if value else None
                 if col.key == "item_type":
                     return value or "مخزون"
+                if col.key == "is_composite":
+                    try:
+                        active = bool(int(value or 0))
+                    except (TypeError, ValueError):
+                        active = False
+                    if not active:
+                        return "لا"
+                    count = len(row.get("components") or [])
+                    return f"نعم ({count})" if count else "نعم — بلا وصفة"
                 if col.key == "_status":
                     if str(row.get("name") or "").strip():
                         return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
@@ -2665,6 +2670,18 @@ class ItemsCenter:
                 bgcolor=Colors.PRIMARY_BG,
             )
 
+            def on_bulk_cell_commit(index: int, key: str, value) -> None:
+                # Marking a row as composite opens the recipe editor right away
+                # so the user is never left with a composite that has no
+                # materials (which the save step would reject).
+                try:
+                    became_composite = key == "is_composite" and bool(int(value or 0))
+                except (TypeError, ValueError):
+                    became_composite = False
+                if became_composite:
+                    _open_recipe_dialog(index)
+                refresh_bulk_footer()
+
             # The sheet pins its header and action footer; the grid takes
             # whatever height is left, so the table and its totals row stay
             # put while the rows scroll in their own viewport.
@@ -2677,7 +2694,7 @@ class ItemsCenter:
                 edit_formatter=lambda col, value, row: _edit_item_cell_text(col, value, row, ctx.settings),
                 parser=lambda col, text: _parse_item_cell(col, text, ctx.settings),
                 row_bg=bulk_row_bg,
-                on_cell_commit=lambda *_: refresh_bulk_footer(),
+                on_cell_commit=on_bulk_cell_commit,
                 picker_options=lambda col, _row: bulk_choices(col.key),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
                 on_row_menu=(None if edit_item is not None else (lambda row: bulk_row_menu(row))),
@@ -2722,6 +2739,8 @@ class ItemsCenter:
                     "item_type": type_sel.value or "مخزون",
                     "category_id": default_id(cat_sel) or "",
                     "base_unit_id": default_id(unit_sel) or "",
+                    "is_composite": 0,
+                    "components": [],
                     "alternate_unit_id": "",
                     "alternate_conversion_factor": 1.0,
                     "alternate_purchase_price": "",
@@ -2854,6 +2873,128 @@ class ItemsCenter:
                 except Exception as exc:
                     notify(str(exc), kind="error")
 
+            def _open_recipe_dialog(index: int) -> None:
+                """Define/replace the recipe (materials) of one bulk row."""
+                row = bulk_grid.rows[index]
+                choices = [
+                    (str(i["id"]), str(i["name"]))
+                    for i in ctx.items.list()
+                    if i.get("item_type") == "مخزون"
+                ]
+                rows_state: list[dict] = []
+                rows_col = ft.Column(spacing=6, tight=True)
+                status = ft.Text("", size=11, color=Colors.DANGER)
+
+                def remove_row(state: dict) -> None:
+                    if state in rows_state:
+                        rows_state.remove(state)
+                        rows_col.controls.remove(state["card"])
+                        rows_col.update()
+
+                def add_row(component_id=None, quantity=1.0) -> dict:
+                    comp_sel = SearchSelect(
+                        label="المادة الأولية",
+                        choices=choices,
+                        value=str(component_id) if component_id else None,
+                    )
+                    comp_qty = SelectAllTextField(
+                        label="الكمية لكل وحدة",
+                        value=(f"{float(quantity):g}" if quantity not in (None, "") else "1"),
+                        keyboard_type=ft.KeyboardType.NUMBER,
+                    )
+                    state: dict = {"component": comp_sel, "quantity": comp_qty}
+                    card = ft.Container(
+                        ft.Row(
+                            [
+                                ft.Container(comp_sel, expand=True),
+                                ft.Container(comp_qty, width=130),
+                                inline_icon_button(
+                                    ft.Icons.DELETE_OUTLINE,
+                                    lambda _, s=state: remove_row(s),
+                                    color=Colors.DANGER,
+                                ),
+                            ],
+                            spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.padding.all(8),
+                        border=ft.border.all(1, Colors.BORDER_ALT),
+                        border_radius=Radius.MD,
+                        bgcolor=Colors.WHITE,
+                    )
+                    state["card"] = card
+                    rows_state.append(state)
+                    rows_col.controls.append(card)
+                    return state
+
+                for comp in row.get("components") or []:
+                    add_row(int(comp.get("component_item_id") or 0) or None, float(comp.get("quantity") or 1))
+                if not rows_state:
+                    add_row()
+
+                dialog = ft.AlertDialog(modal=True, title=ft.Text("مواد الوصفة (مادة تجميعية)"))
+
+                def close(_=None) -> None:
+                    page.close(dialog)
+
+                def save_recipe(_=None) -> None:
+                    components: list[dict] = []
+                    seen: set[int] = set()
+                    for st in rows_state:
+                        cid = st["component"].value
+                        if not cid:
+                            continue
+                        cid_int = int(cid)
+                        if cid_int in seen:
+                            status.value = "لا يمكن تكرار المادة نفسها في الوصفة"
+                            status.update()
+                            return
+                        try:
+                            qty = float(st["quantity"].value or 1)
+                        except (TypeError, ValueError):
+                            qty = 0
+                        if qty <= 0:
+                            status.value = "الكمية يجب أن تكون أكبر من صفر"
+                            status.update()
+                            return
+                        seen.add(cid_int)
+                        components.append(
+                            {"component_item_id": cid_int, "quantity": qty, "conversion_factor": 1}
+                        )
+                    if not components:
+                        status.value = "أضف مادة أولية واحدة على الأقل"
+                        status.update()
+                        return
+                    bulk_grid.set_cell(index, "components", components, notify=False)
+                    bulk_grid.set_cell(index, "is_composite", 1)
+                    refresh_bulk_footer()
+                    close()
+
+                add_btn = ft.OutlinedButton(
+                    "إضافة مادة", icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+                    on_click=lambda _=None: (add_row(), rows_col.update()),
+                )
+                dialog.content = ft.Container(
+                    ft.Column(
+                        [
+                            ft.Text(
+                                "حدّد المواد الأولية الداخلة في وحدة واحدة. عند بيع هذه المادة "
+                                "تُستهلك هذه المواد تلقائيًا من المخزون.",
+                                size=11, color=Colors.TEXT_SECONDARY,
+                            ),
+                            rows_col,
+                            add_btn,
+                            status,
+                        ],
+                        spacing=8, tight=True, scroll=ft.ScrollMode.AUTO,
+                    ),
+                    width=460, height=400,
+                )
+                dialog.actions = [
+                    ft.TextButton("إلغاء", on_click=close),
+                    ft.FilledButton("حفظ الوصفة", icon=ft.Icons.SAVE_OUTLINED, on_click=save_recipe),
+                ]
+                page.open(dialog)
+
             def bulk_choices(key: str) -> list[tuple]:
                 if key == "category_id":
                     return [(None, "بلا تصنيف")] + [(int(c["id"]), c["name"]) for c in categories]
@@ -2863,6 +3004,8 @@ class ItemsCenter:
                     return [(None, "بلا وحدة فرعية")] + [(int(u["id"]), u["name"]) for u in units]
                 if key == "item_type":
                     return [("مخزون", "مخزون"), ("خدمة", "خدمة")]
+                if key == "is_composite":
+                    return [(0, "لا"), (1, "نعم")]
                 return []
 
             def apply_defaults_to_all(_=None) -> None:
@@ -2900,6 +3043,13 @@ class ItemsCenter:
                             pass
                     row_id = row.get("_id")
                     try:
+                        try:
+                            is_composite = bool(int(row.get("is_composite") or 0))
+                        except (TypeError, ValueError):
+                            is_composite = False
+                        components = row.get("components") or []
+                        if is_composite and not components:
+                            raise ValueError("أضف مواد الوصفة للمادة التجميعية")
                         alternate_unit_id = int(row["alternate_unit_id"]) if row.get("alternate_unit_id") else None
                         alternate_units = []
                         if alternate_unit_id is not None:
@@ -2912,22 +3062,26 @@ class ItemsCenter:
                         fields = dict(
                             name=name,
                             category_id=int(row["category_id"]) if row.get("category_id") else None,
-                            item_type=str(row.get("item_type") or type_default),
+                            item_type="مخزون" if is_composite else str(row.get("item_type") or type_default),
                             purchase_price=row.get("purchase_price") or 0,
                             selling_price=row.get("selling_price") or 0,
                             base_unit_id=int(row["base_unit_id"]) if row.get("base_unit_id") else None,
                             item_units=alternate_units,
                             barcode=barcode or None,
+                            is_composite=is_composite,
+                            components=components if is_composite else None,
                         )
                         if row_id:
                             # Edit mode: update the existing item in place.
-                            if fields["item_type"] == "مخزون":
+                            if fields["item_type"] == "مخزون" and not is_composite:
                                 fields["quantity"] = float(row.get("quantity") or 0)
                             ctx.items.update(int(row_id), **fields)
                             updated_count += 1
                             item_id = int(row_id)
                         else:
-                            item_id = ctx.items.create(quantity=row.get("quantity") or 0, **fields)
+                            item_id = ctx.items.create(
+                                quantity=0 if is_composite else (row.get("quantity") or 0), **fields
+                            )
                             created_indices.append(index)
                             created_ids.append(int(item_id))
                         alternate_barcode = str(row.get("alternate_barcode") or "").strip()
@@ -3035,6 +3189,15 @@ class ItemsCenter:
                     "quantity": edit_item.get("quantity") or 0,
                     "purchase_price": edit_item.get("purchase_price") or 0,
                     "selling_price": edit_item.get("selling_price") or 0,
+                    "is_composite": 1 if int(edit_item.get("is_composite") or 0) else 0,
+                    "components": [
+                        {
+                            "component_item_id": int(c["component_item_id"]),
+                            "quantity": float(c.get("quantity") or 0),
+                            "conversion_factor": float(c.get("conversion_factor") or 1),
+                        }
+                        for c in ctx.items.components(_edit_id)
+                    ],
                     "alternate_unit_id": _alt_unit_id,
                     "alternate_conversion_factor": _alt.get("conversion_factor") or 1.0,
                     "alternate_purchase_price": _alt.get("purchase_price") if _alt.get("purchase_price") is not None else "",
@@ -3224,7 +3387,7 @@ class ItemsCenter:
                 # overlay" issue as the SnackBar-behind-scrim case above).
                 close()
                 await asyncio.sleep(0.1)
-                open_item_editor(data)
+                _choose_item_form(edit_item=data)
 
             async def delete_it(_=None):
                 # The desktop grid has no swipe-to-delete, so deletion lives
@@ -3614,6 +3777,58 @@ class ItemsCenter:
                 notify("لا توجد أرصدة افتتاحية قابلة للتحويل", kind="warning")
 
         refresh()
+        # One entry point that lets the user pick the surface: the fast bulk
+        # table (many items at once) or the paged step-by-step form (one item,
+        # with the composite recipe editor). Used for both add and edit.
+        def _choose_item_form(*, edit_item: dict | None = None) -> None:
+            editing = edit_item is not None
+            dialog = ft.AlertDialog(modal=True)
+            dialog.title = ft.Text("تعديل مادة" if editing else "إضافة مادة")
+
+            def _go_table(_=None) -> None:
+                page.close(dialog)
+                open_bulk_add_sheet(edit_item=edit_item)
+
+            def _go_paged(_=None) -> None:
+                page.close(dialog)
+                open_item_editor(edit_item)
+
+            def _option(icon, color, title, subtitle, on_click) -> ft.Container:
+                return ft.Container(
+                    ft.ListTile(
+                        leading=ft.Icon(icon, color=color),
+                        title=ft.Text(title, weight=ft.FontWeight.W_600),
+                        subtitle=ft.Text(subtitle, size=11, color=Colors.TEXT_SECONDARY),
+                        on_click=on_click,
+                    ),
+                    border_radius=Radius.MD,
+                    border=ft.border.all(1, Colors.BORDER_ALT),
+                )
+
+            dialog.content = ft.Column(
+                [
+                    ft.Text(
+                        "اختر طريقة الإدخال:" if not editing else "اختر طريقة التعديل:",
+                        size=12, color=Colors.TEXT_SECONDARY,
+                    ),
+                    _option(
+                        ft.Icons.TABLE_CHART_OUTLINED, Colors.PRIMARY,
+                        "شيت الجدول",
+                        "إدخال/تعديل سريع لعدة مواد في جدول واحد" if not editing else "تعديل البيانات مباشرة في جدول",
+                        _go_table,
+                    ),
+                    _option(
+                        ft.Icons.AUTO_STORIES_OUTLINED, Colors.PURPLE,
+                        "شيت الصفحات",
+                        "مادة واحدة خطوة بخطوة" if not editing else "تعديل مادة خطوة بخطوة (يشمل وصفة المادة التجميعية)",
+                        _go_paged,
+                    ),
+                ],
+                spacing=8, tight=True, width=420,
+            )
+            dialog.actions = [ft.TextButton("إلغاء", on_click=lambda _=None: page.close(dialog))]
+            page.open(dialog)
+
         # Expose the bulk add/edit sheet opener for the shell/tests (the bulk
         # table is defined above as a nested closure).
         self._open_bulk_sheet = open_bulk_add_sheet
@@ -3622,7 +3837,7 @@ class ItemsCenter:
         # these closures are only ever invoked while items is on screen.
         if self.on_context_actions is not None:
             self.on_context_actions([
-                RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: open_bulk_add_sheet()),
+                RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: _choose_item_form()),
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),
