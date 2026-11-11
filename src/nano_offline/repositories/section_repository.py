@@ -220,6 +220,63 @@ class SectionRepository:
             cur = conn.execute("UPDATE print_jobs SET status='pending',attempts=0 WHERE status='failed'")
             return int(cur.rowcount or 0)
 
+    def delete_jobs_for_invoice(self, invoice_id: int) -> int:
+        with self.db.transaction() as conn:
+            cur = conn.execute("DELETE FROM print_jobs WHERE invoice_id=?", (int(invoice_id),))
+            return int(cur.rowcount or 0)
+
+    def sales_by_section(
+        self, *, date_from: str | None = None, date_to: str | None = None
+    ) -> list[dict]:
+        """Revenue/COGS/profit per section over posted sale invoices.
+
+        Lines resolve with the same rule as printing (item override, then
+        category default); unassigned items are grouped under a NULL section
+        and labelled by the caller.
+        """
+        clauses = ["inv.type='sale'", "inv.status='posted'"]
+        params: list[object] = []
+        if date_from:
+            clauses.append("inv.invoice_date >= ?")
+            params.append(str(date_from))
+        if date_to:
+            clauses.append("inv.invoice_date <= ?")
+            params.append(str(date_to))
+        where = " AND ".join(clauses)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT s.id AS section_id, s.name AS section_name,
+                           COALESCE(SUM(il.total),0) AS revenue,
+                           COALESCE(SUM(il.cost_amount),0) AS cost,
+                           COALESCE(SUM(il.quantity),0) AS quantity,
+                           COUNT(DISTINCT inv.id) AS invoices
+                    FROM invoice_lines il
+                    JOIN invoices inv ON inv.id=il.invoice_id
+                    LEFT JOIN items it ON it.id=il.item_id
+                    LEFT JOIN categories c ON c.id=it.category_id
+                    LEFT JOIN sections s ON s.id=COALESCE(it.section_id, c.section_id)
+                    WHERE {where}
+                    GROUP BY s.id, s.name
+                    ORDER BY revenue DESC""",
+                params,
+            ).fetchall()
+        result = []
+        for row in rows:
+            revenue = float(row["revenue"] or 0)
+            cost = float(row["cost"] or 0)
+            result.append(
+                {
+                    "section_id": row["section_id"],
+                    "section_name": row["section_name"],
+                    "revenue": revenue,
+                    "cost": cost,
+                    "profit": revenue - cost,
+                    "quantity": float(row["quantity"] or 0),
+                    "invoices": int(row["invoices"] or 0),
+                }
+            )
+        return result
+
     def counts(self) -> dict:
         with self.db.connect() as conn:
             rows = conn.execute("SELECT status, COUNT(*) AS c FROM print_jobs GROUP BY status").fetchall()

@@ -8,6 +8,8 @@ separately, so printing never blocks the sale.
 
 from __future__ import annotations
 
+import pytest
+
 from nano_offline.app_context import AppContext
 from nano_offline.core import escpos
 from nano_offline.services.invoice_service import InvoiceLineInput
@@ -103,6 +105,56 @@ def test_enqueue_is_deduplicated(tmp_path):
     )
     assert ctx.section_print.enqueue_invoice(inv) == 0  # already enqueued on save
     assert ctx.sections.counts()["pending"] == 1
+
+
+def test_reprint_invoice_replaces_previous_jobs(tmp_path):
+    ctx = _ctx(tmp_path)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="شوربة", item_type="مخزون", selling_price=5, section_id=sid)
+    inv = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="شوربة", item_id=item, quantity=1, unit_price=5)],
+        paid_amount=5,
+        allow_negative_stock=True,
+    )
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: None)
+    assert ctx.sections.counts()["sent"] == 1
+
+    assert ctx.section_print.reprint_invoice(inv) == 1
+    counts = ctx.sections.counts()
+    assert counts["pending"] == 1 and counts["sent"] == 0
+
+
+def test_sales_by_section_totals(tmp_path):
+    ctx = _ctx(tmp_path)
+    kitchen = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    bar = ctx.sections.create(name="البار", printer_host="10.0.0.2")
+    burger = ctx.items.create(
+        name="برغر", item_type="مخزون", quantity=100, purchase_price=5, selling_price=10, section_id=kitchen
+    )
+    cola = ctx.items.create(
+        name="كولا", item_type="مخزون", quantity=100, purchase_price=1, selling_price=3, section_id=bar
+    )
+    napkin = ctx.items.create(name="منديل", item_type="مخزون", quantity=100, purchase_price=0.5, selling_price=1)
+
+    ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[
+            InvoiceLineInput(description="برغر", item_id=burger, quantity=2, unit_price=10),
+            InvoiceLineInput(description="كولا", item_id=cola, quantity=3, unit_price=3),
+            InvoiceLineInput(description="منديل", item_id=napkin, quantity=1, unit_price=1),
+        ],
+        paid_amount=30,
+    )
+
+    by_name = {r["section_name"]: r for r in ctx.sections.sales_by_section()}
+    assert by_name["المطبخ"]["revenue"] == pytest.approx(20)
+    assert by_name["المطبخ"]["cost"] == pytest.approx(10)     # 2 x avg cost 5
+    assert by_name["المطبخ"]["profit"] == pytest.approx(10)
+    assert by_name["البار"]["revenue"] == pytest.approx(9)
+    assert by_name["البار"]["cost"] == pytest.approx(3)       # 3 x avg cost 1
+    # Unassigned items roll up under the NULL section (labelled by the UI).
+    assert by_name[None]["revenue"] == pytest.approx(1)
 
 
 def test_dispatch_success_and_failure_retry(tmp_path):

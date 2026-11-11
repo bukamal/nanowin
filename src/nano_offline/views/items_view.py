@@ -3801,9 +3801,46 @@ class ItemsCenter:
             """Manage print stations (sections) and their network printers."""
             sheet, width = sheets.new_desktop_sheet(page, cap=860)
             list_col = ft.Column(spacing=8, tight=True)
+            report_col = ft.Column(spacing=4, tight=True)
 
             def close(_=None) -> None:
                 page.close(sheet)
+
+            def render_report() -> None:
+                rows = ctx.sections.sales_by_section()
+                controls: list[ft.Control] = [
+                    ft.Text("مبيعات الأقسام (كل الفترات)", size=12, weight=ft.FontWeight.W_600),
+                ]
+                if not rows:
+                    controls.append(ft.Text("لا توجد مبيعات مرحّلة بعد.", size=11, color=Colors.TEXT_SECONDARY))
+                else:
+                    header = ft.Row(
+                        [
+                            ft.Text("القسم", size=10, color=Colors.TEXT_SECONDARY, expand=True),
+                            ft.Text("المبيعات", size=10, color=Colors.TEXT_SECONDARY, width=90, text_align=ft.TextAlign.END),
+                            ft.Text("التكلفة", size=10, color=Colors.TEXT_SECONDARY, width=90, text_align=ft.TextAlign.END),
+                            ft.Text("الربح", size=10, color=Colors.TEXT_SECONDARY, width=90, text_align=ft.TextAlign.END),
+                        ],
+                        spacing=6,
+                    )
+                    controls.append(header)
+                    for row in rows:
+                        profit = float(row.get("profit") or 0)
+                        controls.append(ft.Row(
+                            [
+                                ft.Text(str(row.get("section_name") or "بلا قسم"), size=11, expand=True),
+                                ft.Text(money(float(row.get("revenue") or 0)), size=11, width=90, text_align=ft.TextAlign.END),
+                                ft.Text(money(float(row.get("cost") or 0)), size=11, width=90, text_align=ft.TextAlign.END),
+                                ft.Text(money(profit), size=11, width=90, text_align=ft.TextAlign.END,
+                                        color=Colors.SUCCESS_DARK if profit >= 0 else Colors.DANGER),
+                            ],
+                            spacing=6,
+                        ))
+                report_col.controls = controls
+                try:
+                    report_col.update()
+                except Exception:
+                    pass
 
             def render() -> None:
                 sections = ctx.sections.list()
@@ -3821,6 +3858,7 @@ class ItemsCenter:
                     list_col.update()
                 except Exception:
                     pass
+                render_report()
 
             def toggle_active(section_id: int, section: dict, value: bool) -> None:
                 try:
@@ -3994,6 +4032,20 @@ class ItemsCenter:
                                         "وعند البيع تُطبع تذكرة تحضير على طابعة القسم.",
                                         size=10, color=Colors.TEXT_SECONDARY,
                                     ),
+                                    ft.Container(
+                                        ft.Column(
+                                            [
+                                                ft.Row([ft.Icon(ft.Icons.BAR_CHART_OUTLINED, size=16, color=Colors.PRIMARY),
+                                                        ft.Text("تقرير الأقسام", size=12, weight=ft.FontWeight.W_600)], spacing=6),
+                                                report_col,
+                                            ],
+                                            spacing=6, tight=True,
+                                        ),
+                                        padding=ft.padding.all(10),
+                                        bgcolor=Colors.BACKGROUND_ALT,
+                                        border_radius=Radius.MD,
+                                    ),
+                                    ft.Divider(height=1),
                                     list_col,
                                 ],
                                 spacing=8, tight=True, scroll=ft.ScrollMode.AUTO,

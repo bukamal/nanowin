@@ -127,6 +127,15 @@ class SectionPrintService:
     def retry_failed(self) -> int:
         return self.sections.retry_failed()
 
+    def reprint_invoice(self, invoice_id: int) -> int:
+        """Re-send an invoice's station tickets (manual "send to kitchen").
+
+        Clears any prior jobs for the invoice first, so a manual resend after
+        adding/editing never duplicates and a previously failed job is retried.
+        """
+        self.sections.delete_jobs_for_invoice(int(invoice_id))
+        return self.enqueue_invoice(int(invoice_id))
+
     def counts(self) -> dict:
         return self.sections.counts()
 

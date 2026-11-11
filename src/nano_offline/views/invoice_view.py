@@ -882,6 +882,21 @@ class InvoiceCenter:
                 items.extend([
                     ("طباعة", ft.Icons.PRINT_OUTLINED, lambda i=invoice_id: after_menu_closes(self._print_handler(i))),
                     ("مشاركة PDF", ft.Icons.PICTURE_AS_PDF, lambda i=invoice_id: after_menu_closes(self._pdf_handler(i))),
+                ])
+                if str(row.get("type")) == "sale":
+                    def _send_to_kitchen(i=invoice_id) -> None:
+                        try:
+                            sent = self.ctx.section_print.reprint_invoice(int(i))
+                        except Exception as exc:
+                            self.notify(str(exc), kind="error")
+                            return
+                        if sent:
+                            self.notify(f"تم إرسال تذاكر {sent} قسم إلى الطابعات", sound_kind="success")
+                        else:
+                            self.notify("لا توجد أقسام/طابعات مُعدّة لهذه الفاتورة", kind="warning")
+
+                    items.append(("إرسال للمطبخ (الأقسام)", ft.Icons.PRINT_OUTLINED, _send_to_kitchen))
+                items.extend([
                     None,
                     ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),
                 ])
