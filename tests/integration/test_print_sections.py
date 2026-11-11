@@ -480,3 +480,31 @@ def test_edit_without_changes_sends_nothing_new(tmp_path):
         reference="طاولة 3",
     )
     assert ctx.section_print.send_new_invoice(inv) == 0
+
+
+def test_device_printer_override_takes_precedence(tmp_path):
+    ctx = _ctx(tmp_path)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 8")
+
+    reached: list[tuple] = []
+    # No override yet -> the shared section target is used.
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: reached.append((h, p)))
+    assert reached == [("10.0.0.1", 9100)]
+
+    # Override this device to a different printer.
+    ctx.section_print.set_device_override(sid, "10.9.9.9:9101")
+    assert ctx.section_print.device_override(sid) == "10.9.9.9:9101"
+
+    reached.clear()
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 8ب")
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: reached.append((h, p)))
+    assert reached == [("10.9.9.9", 9101)]
+
+    # Clearing falls back to the shared target.
+    ctx.section_print.set_device_override(sid, "")
+    reached.clear()
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 8ج")
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: reached.append((h, p)))
+    assert reached == [("10.0.0.1", 9100)]

@@ -4007,6 +4007,10 @@ class ItemsCenter:
                 host = str(section.get("printer_host") or "").strip()
                 target = f"{host}:{section.get('printer_port') or 9100}" if host else "بلا طابعة"
                 kind_label = "مطبخ" if str(section.get("kind") or "kitchen") != "receipt" else "فاتورة"
+                override = ctx.section_print.device_override(int(section["id"]))
+                subtitle = f"{kind_label} • {target} • {section.get('paper_width_mm')}مم ×{section.get('copies')}"
+                if override:
+                    subtitle += f" • هذا الجهاز: {override}"
                 return ft.Container(
                     ft.Row(
                         [
@@ -4018,10 +4022,7 @@ class ItemsCenter:
                             ft.Column(
                                 [
                                     ft.Text(str(section.get("name") or ""), size=13, weight=ft.FontWeight.W_600),
-                                    ft.Text(
-                                        f"{kind_label} • {target} • {section.get('paper_width_mm')}مم ×{section.get('copies')}",
-                                        size=10, color=Colors.TEXT_SECONDARY,
-                                    ),
+                                    ft.Text(subtitle, size=10, color=Colors.TEXT_SECONDARY),
                                 ],
                                 spacing=0, expand=True, tight=True,
                             ),
@@ -4029,6 +4030,7 @@ class ItemsCenter:
                                 value=bool(int(section.get("active") or 0)),
                                 on_change=lambda e, sid=int(section["id"]), sec=section: toggle_active(sid, sec, e.control.value),
                             ),
+                            inline_icon_button(ft.Icons.SETTINGS_ETHERNET, lambda _, sec=section: open_override(sec), tooltip="تجاوز طابعة هذا الجهاز"),
                             inline_icon_button(ft.Icons.EDIT_OUTLINED, lambda _, sec=section: open_form(sec), tooltip="تعديل"),
                             inline_icon_button(ft.Icons.CONTACT_PHONE_OUTLINED, lambda _, sec=section: test_print(sec), tooltip="طباعة تجريبية", color=Colors.SUCCESS),
                             inline_icon_button(ft.Icons.DELETE_OUTLINE, lambda _, sec=section: confirm_delete(sec), tooltip="حذف", color=Colors.DANGER),
@@ -4039,6 +4041,44 @@ class ItemsCenter:
                     border=ft.border.all(1, Colors.BORDER_ALT),
                     border_radius=Radius.MD,
                 )
+
+            def open_override(section: dict) -> None:
+                sid = int(section["id"])
+                dialog = ft.AlertDialog(modal=True)
+                field = SelectAllTextField(
+                    label="عنوان طابعة هذا الجهاز (IP أو IP:منفذ)",
+                    value=ctx.section_print.device_override(sid),
+                )
+                status = ft.Text("", size=11, color=Colors.DANGER)
+
+                def save(_=None) -> None:
+                    try:
+                        ctx.section_print.set_device_override(sid, field.value or "")
+                    except Exception as exc:
+                        status.value = str(exc)
+                        status.update()
+                        return
+                    page.close(dialog)
+                    render()
+                    notify("تم تحديث تجاوز طابعة هذا الجهاز", sound_kind="success")
+
+                dialog.title = ft.Text("تجاوز طابعة هذا الجهاز")
+                dialog.content = ft.Column(
+                    [
+                        ft.Text(
+                            "اتركه فارغًا لاستخدام طابعة القسم المشتركة. هذا التجاوز يُطبَّق على هذا الجهاز فقط.",
+                            size=11, color=Colors.TEXT_SECONDARY,
+                        ),
+                        field,
+                        status,
+                    ],
+                    spacing=8, tight=True, width=420,
+                )
+                dialog.actions = [
+                    ft.TextButton("إلغاء", on_click=lambda _=None: page.close(dialog)),
+                    ft.FilledButton("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                ]
+                page.open(dialog)
 
             def confirm_delete(section: dict) -> None:
                 _confirm_similar(

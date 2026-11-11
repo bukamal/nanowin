@@ -16,6 +16,7 @@ import time
 
 from nano_offline.core import escpos
 from nano_offline.core.database import Database
+from nano_offline.core.local_prefs import LocalPrefs
 from nano_offline.repositories.section_repository import SectionRepository
 
 _LOG = logging.getLogger(__name__)
@@ -24,14 +25,53 @@ _LOG = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 
 
+def _parse_target(text: str) -> tuple[str, int] | None:
+    """Parse a device override like ``10.0.0.9`` or ``10.0.0.9:9101``."""
+    text = str(text or "").strip()
+    if not text:
+        return None
+    host, _, port = text.partition(":")
+    host = host.strip()
+    if not host:
+        return None
+    try:
+        return host, int(port) if port.strip() else 9100
+    except ValueError:
+        return host, 9100
+
+
 class SectionPrintService:
     def __init__(self, db: Database, sections: SectionRepository):
         self.db = db
         self.sections = sections
+        # Device-local printer overrides: in LAN/client mode the section
+        # config is shared, but the physical printer a given device should
+        # reach is per-device, so it lives in local_prefs.json next to the DB.
+        try:
+            self.prefs = LocalPrefs(self.db.path.parent / "local_prefs.json")
+        except Exception:
+            self.prefs = None
         # Tests disable this so enqueueing never opens a socket in the
         # background; production leaves it on.
         self.auto_dispatch = True
         self._dispatch_lock = threading.Lock()
+
+    def device_override(self, section_id: int | None) -> str:
+        if self.prefs is None or section_id is None:
+            return ""
+        return self.prefs.get(f"station_printer.{int(section_id)}", "")
+
+    def set_device_override(self, section_id: int, target: str | None) -> None:
+        if self.prefs is None:
+            raise ValueError("تعذّر الوصول إلى تفضيلات الجهاز")
+        self.prefs.set(f"station_printer.{int(section_id)}", (target or "").strip())
+
+    def _resolve_target(self, section_id: int | None, host: str, port: int) -> tuple[str, int]:
+        """Apply this device's override for a section, else the shared target."""
+        parsed = _parse_target(self.device_override(section_id))
+        if parsed is not None:
+            return parsed
+        return str(host), int(port or 9100)
 
     # ---- enqueue ------------------------------------------------------- #
 
@@ -170,12 +210,11 @@ class SectionPrintService:
         def _attempt(job: dict) -> None:
             job_id = int(job["id"])
             attempted.add(job_id)
+            host, port = self._resolve_target(
+                job.get("section_id"), str(job["printer_host"]), int(job["printer_port"] or 9100)
+            )
             try:
-                send(
-                    str(job["printer_host"]),
-                    int(job["printer_port"] or 9100),
-                    bytes(job["payload"]),
-                )
+                send(host, port, bytes(job["payload"]))
             except Exception as exc:  # noqa: BLE001 - any network error is a retry
                 attempts = int(job.get("attempts") or 0) + 1
                 final = attempts >= MAX_ATTEMPTS
@@ -236,14 +275,14 @@ class SectionPrintService:
         section = self.sections.get(int(section_id))
         if section is None:
             raise ValueError("القسم غير موجود")
-        host = str(section.get("printer_host") or "").strip()
+        host, port = self._resolve_target(
+            int(section_id),
+            str(section.get("printer_host") or ""),
+            int(section.get("printer_port") or 9100),
+        )
         if not host:
             raise ValueError("لم يتم تحديد عنوان طابعة القسم")
-        escpos.send_bytes(
-            host,
-            int(section.get("printer_port") or 9100),
-            escpos.test_ticket(section),
-        )
+        escpos.send_bytes(host, port, escpos.test_ticket(section))
 
     def retry_failed(self) -> int:
         return self.sections.retry_failed()
