@@ -262,3 +262,65 @@ def test_send_new_items_only_after_initial_send(tmp_path):
     )
     assert ctx.section_print.send_new_invoice(inv) == 1
     assert ctx.section_print.send_new_invoice(inv) == 0
+
+
+def _open_order(ctx, items, reference):
+    return ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[
+            InvoiceLineInput(description=name, item_id=item_id, quantity=qty, unit_price=price)
+            for item_id, name, qty, price in items
+        ],
+        paid_amount=0,
+        reference=reference,
+    )
+
+
+def test_merge_open_orders_combines_and_deletes_sources(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    tea = ctx.items.create(name="شاي", item_type="مخزون", quantity=100, purchase_price=1, selling_price=2, section_id=sid)
+    cake = ctx.items.create(name="كعك", item_type="مخزون", quantity=100, purchase_price=2, selling_price=6, section_id=sid)
+
+    a = _open_order(ctx, [(tea, "شاي", 2, 2)], "طاولة 1")
+    b = _open_order(ctx, [(cake, "كعك", 3, 6)], "طاولة 2")
+
+    ctx.invoices.merge_sale_orders(a, [b])
+
+    merged = ctx.invoices.get_invoice(a)
+    assert merged is not None
+    assert float(merged["total"]) == pytest.approx(22)   # 2*2 + 3*6
+    assert len(merged["lines"]) == 2
+    assert ctx.invoices.get_invoice(b) is None
+    assert [o["id"] for o in ctx.invoices.open_sale_orders()] == [a]
+
+    # Stock consumed once for each original line, still after the rebuild.
+    items = {i["name"]: i for i in ctx.items.list()}
+    assert float(items["شاي"]["quantity"]) == pytest.approx(98)
+    assert float(items["كعك"]["quantity"]) == pytest.approx(97)
+
+
+def test_split_open_order_moves_selected_lines(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    tea = ctx.items.create(name="شاي", item_type="مخزون", quantity=100, purchase_price=1, selling_price=2, section_id=sid)
+    cake = ctx.items.create(name="كعك", item_type="مخزون", quantity=100, purchase_price=2, selling_price=6, section_id=sid)
+    juice = ctx.items.create(name="عصير", item_type="مخزون", quantity=100, purchase_price=1, selling_price=4, section_id=sid)
+
+    src = _open_order(
+        ctx,
+        [(tea, "شاي", 1, 2), (cake, "كعك", 2, 6), (juice, "عصير", 1, 4)],
+        "طاولة 9",
+    )
+    new_id = ctx.invoices.split_sale_order(src, [1])  # move the cake line
+
+    kept = ctx.invoices.get_invoice(src)
+    moved = ctx.invoices.get_invoice(new_id)
+    assert float(kept["total"]) == pytest.approx(6)    # 1*2 + 1*4
+    assert len(kept["lines"]) == 2
+    assert float(moved["total"]) == pytest.approx(12)  # 2*6
+    assert len(moved["lines"]) == 1
+    assert moved["reference"].endswith("تقسيم")
+    assert {o["id"] for o in ctx.invoices.open_sale_orders()} == {src, new_id}

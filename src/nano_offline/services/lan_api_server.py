@@ -84,6 +84,8 @@ WRITE_METHODS: dict[str, str] = {
     "invoices.create_invoice": "invoices",
     "invoices.update_invoice": "invoices",
     "invoices.delete_invoice": "invoices",
+    "invoices.merge_sale_orders": "invoices",
+    "invoices.split_sale_order": "invoices",
     "invoices.convert_opening_balances": "invoices",
     "items.create": "items",
     "items.update": "items",

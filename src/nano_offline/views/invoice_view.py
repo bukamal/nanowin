@@ -908,6 +908,87 @@ class InvoiceCenter:
 
                     items.append(("إرسال البنود الجديدة للمطبخ", ft.Icons.SEND, _send_new))
                     items.append(("إعادة إرسال كل التذاكر", ft.Icons.PRINT_OUTLINED, _resend_all))
+
+                if remaining > 1e-9 and str(row.get("type")) == "sale":
+                    def _merge_open_order(i=invoice_id) -> None:
+                        others = [o for o in self.ctx.invoices.open_sale_orders() if int(o["id"]) != int(i)]
+                        if not others:
+                            self.notify("لا يوجد طلب مفتوح آخر للدمج", kind="warning")
+                            return
+                        dialog = ft.AlertDialog(modal=True)
+                        pick = SearchSelect(
+                            label="الطلب المفتوح الذي سيُدمج في هذا الطلب",
+                            choices=[
+                                (str(o["id"]), str(o.get("reference") or f"طلب #{o['id']}"))
+                                for o in others
+                            ],
+                            allow_clear=False,
+                        )
+
+                        def _confirm(_=None) -> None:
+                            if not pick.value:
+                                return
+                            try:
+                                self.ctx.invoices.merge_sale_orders(int(i), [int(pick.value)])
+                            except Exception as exc:
+                                self.notify(str(exc), kind="error")
+                                return
+                            self.page.close(dialog)
+                            self.show_center()
+                            self.notify("تم دمج الطلب", sound_kind="success")
+
+                        dialog.title = ft.Text("دمج طلب مفتوح")
+                        dialog.content = ft.Column([pick], spacing=8, tight=True, width=380)
+                        dialog.actions = [
+                            ft.TextButton("إلغاء", on_click=lambda _=None: self.page.close(dialog)),
+                            ft.FilledButton("دمج", on_click=_confirm),
+                        ]
+                        self.page.open(dialog)
+
+                    def _split_open_order(i=invoice_id) -> None:
+                        invoice = self.ctx.invoices.get_invoice(int(i)) or {}
+                        order_lines = invoice.get("lines") or []
+                        if len(order_lines) < 2:
+                            self.notify("يحتاج الطلب بندين على الأقل للتقسيم", kind="warning")
+                            return
+                        dialog = ft.AlertDialog(modal=True)
+                        boxes: list[tuple[int, ft.Checkbox]] = []
+                        for index, line in enumerate(order_lines):
+                            boxes.append((index, ft.Checkbox(
+                                label=f"{float(line.get('quantity') or 0):g} × {line.get('item_name') or line.get('description') or ''}",
+                                value=False,
+                            )))
+
+                        def _confirm(_=None) -> None:
+                            chosen = [index for index, box in boxes if box.value]
+                            if not chosen:
+                                self.notify("حدّد بندًا واحدًا على الأقل", kind="warning")
+                                return
+                            try:
+                                self.ctx.invoices.split_sale_order(int(i), chosen)
+                            except Exception as exc:
+                                self.notify(str(exc), kind="error")
+                                return
+                            self.page.close(dialog)
+                            self.show_center()
+                            self.notify("تم تقسيم الطلب", sound_kind="success")
+
+                        dialog.title = ft.Text("تقسيم الطلب إلى طلب جديد")
+                        dialog.content = ft.Column(
+                            [
+                                ft.Text("حدّد البنود التي ستُنقل إلى طلب جديد:", size=11, color=Colors.TEXT_SECONDARY),
+                                *[box for _index, box in boxes],
+                            ],
+                            spacing=6, tight=True, width=420, scroll=ft.ScrollMode.AUTO,
+                        )
+                        dialog.actions = [
+                            ft.TextButton("إلغاء", on_click=lambda _=None: self.page.close(dialog)),
+                            ft.FilledButton("تقسيم", on_click=_confirm),
+                        ]
+                        self.page.open(dialog)
+
+                    items.append(("دمج طلب مفتوح في هذا الطلب", ft.Icons.CALL_MERGE, _merge_open_order))
+                    items.append(("تقسيم الطلب", ft.Icons.CALL_SPLIT, _split_open_order))
                 items.extend([
                     None,
                     ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),

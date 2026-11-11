@@ -778,6 +778,151 @@ class InvoiceService:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def merge_sale_orders(self, target_id: int, source_ids: list[int]) -> int:
+        """Merge unpaid open sale orders into ``target_id`` and delete sources.
+
+        Only unpaid sale orders are eligible (restaurant open orders), so no
+        cash/payment allocations need to be split. The whole operation runs in
+        one transaction and rebuilds derived state once at the end.
+        """
+        target_id = int(target_id)
+        sources = sorted({int(s) for s in source_ids if int(s) != target_id})
+        if not sources:
+            raise ValueError("اختر طلبًا واحدًا على الأقل للدمج")
+        with self.db.transaction() as conn:
+            target = conn.execute("SELECT * FROM invoices WHERE id=?", (target_id,)).fetchone()
+            if target is None or str(target["type"]) != "sale":
+                raise ValueError("الطلب الهدف غير صالح")
+            if OPENING_BALANCE_MARKER in str(target["notes"] or ""):
+                raise ValueError("لا يمكن دمج فاتورة «أول المدة»")
+            if abs(float(target["paid_amount"] or 0)) > EPSILON:
+                raise ValueError("يمكن دمج الطلبات غير المدفوعة فقط")
+            lines = self._line_inputs(conn, target_id)
+            for source_id in sources:
+                source = conn.execute("SELECT * FROM invoices WHERE id=?", (source_id,)).fetchone()
+                if source is None or str(source["type"]) != "sale":
+                    raise ValueError("أحد الطلبات المحددة غير صالح للدمج")
+                if OPENING_BALANCE_MARKER in str(source["notes"] or ""):
+                    raise ValueError("لا يمكن دمج فاتورة «أول المدة»")
+                if abs(float(source["paid_amount"] or 0)) > EPSILON:
+                    raise ValueError("يمكن دمج الطلبات غير المدفوعة فقط")
+                lines.extend(self._line_inputs(conn, source_id))
+            prepared, total, _paid = self._validate_and_prepare(
+                conn,
+                invoice_type="sale",
+                lines=lines,
+                customer_id=target["customer_id"],
+                supplier_id=None,
+                paid_amount=0,
+            )
+            conn.execute(
+                "UPDATE invoices SET total=?,initial_paid_amount=0,paid_amount=0 WHERE id=?",
+                (total, target_id),
+            )
+            conn.execute("DELETE FROM invoice_lines WHERE invoice_id=?", (target_id,))
+            self._insert_lines(conn, target_id, prepared)
+            for source_id in sources:
+                conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (source_id,))
+                conn.execute("DELETE FROM invoices WHERE id=?", (source_id,))
+            AccountingRebuilder.rebuild(conn)
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','invoice',?,?)",
+                (target_id, "merge:" + ",".join(str(s) for s in sources)),
+            )
+        invalidate_insights()
+        return target_id
+
+    def split_sale_order(self, source_id: int, move_indices: list[int]) -> int:
+        """Move the selected line indices of an unpaid sale order to a new one.
+
+        Returns the new invoice id. Only unpaid orders are eligible, so the
+        split keeps both sides fully open (no payment apportioning).
+        """
+        source_id = int(source_id)
+        move = sorted({int(i) for i in move_indices})
+        if not move:
+            raise ValueError("اختر بندًا واحدًا على الأقل للنقل")
+        with self.db.transaction() as conn:
+            source = conn.execute("SELECT * FROM invoices WHERE id=?", (source_id,)).fetchone()
+            if source is None or str(source["type"]) != "sale":
+                raise ValueError("الطلب غير صالح للتقسيم")
+            if OPENING_BALANCE_MARKER in str(source["notes"] or ""):
+                raise ValueError("لا يمكن تقسيم فاتورة «أول المدة»")
+            if abs(float(source["paid_amount"] or 0)) > EPSILON:
+                raise ValueError("يمكن تقسيم الطلبات غير المدفوعة فقط")
+            all_lines = self._line_inputs(conn, source_id)
+            if not all_lines:
+                raise ValueError("الطلب لا يحتوي بنودًا")
+            if any(index < 0 or index >= len(all_lines) for index in move):
+                raise ValueError("بند محدد غير صالح")
+            move_set = set(move)
+            keep = [line for index, line in enumerate(all_lines) if index not in move_set]
+            moved = [line for index, line in enumerate(all_lines) if index in move_set]
+            if not keep:
+                raise ValueError("لا يمكن نقل كل بنود الطلب — أبقِ بندًا واحدًا على الأقل")
+            prepared_keep, total_keep, _paid = self._validate_and_prepare(
+                conn, invoice_type="sale", lines=keep,
+                customer_id=source["customer_id"], supplier_id=None, paid_amount=0,
+            )
+            prepared_move, total_move, _paid2 = self._validate_and_prepare(
+                conn, invoice_type="sale", lines=moved,
+                customer_id=source["customer_id"], supplier_id=None, paid_amount=0,
+            )
+            conn.execute("DELETE FROM invoice_lines WHERE invoice_id=?", (source_id,))
+            self._insert_lines(conn, source_id, prepared_keep)
+            conn.execute(
+                "UPDATE invoices SET total=?,initial_paid_amount=0,paid_amount=0 WHERE id=?",
+                (total_keep, source_id),
+            )
+            base_ref = str(source["reference"] or "").strip() or f"#{source_id}"
+            cur = conn.execute(
+                """INSERT INTO invoices(type,customer_id,supplier_id,invoice_date,reference,notes,total,
+                                         initial_paid_amount,paid_amount,allow_negative_stock,
+                                         invoice_exchange_rate,invoice_currency_code,invoice_currency_symbol,
+                                         print_options)
+                   VALUES('sale',?,NULL,?,?,?,?,0,0,?,?,?,?,?)""",
+                (
+                    source["customer_id"],
+                    source["invoice_date"],
+                    f"{base_ref} / تقسيم",
+                    source["notes"],
+                    total_move,
+                    int(source["allow_negative_stock"] or 0),
+                    source["invoice_exchange_rate"],
+                    source["invoice_currency_code"],
+                    source["invoice_currency_symbol"],
+                    source["print_options"],
+                ),
+            )
+            new_id = int(cur.lastrowid)
+            self._insert_lines(conn, new_id, prepared_move)
+            AccountingRebuilder.rebuild(conn)
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','invoice',?,?)",
+                (new_id, f"split:{source_id}"),
+            )
+        invalidate_insights()
+        return new_id
+
+    @staticmethod
+    def _line_inputs(conn, invoice_id: int) -> list[InvoiceLineInput]:
+        rows = conn.execute(
+            """SELECT item_id,description,unit_id,conversion_factor,quantity,unit_price
+               FROM invoice_lines WHERE invoice_id=? ORDER BY id""",
+            (int(invoice_id),),
+        ).fetchall()
+        return [
+            InvoiceLineInput(
+                description=str(row["description"] or ""),
+                quantity=float(row["quantity"] or 0),
+                unit_price=float(row["unit_price"] or 0),
+                item_id=row["item_id"],
+                unit_id=row["unit_id"],
+                conversion_factor=float(row["conversion_factor"] or 1),
+            )
+            for row in rows
+        ]
+
     def open_sale_orders(self, limit: int = 200) -> list[dict]:
         """Unpaid sale invoices (restaurant preparation orders awaiting payment)."""
         with self.db.connect() as conn:
