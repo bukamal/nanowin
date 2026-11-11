@@ -11,12 +11,30 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 18  # adds composite/assembly items (recipes + per-line snapshot)
+SCHEMA_VERSION = 19  # adds print sections/stations + network print queue
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- Print stations / departments (kitchen, bar, ...). Each section routes its
+-- items' station tickets to one network ESC/POS printer. Kept in the DB so
+-- the routing definition travels with backups; see SectionPrintService.
+CREATE TABLE IF NOT EXISTS sections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    kind TEXT NOT NULL DEFAULT 'kitchen' CHECK(kind IN ('kitchen','receipt')),
+    printer_host TEXT,
+    printer_port INTEGER NOT NULL DEFAULT 9100,
+    paper_width_mm INTEGER NOT NULL DEFAULT 80 CHECK(paper_width_mm IN (58,80)),
+    copies INTEGER NOT NULL DEFAULT 1 CHECK(copies > 0),
+    encoding TEXT NOT NULL DEFAULT 'cp1256',
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -42,6 +60,8 @@ CREATE TABLE IF NOT EXISTS suppliers (
 CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    -- Default print station for items in this category (items.section_id wins).
+    section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -56,6 +76,8 @@ CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
+    -- Optional per-item print station override (else the category's section).
+    section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
     item_type TEXT NOT NULL DEFAULT 'مخزون' CHECK(item_type IN ('مخزون','خدمة')),
     purchase_price REAL NOT NULL DEFAULT 0 CHECK(purchase_price >= 0),
     selling_price REAL NOT NULL DEFAULT 0 CHECK(selling_price >= 0),
@@ -201,6 +223,26 @@ CREATE TABLE IF NOT EXISTS invoice_line_components (
 );
 CREATE INDEX IF NOT EXISTS idx_ilc_line ON invoice_line_components(invoice_line_id);
 CREATE INDEX IF NOT EXISTS idx_ilc_component ON invoice_line_components(component_item_id);
+
+-- Durable print queue for network ESC/POS station tickets. Payload is stored
+-- pre-rendered so a retry after an app restart sends exactly what was
+-- prepared even if templates/settings changed since. `dedupe_key` prevents
+-- reprinting the same invoice/section twice on retries or re-saves.
+CREATE TABLE IF NOT EXISTS print_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+    printer_host TEXT NOT NULL,
+    printer_port INTEGER NOT NULL DEFAULT 9100,
+    payload BLOB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sent','failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_status ON print_jobs(status, id);
 
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -752,6 +794,13 @@ class Database:
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Non-destructive migrations from phases 1 and 2."""
+        # Schema 19: print-station columns. Runs after SCHEMA_SQL so the
+        # `sections` table already exists for the REFERENCES clause.
+        if self._table_exists(conn, "categories") and not self._has_column(conn, "categories", "section_id"):
+            conn.execute("ALTER TABLE categories ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL")
+        if self._table_exists(conn, "items") and not self._has_column(conn, "items", "section_id"):
+            conn.execute("ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL")
+
         added_opening_qty = False
         added_opening_cost = False
         if not self._has_column(conn, "items", "opening_quantity"):

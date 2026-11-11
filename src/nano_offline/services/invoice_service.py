@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -13,6 +14,7 @@ from nano_offline.core.expiring import invalidate_insights
 from nano_offline.services.accounting_rebuilder import AccountingRebuilder, OPENING_BALANCE_MARKER
 
 EPSILON = 1e-9
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -36,6 +38,9 @@ class InvoiceService:
 
     def __init__(self, db: Database):
         self.db = db
+        # Optional station-printing hook set by AppContext. Kept as a plain
+        # attribute so the accounting core stays usable without printing.
+        self.section_print = None
 
     def check_purchase_price(
         self,
@@ -191,6 +196,13 @@ class InvoiceService:
             # a short TTL; a fresh sale must not wait it out.
             invalidate_insights()
         event_bus.publish(event_bus.INVOICE_CREATED, {"invoice_id": invoice_id, "invoice_type": invoice_type, "total": total})
+        if invoice_type == "sale" and self.section_print is not None:
+            try:
+                self.section_print.enqueue_invoice(invoice_id)
+            except Exception:
+                # Printing is best-effort: a station/printer problem must
+                # never turn a successfully saved sale into an error.
+                _LOG.exception("station print enqueue failed for invoice %s", invoice_id)
         return invoice_id
 
     def convert_opening_balances(

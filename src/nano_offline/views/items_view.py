@@ -1105,6 +1105,11 @@ class ItemsCenter:
             category = SearchSelect(label="التصنيف", choices=[(str(c["id"]), c["name"]) for c in categories], value=str(item.get("category_id")) if item and item.get("category_id") else None)
             default_unit_id = str(item.get("base_unit_id")) if item and item.get("base_unit_id") else (None if item else ensure_default_unit_id())
             base_unit = SearchSelect(label="الوحدة الأساسية", choices=[(str(u["id"]), u["name"]) for u in units], value=default_unit_id)
+            section_sel = SearchSelect(
+                label="القسم (محطة الطباعة)",
+                choices=[(str(s["id"]), s["name"]) for s in ctx.sections.list()],
+                value=str(item.get("section_id")) if item and item.get("section_id") else None,
+            )
             current_units = ctx.items.units(int(item["id"])) if item else []
             existing_barcodes = ctx.items.list_barcodes(int(item["id"])) if item else []
             barcode_by_unit: dict[int, dict] = {}
@@ -1406,6 +1411,7 @@ class ItemsCenter:
                         barcode=barcode.value or None,
                         is_composite=_is_composite,
                         components=composite_components if _is_composite else None,
+                        section_id=int(section_sel.value) if section_sel.value else None,
                     )
                     if item:
                         ctx.items.update(int(item["id"]), **kwargs)
@@ -1492,6 +1498,9 @@ class ItemsCenter:
                             name,
                             ft.ResponsiveRow([
                                 ft.Container(kind, col={"xs": 6}), ft.Container(category, col={"xs": 6}),
+                            ], spacing=7, run_spacing=7),
+                            ft.ResponsiveRow([
+                                ft.Container(section_sel, col={"xs": 12, "md": 6}),
                             ], spacing=7, run_spacing=7),
                         ],
                         spacing=9, tight=True,
@@ -2584,6 +2593,8 @@ class ItemsCenter:
             are removed from the grid so a retry never re-creates them.
             """
             cat_options = [(str(c["id"]), c["name"]) for c in categories]
+            sections_for_bulk = ctx.sections.list()
+            section_map = {str(s["id"]): s["name"] for s in sections_for_bulk}
             default_unit = ensure_default_unit_id()
             unit_options = [(str(u["id"]), u["name"]) for u in units]
             cat_map = {str(c["id"]): c["name"] for c in categories}
@@ -2607,6 +2618,7 @@ class ItemsCenter:
                 GridColumn("category_id", "التصنيف", width=140, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للاختيار"),
                 GridColumn("item_type", "النوع", width=100, align="center", editable=True, kind="picker", tooltip="مخزون يُتابع بالمخزون، وخدمة لا"),
                 GridColumn("is_composite", "تجميعية", width=90, align="center", editable=True, kind="picker", tooltip="مادة تُصنع من مواد أولية — اختر «نعم» لتحديد الوصفة"),
+                GridColumn("section_id", "القسم", width=110, editable=True, kind="picker", tooltip="محطة الطباعة (مطبخ/بار/...) — اختياري"),
                 GridColumn("base_unit_id", "الوحدة", width=110, editable=True, kind="picker", tooltip="الوحدة الأساسية للبيع والشراء"),
                 GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True, tooltip="الكمية الافتتاحية (للمخزون فقط)"),
                 GridColumn("purchase_price", "سعر الشراء", width=120, align="end", kind="money", editable=True),
@@ -2636,6 +2648,8 @@ class ItemsCenter:
                     return unit_map.get(str(value)) if value else None
                 if col.key == "alternate_unit_id":
                     return unit_map.get(str(value)) if value else None
+                if col.key == "section_id":
+                    return section_map.get(str(value)) if value else "بلا قسم"
                 if col.key == "item_type":
                     return value or "مخزون"
                 if col.key == "is_composite":
@@ -2741,6 +2755,7 @@ class ItemsCenter:
                     "base_unit_id": default_id(unit_sel) or "",
                     "is_composite": 0,
                     "components": [],
+                    "section_id": "",
                     "alternate_unit_id": "",
                     "alternate_conversion_factor": 1.0,
                     "alternate_purchase_price": "",
@@ -3006,6 +3021,8 @@ class ItemsCenter:
                     return [("مخزون", "مخزون"), ("خدمة", "خدمة")]
                 if key == "is_composite":
                     return [(0, "لا"), (1, "نعم")]
+                if key == "section_id":
+                    return [(None, "بلا قسم")] + [(int(s["id"]), s["name"]) for s in sections_for_bulk]
                 return []
 
             def apply_defaults_to_all(_=None) -> None:
@@ -3070,6 +3087,7 @@ class ItemsCenter:
                             barcode=barcode or None,
                             is_composite=is_composite,
                             components=components if is_composite else None,
+                            section_id=int(row["section_id"]) if row.get("section_id") else None,
                         )
                         if row_id:
                             # Edit mode: update the existing item in place.
@@ -3190,6 +3208,7 @@ class ItemsCenter:
                     "purchase_price": edit_item.get("purchase_price") or 0,
                     "selling_price": edit_item.get("selling_price") or 0,
                     "is_composite": 1 if int(edit_item.get("is_composite") or 0) else 0,
+                    "section_id": edit_item.get("section_id") or "",
                     "components": [
                         {
                             "component_item_id": int(c["component_item_id"]),
@@ -3777,6 +3796,219 @@ class ItemsCenter:
                 notify("لا توجد أرصدة افتتاحية قابلة للتحويل", kind="warning")
 
         refresh()
+
+        def open_sections_sheet(_=None) -> None:
+            """Manage print stations (sections) and their network printers."""
+            sheet, width = sheets.new_desktop_sheet(page, cap=860)
+            list_col = ft.Column(spacing=8, tight=True)
+
+            def close(_=None) -> None:
+                page.close(sheet)
+
+            def render() -> None:
+                sections = ctx.sections.list()
+                controls: list[ft.Control] = []
+                if not sections:
+                    controls.append(ft.Text(
+                        "لا توجد أقسام بعد. أضف قسمًا (مطبخ/بار/...) وحدّد طابعته الشبكية، "
+                        "ثم أسند المواد إليه من عمود «القسم» في جدول المواد.",
+                        size=12, color=Colors.TEXT_SECONDARY,
+                    ))
+                for section in sections:
+                    controls.append(_section_card(section))
+                list_col.controls = controls
+                try:
+                    list_col.update()
+                except Exception:
+                    pass
+
+            def toggle_active(section_id: int, section: dict, value: bool) -> None:
+                try:
+                    ctx.sections.update(
+                        section_id,
+                        name=str(section.get("name") or ""),
+                        kind=str(section.get("kind") or "kitchen"),
+                        printer_host=section.get("printer_host"),
+                        printer_port=int(section.get("printer_port") or 9100),
+                        paper_width_mm=int(section.get("paper_width_mm") or 80),
+                        copies=int(section.get("copies") or 1),
+                        encoding=str(section.get("encoding") or "cp1256"),
+                        active=bool(value),
+                        sort_order=int(section.get("sort_order") or 0),
+                    )
+                    render()
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+
+            def test_print(section: dict) -> None:
+                async def _run() -> None:
+                    try:
+                        await asyncio.to_thread(ctx.section_print.test_print, int(section["id"]))
+                        notify("تم إرسال الطباعة التجريبية", kind="success")
+                    except Exception as exc:
+                        notify(f"تعذرت الطباعة: {exc}", kind="error")
+                page.run_task(_run)
+
+            def _section_card(section: dict) -> ft.Control:
+                host = str(section.get("printer_host") or "").strip()
+                target = f"{host}:{section.get('printer_port') or 9100}" if host else "بلا طابعة"
+                kind_label = "مطبخ" if str(section.get("kind") or "kitchen") != "receipt" else "فاتورة"
+                return ft.Container(
+                    ft.Row(
+                        [
+                            ft.Icon(
+                                ft.Icons.PRINT_OUTLINED,
+                                color=Colors.PRIMARY if int(section.get("active") or 0) else Colors.TEXT_FAINT,
+                                size=18,
+                            ),
+                            ft.Column(
+                                [
+                                    ft.Text(str(section.get("name") or ""), size=13, weight=ft.FontWeight.W_600),
+                                    ft.Text(
+                                        f"{kind_label} • {target} • {section.get('paper_width_mm')}مم ×{section.get('copies')}",
+                                        size=10, color=Colors.TEXT_SECONDARY,
+                                    ),
+                                ],
+                                spacing=0, expand=True, tight=True,
+                            ),
+                            ft.Switch(
+                                value=bool(int(section.get("active") or 0)),
+                                on_change=lambda e, sid=int(section["id"]), sec=section: toggle_active(sid, sec, e.control.value),
+                            ),
+                            inline_icon_button(ft.Icons.EDIT_OUTLINED, lambda _, sec=section: open_form(sec), tooltip="تعديل"),
+                            inline_icon_button(ft.Icons.CONTACT_PHONE_OUTLINED, lambda _, sec=section: test_print(sec), tooltip="طباعة تجريبية", color=Colors.SUCCESS),
+                            inline_icon_button(ft.Icons.DELETE_OUTLINE, lambda _, sec=section: confirm_delete(sec), tooltip="حذف", color=Colors.DANGER),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.padding.all(10),
+                    border=ft.border.all(1, Colors.BORDER_ALT),
+                    border_radius=Radius.MD,
+                )
+
+            def confirm_delete(section: dict) -> None:
+                _confirm_similar(
+                    page,
+                    title="حذف قسم",
+                    message=f"سيُحذف القسم «{section.get('name')}» وتُلغى إسنادات المواد إليه. هل تريد المتابعة؟",
+                    on_confirm=lambda: (ctx.sections.delete(int(section["id"])), render()),
+                )
+
+            def open_form(section: dict | None = None) -> None:
+                editing = section is not None
+                dialog = ft.AlertDialog(modal=True)
+                name_f = SelectAllTextField(label="اسم القسم *", value=(section or {}).get("name") or "")
+                host_f = SelectAllTextField(label="عنوان الطابعة (IP)", value=(section or {}).get("printer_host") or "")
+                port_f = SelectAllTextField(label="المنفذ", value=str((section or {}).get("printer_port") or 9100), keyboard_type=ft.KeyboardType.NUMBER)
+                copies_f = SelectAllTextField(label="عدد النسخ", value=str((section or {}).get("copies") or 1), keyboard_type=ft.KeyboardType.NUMBER)
+                kind_f = SearchSelect(
+                    label="النوع",
+                    choices=[("kitchen", "مطبخ / تحضير"), ("receipt", "فاتورة")],
+                    value=str((section or {}).get("kind") or "kitchen"),
+                    allow_clear=False,
+                )
+                width_f = SearchSelect(
+                    label="عرض الورق",
+                    choices=[("80", "80 مم"), ("58", "58 مم")],
+                    value=str((section or {}).get("paper_width_mm") or 80),
+                    allow_clear=False,
+                )
+                encoding_f = SearchSelect(
+                    label="ترميز العربية",
+                    choices=[("cp1256", "Windows Arabic (cp1256)"), ("cp864", "Arabic DOS (cp864)"), ("cp850", "cp850")],
+                    value=str((section or {}).get("encoding") or "cp1256"),
+                    allow_clear=False,
+                )
+                active_f = ft.Switch(value=bool((section or {}).get("active", True)) if section else True, label="مفعّل")
+                status = ft.Text("", size=11, color=Colors.DANGER)
+
+                def save(_=None) -> None:
+                    try:
+                        payload = dict(
+                            name=name_f.value or "",
+                            kind=kind_f.value or "kitchen",
+                            printer_host=(host_f.value or "").strip() or None,
+                            printer_port=int(port_f.value or 9100),
+                            paper_width_mm=int(width_f.value or 80),
+                            copies=int(copies_f.value or 1),
+                            encoding=encoding_f.value or "cp1256",
+                            active=bool(active_f.value),
+                            sort_order=int((section or {}).get("sort_order") or 0),
+                        )
+                        if editing:
+                            ctx.sections.update(int(section["id"]), **payload)
+                        else:
+                            ctx.sections.create(**payload)
+                    except Exception as exc:
+                        status.value = str(exc)
+                        status.update()
+                        return
+                    page.close(dialog)
+                    render()
+                    notify("تم حفظ القسم", kind="success")
+
+                dialog.title = ft.Text("تعديل قسم" if editing else "قسم جديد")
+                dialog.content = ft.Column(
+                    [
+                        name_f,
+                        ft.ResponsiveRow([
+                            ft.Container(host_f, col={"xs": 12, "md": 8}),
+                            ft.Container(port_f, col={"xs": 6, "md": 4}),
+                        ], spacing=7, run_spacing=7),
+                        ft.ResponsiveRow([
+                            ft.Container(kind_f, col={"xs": 6}),
+                            ft.Container(width_f, col={"xs": 6}),
+                        ], spacing=7, run_spacing=7),
+                        ft.ResponsiveRow([
+                            ft.Container(copies_f, col={"xs": 6}),
+                            ft.Container(encoding_f, col={"xs": 6}),
+                        ], spacing=7, run_spacing=7),
+                        active_f,
+                        status,
+                    ],
+                    spacing=9, tight=True, width=440,
+                )
+                dialog.actions = [
+                    ft.TextButton("إلغاء", on_click=lambda _=None: page.close(dialog)),
+                    ft.FilledButton("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                ]
+                page.open(dialog)
+
+            add_btn = primary_button("قسم جديد", icon=ft.Icons.ADD_ROUNDED, on_click=lambda _=None: open_form(), width=None, size="md")
+            sheet.content = sheets.sheet_frame(
+                ft.Column(
+                    [
+                        ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
+                        sheets.sheet_header(
+                            title="الأقسام والطابعات",
+                            subtitle="محطات الطباعة الشبكية ESC/POS — طابعة واحدة لكل قسم",
+                            icon=ft.Icons.PRINT_OUTLINED,
+                            on_close=close,
+                            trailing=add_btn,
+                        ),
+                        ft.Container(
+                            ft.Column(
+                                [
+                                    ft.Text(
+                                        "أسند كل مادة إلى قسمها من عمود «القسم» في بطاقة المادة أو شيت الجدول، "
+                                        "وعند البيع تُطبع تذكرة تحضير على طابعة القسم.",
+                                        size=10, color=Colors.TEXT_SECONDARY,
+                                    ),
+                                    list_col,
+                                ],
+                                spacing=8, tight=True, scroll=ft.ScrollMode.AUTO,
+                            ),
+                            expand=True,
+                        ),
+                    ],
+                    spacing=10, expand=True,
+                ),
+                width=width,
+                height=sheets.sheet_height(page, 0.8),
+            )
+            render()
+            page.open(sheet)
+
         # One entry point that lets the user pick the surface: the fast bulk
         # table (many items at once) or the paged step-by-step form (one item,
         # with the composite recipe editor). Used for both add and edit.
@@ -3838,6 +4070,7 @@ class ItemsCenter:
         if self.on_context_actions is not None:
             self.on_context_actions([
                 RibbonAction("new_item", "مادة جديدة", ft.Icons.ADD_ROUNDED, accent=True, on_click=lambda _=None: _choose_item_form()),
+                RibbonAction("sections", "الأقسام والطابعات", ft.Icons.PRINT_OUTLINED, on_click=lambda _=None: open_sections_sheet()),
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),

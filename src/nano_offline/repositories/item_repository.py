@@ -22,6 +22,10 @@ LEFT JOIN categories c ON c.id=i.category_id
 LEFT JOIN units u ON u.id=i.base_unit_id
 """
 
+#: Sentinel for "argument not provided" (so an omitted section_id on update
+#: leaves the assignment untouched instead of clearing it).
+_UNSET = object()
+
 
 class ItemRepository(Offloadable):
     def __init__(self, db: Database):
@@ -531,6 +535,7 @@ class ItemRepository(Offloadable):
         barcode: str | None = None,
         is_composite: bool = False,
         components: list[dict] | None = None,
+        section_id: int | None = None,
     ) -> int:
         name = name.strip()
         if not name:
@@ -555,13 +560,14 @@ class ItemRepository(Offloadable):
                 cur = conn.execute(
                     """INSERT INTO items(
                            name,category_id,item_type,purchase_price,selling_price,quantity,average_cost,
-                           opening_quantity,opening_unit_cost,base_unit_id,barcode,is_composite
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           opening_quantity,opening_unit_cost,base_unit_id,barcode,is_composite,section_id
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         name, category_id, item_type, avg, selling,
                         initial_qty, 0.0 if composite else avg,
                         initial_qty, (0.0 if composite else avg) if initial_qty else 0.0,
                         base_unit_id, code, 1 if composite else 0,
+                        int(section_id) if section_id else None,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -601,6 +607,7 @@ class ItemRepository(Offloadable):
         quantity: float | None = None,
         is_composite: bool | None = None,
         components: list[dict] | None = None,
+        section_id: int | None | object = _UNSET,
     ) -> None:
         name = name.strip()
         if not name:
@@ -660,6 +667,11 @@ class ItemRepository(Offloadable):
                     raise ValueError("هذا الباركود مستخدم بالفعل لمادة أخرى") from exc
                 raise
             self._replace_units(conn, item_id, base_unit_id, item_units or [])
+            if section_id is not _UNSET:
+                conn.execute(
+                    "UPDATE items SET section_id=? WHERE id=?",
+                    (int(section_id) if section_id else None, item_id),
+                )
 
             if composite:
                 if components is not None:
@@ -776,6 +788,7 @@ class ItemRepository(Offloadable):
             "barcode": row["barcode"],
             "quantity": float(row["quantity"] or 0),
             "is_composite": int(row["is_composite"] or 0),
+            "section_id": row["section_id"],
             "units": units,
             "barcodes": barcodes,
             "components": components,

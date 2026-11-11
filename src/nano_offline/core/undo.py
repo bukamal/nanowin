@@ -181,6 +181,7 @@ def _apply_item(ctx, item_id: int, snapshot: dict) -> None:
             }
             for c in snapshot.get("components") or []
         ],
+        section_id=snapshot.get("section_id"),
     )
     # Sync secondary barcodes to the snapshot (best-effort).
     want = {(str(b.get("barcode") or ""), b.get("unit_id")) for b in snapshot.get("barcodes") or []}
@@ -229,6 +230,7 @@ def _item_snapshot(ctx, item_id: int) -> dict | None:
         "base_unit_id": item.get("base_unit_id"),
         "barcode": item.get("barcode"),
         "is_composite": int(item.get("is_composite") or 0),
+        "section_id": item.get("section_id"),
         "units": units,
         "barcodes": barcodes,
         "components": [
@@ -272,6 +274,7 @@ def _restore_item(ctx, snapshot: dict) -> int:
             }
             for c in snapshot.get("components") or []
         ],
+        section_id=snapshot.get("section_id"),
     )
     for bar in snapshot.get("barcodes") or []:
         code = str(bar.get("barcode") or "").strip()

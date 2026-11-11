@@ -7,6 +7,7 @@ from nano_offline.core.database import Database
 from nano_offline.repositories.definitions_repository import DefinitionsRepository
 from nano_offline.repositories.item_repository import ItemRepository
 from nano_offline.repositories.party_repository import PartyRepository
+from nano_offline.repositories.section_repository import SectionRepository
 from nano_offline.repositories.settings_repository import SettingsRepository
 from nano_offline.repositories.stocktake_repository import StocktakeRepository
 from nano_offline.services.auth_service import AuthService
@@ -22,6 +23,7 @@ from nano_offline.services.external_notifications import ExternalNotificationSer
 from nano_offline.services.notification_service import NotificationService
 from nano_offline.services.payment_service import PaymentService
 from nano_offline.services.reporting_service import ReportingService
+from nano_offline.services.section_print_service import SectionPrintService
 from nano_offline.services.statement_service import StatementService
 from nano_offline.services.stocktake_service import StocktakeService
 from nano_offline.services.smart_assistant_service import SmartAssistantService
@@ -49,6 +51,8 @@ class AppContext:
     dashboard: DashboardService
     documents: DocumentService
     settings: SettingsRepository
+    sections: SectionRepository
+    section_print: SectionPrintService
     auth: AuthService
     audit: AuditService
     backup: BackupService
@@ -75,6 +79,11 @@ class AppContext:
         # become explicit payment/allocation rows and all balances are reconciled.
         invoices.rebuild_derived_state()
         expenses.rebuild_ledger()
+        # Print stations: sale invoices fan out to each section's network
+        # ESC/POS printer (see SectionPrintService).
+        sections_repo = SectionRepository(db)
+        section_print_svc = SectionPrintService(db, sections_repo)
+        invoices.section_print = section_print_svc
         auth = AuthService(db)
         backup = BackupService(db)
         items_repo = ItemRepository(db)
@@ -142,6 +151,8 @@ class AppContext:
             dashboard=dashboard_svc,
             documents=DocumentService(db, invoices, StatementService(db)),
             settings=settings_repo,
+            sections=sections_repo,
+            section_print=section_print_svc,
             auth=auth,
             audit=AuditService(db),
             backup=backup,
