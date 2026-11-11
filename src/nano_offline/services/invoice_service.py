@@ -499,6 +499,31 @@ class InvoiceService:
             )
             conn.execute("DELETE FROM invoice_lines WHERE invoice_id=?", (invoice_id,))
             self._insert_lines(conn, invoice_id, prepared)
+            # Preserve the "already sent to kitchen" marker for lines that did
+            # not grow, so a later incremental send prints only the real
+            # additions (and not the whole ticket again).
+            sent_qty: dict[tuple, float] = {}
+            for old_line in before.get("lines") or []:
+                if old_line.get("printed_at"):
+                    sent_key = (old_line.get("item_id"), str(old_line.get("description") or ""))
+                    sent_qty[sent_key] = sent_qty.get(sent_key, 0.0) + float(old_line.get("quantity") or 0)
+            if sent_qty:
+                kept_ids = [
+                    int(row["id"])
+                    for row in conn.execute(
+                        "SELECT id,item_id,description,quantity FROM invoice_lines WHERE invoice_id=?",
+                        (invoice_id,),
+                    ).fetchall()
+                    if (row["item_id"], str(row["description"] or "")) in sent_qty
+                    and float(row["quantity"] or 0)
+                    <= sent_qty[(row["item_id"], str(row["description"] or ""))] + EPSILON
+                ]
+                if kept_ids:
+                    placeholders = ",".join("?" for _ in kept_ids)
+                    conn.execute(
+                        f"UPDATE invoice_lines SET printed_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
+                        kept_ids,
+                    )
             AccountingRebuilder.rebuild(conn)
             after = self._snapshot(conn, invoice_id)
             conn.execute(
@@ -542,7 +567,7 @@ class InvoiceService:
         lines = [
             dict(line)
             for line in conn.execute(
-                "SELECT item_id,unit_id,quantity,unit_price,description,conversion_factor "
+                "SELECT item_id,unit_id,quantity,unit_price,description,conversion_factor,printed_at "
                 "FROM invoice_lines WHERE invoice_id=? ORDER BY id",
                 (invoice_id,),
             ).fetchall()

@@ -430,3 +430,53 @@ def test_section_fallback_printer_on_repeated_failure(tmp_path):
     counts = ctx.sections.counts()
     assert counts["failed"] == 1   # the primary job is recorded as failed
     assert counts["sent"] == 1     # the fallback delivery succeeded
+
+
+def test_edit_then_send_new_prints_only_the_added_item(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    pizza = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    salad = ctx.items.create(name="سلطة", item_type="مخزون", quantity=100, selling_price=6, section_id=sid)
+
+    inv = _open_order(ctx, [(pizza, "بيتزا", 1, 10)], "طاولة 2")
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: None)
+
+    customer_id = int(ctx.invoices.get_invoice(inv)["customer_id"])
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[
+            InvoiceLineInput(description="بيتزا", item_id=pizza, quantity=1, unit_price=10),
+            InvoiceLineInput(description="سلطة", item_id=salad, quantity=1, unit_price=6),
+        ],
+        customer_id=customer_id,
+        paid_amount=0,
+        reference="طاولة 2",
+    )
+    assert ctx.section_print.send_new_invoice(inv) == 1
+    pending = ctx.sections.pending_jobs()
+    assert len(pending) == 1
+    payload = bytes(pending[0]["payload"])
+    assert "سلطة".encode("cp1256") in payload
+    assert "بيتزا".encode("cp1256") not in payload  # unchanged line not reprinted
+
+
+def test_edit_without_changes_sends_nothing_new(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    pizza = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+
+    inv = _open_order(ctx, [(pizza, "بيتزا", 1, 10)], "طاولة 3")
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: None)
+    customer_id = int(ctx.invoices.get_invoice(inv)["customer_id"])
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=pizza, quantity=1, unit_price=10)],
+        customer_id=customer_id,
+        paid_amount=0,
+        reference="طاولة 3",
+    )
+    assert ctx.section_print.send_new_invoice(inv) == 0
