@@ -12,6 +12,7 @@ import pytest
 
 from nano_offline.app_context import AppContext
 from nano_offline.core import escpos
+from nano_offline.core import restaurant_settings
 from nano_offline.services.invoice_service import InvoiceLineInput
 
 
@@ -192,3 +193,35 @@ def test_dispatch_success_and_failure_retry(tmp_path):
 
     ctx.section_print.retry_failed()
     assert ctx.sections.counts()["pending"] == 1
+
+def test_restaurant_mode_keeps_unpaid_order_open(tmp_path):
+    ctx = _ctx(tmp_path)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(
+        name="بيتزا", item_type="مخزون", quantity=100, purchase_price=2, selling_price=10, section_id=sid
+    )
+
+    # Mode off: an anonymous sale with paid=0 is treated as fully-paid cash
+    # (the long-standing non-restaurant rule).
+    inv_cash = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=item, quantity=1, unit_price=10)],
+        paid_amount=0,
+    )
+    assert float(ctx.invoices.get_invoice(inv_cash)["paid_amount"]) == pytest.approx(10)
+    assert ctx.invoices.open_sale_orders() == []
+
+    # Mode on: the same input becomes an open preparation order (paid=0),
+    # attributed to the shared party, with a kitchen ticket queued.
+    restaurant_settings.set_enabled(ctx.settings, True)
+    inv_open = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=item, quantity=1, unit_price=10)],
+        paid_amount=0,
+    )
+    row = ctx.invoices.get_invoice(inv_open)
+    assert float(row["paid_amount"]) == pytest.approx(0)
+    assert row["customer_id"] is not None
+    assert [o["id"] for o in ctx.invoices.open_sale_orders()] == [inv_open]
+    assert "طلبات مفتوحة" in {c["name"] for c in ctx.customers.list()}
+    assert ctx.sections.counts()["pending"] >= 1

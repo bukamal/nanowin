@@ -10,6 +10,7 @@ from nano_offline.core import currency
 from nano_offline.core import event_bus
 from nano_offline.core import invoice_settings
 from nano_offline.core import money
+from nano_offline.core import restaurant_settings
 from nano_offline.core.expiring import invalidate_insights
 from nano_offline.services.accounting_rebuilder import AccountingRebuilder, OPENING_BALANCE_MARKER
 
@@ -148,14 +149,24 @@ class InvoiceService:
                 supplier_id=supplier_id,
                 paid_amount=paid_amount,
             )
-            paid_amount = self._cash_paid_without_party(
-                invoice_type, total, paid_amount, customer_id, supplier_id
-            )
-            self._require_party_for_credit(invoice_type, total, paid_amount, customer_id, supplier_id)
             settings = {
                 str(r["key"]): str(r["value"])
                 for r in conn.execute("SELECT key,value FROM settings").fetchall()
             }
+            # Restaurant mode: an unpaid sale with no customer becomes an open
+            # "preparation order" attributed to a shared party, so the kitchen
+            # tickets print now and the amount is settled later.
+            if (
+                invoice_type == "sale"
+                and customer_id is None
+                and paid_amount < total - EPSILON
+                and restaurant_settings.enabled(settings)
+            ):
+                customer_id = self._ensure_restaurant_party(conn)
+            paid_amount = self._cash_paid_without_party(
+                invoice_type, total, paid_amount, customer_id, supplier_id
+            )
+            self._require_party_for_credit(invoice_type, total, paid_amount, customer_id, supplier_id)
             print_snapshot = invoice_settings.encode_print_snapshot(
                 invoice_settings.print_snapshot_from_settings(settings)
             )
@@ -674,6 +685,20 @@ class InvoiceService:
             raise ValueError("اختر المورد للفاتورة الآجلة أو اجعل المدفوع مساويًا للإجمالي")
 
     @staticmethod
+    def _ensure_restaurant_party(conn) -> int:
+        row = conn.execute(
+            "SELECT id FROM customers WHERE name=? COLLATE NOCASE",
+            (restaurant_settings.DEFAULT_PARTY_NAME,),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cur = conn.execute(
+            "INSERT INTO customers(name) VALUES(?)",
+            (restaurant_settings.DEFAULT_PARTY_NAME,),
+        )
+        return int(cur.lastrowid)
+
+    @staticmethod
     def _unit_factor(conn, item, unit_id: int | None) -> float:
         if unit_id is None:
             return 1.0
@@ -739,6 +764,19 @@ class InvoiceService:
                     WHERE type=? AND {column}=? AND total-paid_amount>?
                     ORDER BY invoice_date,id""",
                 (invoice_type, party_id, EPSILON),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def open_sale_orders(self, limit: int = 200) -> list[dict]:
+        """Unpaid sale invoices (restaurant preparation orders awaiting payment)."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT id,invoice_date,reference,total,paid_amount,
+                          (total-paid_amount) AS remaining_amount
+                   FROM invoices
+                   WHERE type='sale' AND status='posted' AND (total-paid_amount)>?
+                   ORDER BY invoice_date,id LIMIT ?""",
+                (EPSILON, max(1, int(limit))),
             ).fetchall()
             return [dict(r) for r in rows]
 

@@ -23,6 +23,7 @@ from nano_offline.core import currency
 from nano_offline.core import privacy
 from nano_offline.core import barcode_quality
 from nano_offline.core import barcode_settings
+from nano_offline.core import restaurant_settings
 from nano_offline.core.platform_capabilities import supports
 
 # Desktop grid columns. Only name + the two prices are inline-editable:
@@ -3806,6 +3807,37 @@ class ItemsCenter:
             def close(_=None) -> None:
                 page.close(sheet)
 
+            def _restaurant_mode_control() -> ft.Control:
+                open_count = len(ctx.invoices.open_sale_orders())
+
+                def _toggle(e) -> None:
+                    restaurant_settings.set_enabled(ctx.settings, bool(e.control.value))
+                    notify("تم تحديث وضع المطاعم")
+
+                return ft.Container(
+                    ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=17, color=Colors.PRIMARY),
+                                    ft.Text("وضع المطاعم (الطلب قبل الدفع)", size=12, weight=ft.FontWeight.W_600, expand=True),
+                                    ft.Switch(value=restaurant_settings.enabled(ctx.settings), on_change=_toggle),
+                                ],
+                                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Text(
+                                "عند التفعيل يمكن حفظ فاتورة بيع غير مدفوعة دون اختيار عميل (تُنسب إلى «طلبات مفتوحة»)، "
+                                f"وتُطبع تذاكر الأقسام فورًا. طلبات مفتوحة حاليًا: {open_count}",
+                                size=10, color=Colors.TEXT_SECONDARY,
+                            ),
+                        ],
+                        spacing=4, tight=True,
+                    ),
+                    padding=ft.padding.all(10),
+                    bgcolor=Colors.PRIMARY_BG,
+                    border_radius=Radius.MD,
+                )
+
             def render_report() -> None:
                 rows = ctx.sections.sales_by_section()
                 controls: list[ft.Control] = [
@@ -4027,6 +4059,7 @@ class ItemsCenter:
                         ft.Container(
                             ft.Column(
                                 [
+                                    _restaurant_mode_control(),
                                     ft.Text(
                                         "أسند كل مادة إلى قسمها من عمود «القسم» في بطاقة المادة أو شيت الجدول، "
                                         "وعند البيع تُطبع تذكرة تحضير على طابعة القسم.",
