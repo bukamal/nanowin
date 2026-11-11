@@ -3868,6 +3868,24 @@ class ItemsCenter:
                             ],
                             spacing=6,
                         ))
+                controls.append(ft.Divider(height=1))
+                controls.append(ft.Text("الطلبات المفتوحة (بانتظار السداد)", size=12, weight=ft.FontWeight.W_600))
+                orders = ctx.invoices.open_sale_orders(limit=20)
+                if not orders:
+                    controls.append(ft.Text("لا توجد طلبات مفتوحة.", size=11, color=Colors.TEXT_SECONDARY))
+                else:
+                    for order in orders:
+                        label = str(order.get("reference") or "").strip() or f"طلب #{order['id']}"
+                        controls.append(ft.Row(
+                            [
+                                ft.Text(label, size=11, expand=True),
+                                ft.Text(
+                                    money(float(order.get("remaining_amount") or 0)),
+                                    size=11, width=100, text_align=ft.TextAlign.END, color=Colors.DANGER,
+                                ),
+                            ],
+                            spacing=6,
+                        ))
                 report_col.controls = controls
                 try:
                     report_col.update()

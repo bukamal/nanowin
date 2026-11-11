@@ -34,19 +34,22 @@ class SectionPrintService:
 
     # ---- enqueue ------------------------------------------------------- #
 
-    def enqueue_invoice(self, invoice_id: int, *, dispatch: bool | None = None) -> int:
+    def enqueue_invoice(self, invoice_id: int, *, only_new: bool = False, dispatch: bool | None = None) -> int:
         """Create pending print jobs for a sale invoice's sections.
 
         Returns the number of *new* jobs. A no-op when the invoice is not a
-        sale or no line resolves to an active, configured section.
+        sale or no line resolves to an active, configured section. With
+        ``only_new`` only lines not yet sent are printed (incremental kitchen
+        sends after items are added to an open order).
         """
         invoice = self._invoice_header(invoice_id)
         if invoice is None or str(invoice.get("type")) != "sale":
             return 0
-        grouped = self.sections.invoice_section_lines(int(invoice_id))
+        grouped = self.sections.invoice_section_lines(int(invoice_id), only_unsent=only_new)
         if not grouped:
             return 0
         enqueued = 0
+        printed_line_ids: list[int] = []
         for section_id, lines in grouped.items():
             section = self.sections.get(int(section_id))
             if section is None or not int(section.get("active") or 0):
@@ -59,19 +62,30 @@ class SectionPrintService:
             except Exception:
                 _LOG.exception("failed to build station ticket for section %s", section_id)
                 continue
+            line_ids = [int(line["line_id"]) for line in lines]
+            batch = "-".join(str(i) for i in sorted(line_ids))
             if self.sections.enqueue_job(
                 invoice_id=int(invoice_id),
                 section_id=int(section_id),
                 printer_host=host,
                 printer_port=int(section.get("printer_port") or 9100),
                 payload=payload,
-                dedupe_key=f"invoice:{int(invoice_id)}:section:{int(section_id)}",
+                dedupe_key=f"invoice:{int(invoice_id)}:section:{int(section_id)}:batch:{batch}",
             ):
                 enqueued += 1
+            printed_line_ids.extend(line_ids)
+        if printed_line_ids:
+            # Optimistic: a line is considered "sent" once queued; a failed
+            # job is recovered via the full "resend all tickets" action.
+            self.sections.mark_lines_printed(printed_line_ids)
         should_dispatch = self.auto_dispatch if dispatch is None else dispatch
         if enqueued and should_dispatch:
             self.dispatch_async()
         return enqueued
+
+    def send_new_invoice(self, invoice_id: int) -> int:
+        """Send only the lines added since the order was last sent to kitchen."""
+        return self.enqueue_invoice(int(invoice_id), only_new=True)
 
     # ---- dispatch ------------------------------------------------------ #
 

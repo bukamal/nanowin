@@ -133,23 +133,26 @@ class SectionRepository:
                 (int(section_id) if section_id else None, int(category_id)),
             )
 
-    def invoice_section_lines(self, invoice_id: int) -> dict[int, list[dict]]:
+    def invoice_section_lines(self, invoice_id: int, *, only_unsent: bool = False) -> dict[int, list[dict]]:
         """Group a sale invoice's lines by resolved section id.
 
         Resolution order: item override, then category default. Lines with no
-        resolved section are omitted (they go on no station ticket).
+        resolved section are omitted (they go on no station ticket). With
+        ``only_unsent`` only lines whose ticket has not been sent yet are
+        included (incremental "send new items to kitchen").
         """
-        with self.db.connect() as conn:
-            rows = conn.execute(
-                """SELECT il.id AS line_id, il.quantity, il.description,
+        sql = """SELECT il.id AS line_id, il.quantity, il.description,
                           it.name AS item_name,
                           COALESCE(it.section_id, c.section_id) AS section_id
                    FROM invoice_lines il
                    LEFT JOIN items it ON it.id=il.item_id
                    LEFT JOIN categories c ON c.id=it.category_id
-                   WHERE il.invoice_id=?""",
-                (int(invoice_id),),
-            ).fetchall()
+                   WHERE il.invoice_id=?"""
+        params: list[object] = [int(invoice_id)]
+        if only_unsent:
+            sql += " AND il.printed_at IS NULL"
+        with self.db.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
         grouped: dict[int, list[dict]] = {}
         for row in rows:
             section_id = row["section_id"]
@@ -157,11 +160,23 @@ class SectionRepository:
                 continue
             grouped.setdefault(int(section_id), []).append(
                 {
+                    "line_id": int(row["line_id"]),
                     "name": str(row["item_name"] or row["description"] or ""),
                     "quantity": float(row["quantity"] or 0),
                 }
             )
         return grouped
+
+    def mark_lines_printed(self, line_ids: list[int]) -> None:
+        ids = [int(i) for i in line_ids if i is not None]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"UPDATE invoice_lines SET printed_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
+                ids,
+            )
 
     # ---- print queue --------------------------------------------------- #
 

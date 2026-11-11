@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 19  # adds print sections/stations + network print queue
+SCHEMA_VERSION = 20  # tracks per-line kitchen send state for incremental KOT
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -206,7 +206,11 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
     unit_price REAL NOT NULL CHECK(unit_price >= 0),
     total REAL NOT NULL CHECK(total >= 0),
     unit_cost REAL NOT NULL DEFAULT 0,
-    cost_amount REAL NOT NULL DEFAULT 0
+    cost_amount REAL NOT NULL DEFAULT 0,
+    -- When this line's station ticket has been sent to its section printer
+    -- (schema 20). Lets "send new items to kitchen" print only what was added
+    -- since the order was last sent, instead of reprinting the whole ticket.
+    printed_at TEXT
 );
 
 -- Frozen snapshot of a composite sale line's exploded leaf components, taken
@@ -800,6 +804,10 @@ class Database:
             conn.execute("ALTER TABLE categories ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL")
         if self._table_exists(conn, "items") and not self._has_column(conn, "items", "section_id"):
             conn.execute("ALTER TABLE items ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL")
+
+        # Schema 20: per-line kitchen send marker for incremental station prints.
+        if self._table_exists(conn, "invoice_lines") and not self._has_column(conn, "invoice_lines", "printed_at"):
+            conn.execute("ALTER TABLE invoice_lines ADD COLUMN printed_at TEXT")
 
         added_opening_qty = False
         added_opening_cost = False

@@ -884,18 +884,30 @@ class InvoiceCenter:
                     ("مشاركة PDF", ft.Icons.PICTURE_AS_PDF, lambda i=invoice_id: after_menu_closes(self._pdf_handler(i))),
                 ])
                 if str(row.get("type")) == "sale":
-                    def _send_to_kitchen(i=invoice_id) -> None:
+                    def _send_new(i=invoice_id) -> None:
+                        try:
+                            sent = self.ctx.section_print.send_new_invoice(int(i))
+                        except Exception as exc:
+                            self.notify(str(exc), kind="error")
+                            return
+                        if sent:
+                            self.notify(f"تم إرسال {sent} تذكرة للبنود الجديدة", sound_kind="success")
+                        else:
+                            self.notify("لا توجد بنود جديدة للإرسال", kind="warning")
+
+                    def _resend_all(i=invoice_id) -> None:
                         try:
                             sent = self.ctx.section_print.reprint_invoice(int(i))
                         except Exception as exc:
                             self.notify(str(exc), kind="error")
                             return
                         if sent:
-                            self.notify(f"تم إرسال تذاكر {sent} قسم إلى الطابعات", sound_kind="success")
+                            self.notify(f"تمت إعادة إرسال تذاكر {sent} قسم", sound_kind="success")
                         else:
                             self.notify("لا توجد أقسام/طابعات مُعدّة لهذه الفاتورة", kind="warning")
 
-                    items.append(("إرسال للمطبخ (الأقسام)", ft.Icons.PRINT_OUTLINED, _send_to_kitchen))
+                    items.append(("إرسال البنود الجديدة للمطبخ", ft.Icons.SEND, _send_new))
+                    items.append(("إعادة إرسال كل التذاكر", ft.Icons.PRINT_OUTLINED, _resend_all))
                 items.extend([
                     None,
                     ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),

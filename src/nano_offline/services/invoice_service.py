@@ -456,6 +456,17 @@ class InvoiceService:
                 supplier_id=supplier_id,
                 paid_amount=paid_amount,
             )
+            settings = {
+                str(r["key"]): str(r["value"])
+                for r in conn.execute("SELECT key,value FROM settings").fetchall()
+            }
+            if (
+                invoice_type == "sale"
+                and customer_id is None
+                and paid_amount < total - EPSILON
+                and restaurant_settings.enabled(settings)
+            ):
+                customer_id = self._ensure_restaurant_party(conn)
             paid_amount = self._cash_paid_without_party(
                 invoice_type, total, paid_amount, customer_id, supplier_id
             )

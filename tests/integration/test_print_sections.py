@@ -225,3 +225,40 @@ def test_restaurant_mode_keeps_unpaid_order_open(tmp_path):
     assert [o["id"] for o in ctx.invoices.open_sale_orders()] == [inv_open]
     assert "طلبات مفتوحة" in {c["name"] for c in ctx.customers.list()}
     assert ctx.sections.counts()["pending"] >= 1
+
+
+def test_send_new_items_only_after_initial_send(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    pizza = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    salad = ctx.items.create(name="سلطة", item_type="مخزون", quantity=100, selling_price=6, section_id=sid)
+
+    inv = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=pizza, quantity=1, unit_price=10)],
+        paid_amount=0,
+        reference="طاولة 4",
+    )
+    # The order printed on creation, so nothing is "new".
+    assert ctx.section_print.send_new_invoice(inv) == 0
+
+    order = next(o for o in ctx.invoices.open_sale_orders() if o["id"] == inv)
+    assert order["reference"] == "طاولة 4"
+
+    # Add a second item: editing recreates the lines as unsent, so the next
+    # incremental send must print again exactly once.
+    customer_id = int(ctx.invoices.get_invoice(inv)["customer_id"])
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[
+            InvoiceLineInput(description="بيتزا", item_id=pizza, quantity=1, unit_price=10),
+            InvoiceLineInput(description="سلطة", item_id=salad, quantity=1, unit_price=6),
+        ],
+        customer_id=customer_id,
+        paid_amount=0,
+        reference="طاولة 4",
+    )
+    assert ctx.section_print.send_new_invoice(inv) == 1
+    assert ctx.section_print.send_new_invoice(inv) == 0
