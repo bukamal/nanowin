@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 20  # tracks per-line kitchen send state for incremental KOT
+SCHEMA_VERSION = 21  # adds a per-section fallback printer
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS sections (
     paper_width_mm INTEGER NOT NULL DEFAULT 80 CHECK(paper_width_mm IN (58,80)),
     copies INTEGER NOT NULL DEFAULT 1 CHECK(copies > 0),
     encoding TEXT NOT NULL DEFAULT 'cp1256',
+    -- When this section's printer keeps failing, its tickets are re-sent to
+    -- this fallback section's printer instead (schema 21).
+    fallback_section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
     active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -808,6 +811,10 @@ class Database:
         # Schema 20: per-line kitchen send marker for incremental station prints.
         if self._table_exists(conn, "invoice_lines") and not self._has_column(conn, "invoice_lines", "printed_at"):
             conn.execute("ALTER TABLE invoice_lines ADD COLUMN printed_at TEXT")
+
+        # Schema 21: per-section fallback printer.
+        if self._table_exists(conn, "sections") and not self._has_column(conn, "sections", "fallback_section_id"):
+            conn.execute("ALTER TABLE sections ADD COLUMN fallback_section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL")
 
         added_opening_qty = False
         added_opening_cost = False

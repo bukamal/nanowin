@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv as _csv
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import flet as ft
@@ -3803,6 +3803,49 @@ class ItemsCenter:
             sheet, width = sheets.new_desktop_sheet(page, cap=860)
             list_col = ft.Column(spacing=8, tight=True)
             report_col = ft.Column(spacing=4, tight=True)
+            queue_col = ft.Column(spacing=4, tight=True)
+            period_state = {"key": "all"}
+
+            def _period_range() -> tuple[str | None, str | None]:
+                today = date.today()
+                key = period_state["key"]
+                if key == "today":
+                    return today.isoformat(), today.isoformat()
+                if key == "week":
+                    return (today - timedelta(days=6)).isoformat(), today.isoformat()
+                if key == "month":
+                    return today.replace(day=1).isoformat(), today.isoformat()
+                return None, None
+
+            def _render_queue() -> None:
+                counts = ctx.section_print.counts()
+                controls: list[ft.Control] = [
+                    ft.Text("حالة طابور الطباعة", size=12, weight=ft.FontWeight.W_600),
+                    ft.Row(
+                        [
+                            ft.Text(f"بالانتظار: {counts.get('pending', 0)}", size=11, color=Colors.WARNING_DARK),
+                            ft.Text(f"نجحت: {counts.get('sent', 0)}", size=11, color=Colors.SUCCESS_DARK),
+                            ft.Text(f"فشلت: {counts.get('failed', 0)}", size=11, color=Colors.DANGER),
+                        ],
+                        spacing=12, wrap=True,
+                    ),
+                ]
+                if counts.get("failed", 0):
+                    def _retry(_=None) -> None:
+                        try:
+                            n = ctx.section_print.retry_failed()
+                            ctx.section_print.dispatch_async()
+                        except Exception as exc:
+                            notify(str(exc), kind="error")
+                            return
+                        notify(f"أُعيد جدولة {n} مهمة فاشلة")
+                        _render_queue()
+                    controls.append(secondary_button("إعادة إرسال الفاشلة", icon=ft.Icons.REFRESH, on_click=_retry, width=None, size="md"))
+                queue_col.controls = controls
+                try:
+                    queue_col.update()
+                except Exception:
+                    pass
 
             def close(_=None) -> None:
                 page.close(sheet)
@@ -3838,10 +3881,31 @@ class ItemsCenter:
                     border_radius=Radius.MD,
                 )
 
+            _PERIOD_LABELS = {"today": "اليوم", "week": "آخر 7 أيام", "month": "هذا الشهر", "all": "كل الفترات"}
+            period_dd = SegmentedToggle(
+                options=[
+                    SegmentOption("today", "اليوم"),
+                    SegmentOption("week", "7 أيام"),
+                    SegmentOption("month", "هذا الشهر"),
+                    SegmentOption("all", "الكل"),
+                ],
+                value="all",
+            )
+
+            def _on_period(_=None) -> None:
+                period_state["key"] = period_dd.value or "all"
+                render_report()
+
+            period_dd.on_change = _on_period
+
             def render_report() -> None:
-                rows = ctx.sections.sales_by_section()
+                date_from, date_to = _period_range()
+                rows = ctx.sections.sales_by_section(date_from=date_from, date_to=date_to)
                 controls: list[ft.Control] = [
-                    ft.Text("مبيعات الأقسام (كل الفترات)", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        f"مبيعات الأقسام ({_PERIOD_LABELS.get(period_state['key'], 'كل الفترات')})",
+                        size=12, weight=ft.FontWeight.W_600,
+                    ),
                 ]
                 if not rows:
                     controls.append(ft.Text("لا توجد مبيعات مرحّلة بعد.", size=11, color=Colors.TEXT_SECONDARY))
@@ -3909,6 +3973,7 @@ class ItemsCenter:
                 except Exception:
                     pass
                 render_report()
+                _render_queue()
 
             def toggle_active(section_id: int, section: dict, value: bool) -> None:
                 try:
@@ -3923,6 +3988,7 @@ class ItemsCenter:
                         encoding=str(section.get("encoding") or "cp1256"),
                         active=bool(value),
                         sort_order=int(section.get("sort_order") or 0),
+                        fallback_section_id=int(section["fallback_section_id"]) if section.get("fallback_section_id") else None,
                     )
                     render()
                 except Exception as exc:
@@ -4007,6 +4073,15 @@ class ItemsCenter:
                     value=str((section or {}).get("encoding") or "cp1256"),
                     allow_clear=False,
                 )
+                fallback_f = SearchSelect(
+                    label="طابعة بديلة عند الفشل (اختياري)",
+                    choices=[
+                        (str(s["id"]), s["name"])
+                        for s in ctx.sections.list()
+                        if not section or int(s["id"]) != int(section["id"])
+                    ],
+                    value=str(section.get("fallback_section_id")) if section and section.get("fallback_section_id") else None,
+                )
                 active_f = ft.Switch(value=bool((section or {}).get("active", True)) if section else True, label="مفعّل")
                 status = ft.Text("", size=11, color=Colors.DANGER)
 
@@ -4022,6 +4097,7 @@ class ItemsCenter:
                             encoding=encoding_f.value or "cp1256",
                             active=bool(active_f.value),
                             sort_order=int((section or {}).get("sort_order") or 0),
+                            fallback_section_id=int(fallback_f.value) if fallback_f.value else None,
                         )
                         if editing:
                             ctx.sections.update(int(section["id"]), **payload)
@@ -4051,6 +4127,7 @@ class ItemsCenter:
                             ft.Container(copies_f, col={"xs": 6}),
                             ft.Container(encoding_f, col={"xs": 6}),
                         ], spacing=7, run_spacing=7),
+                        fallback_f,
                         active_f,
                         status,
                     ],
@@ -4088,12 +4165,19 @@ class ItemsCenter:
                                             [
                                                 ft.Row([ft.Icon(ft.Icons.BAR_CHART_OUTLINED, size=16, color=Colors.PRIMARY),
                                                         ft.Text("تقرير الأقسام", size=12, weight=ft.FontWeight.W_600)], spacing=6),
+                                                period_dd,
                                                 report_col,
                                             ],
                                             spacing=6, tight=True,
                                         ),
                                         padding=ft.padding.all(10),
                                         bgcolor=Colors.BACKGROUND_ALT,
+                                        border_radius=Radius.MD,
+                                    ),
+                                    ft.Container(
+                                        ft.Column([queue_col], spacing=6, tight=True),
+                                        padding=ft.padding.all(10),
+                                        bgcolor=Colors.WARNING_BG,
                                         border_radius=Radius.MD,
                                     ),
                                     ft.Divider(height=1),

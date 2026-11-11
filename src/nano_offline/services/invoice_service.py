@@ -507,6 +507,13 @@ class InvoiceService:
             )
         invalidate_insights()
         event_bus.publish(event_bus.INVOICE_UPDATED, {"invoice_id": invoice_id, "invoice_type": invoice_type, "total": total, "before": before, "after": after})
+        if invoice_type == "sale" and self.section_print is not None:
+            try:
+                self.section_print.enqueue_void_diffs(
+                    invoice_id, (before or {}).get("lines") or [], prepared
+                )
+            except Exception:
+                _LOG.exception("station void enqueue failed for invoice %s", invoice_id)
 
     def delete_invoice(self, invoice_id: int) -> None:
         with self.db.transaction() as conn:

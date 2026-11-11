@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import socket
 
-__all__ = ["build_station_ticket", "test_ticket", "send_bytes", "columns_for_width"]
+__all__ = ["build_station_ticket", "build_void_ticket", "test_ticket", "send_bytes", "columns_for_width"]
 
 # ESC/POS control bytes.
 _ESC = b"\x1b"
@@ -176,6 +176,39 @@ def build_station_ticket(
         b.divider("-")
     b.align(1)
     b.line("تحضير")
+    b.feed(2)
+    b.cut()
+
+    payload = b.build()
+    repeat = max(1, int(copies if copies is not None else section.get("copies") or 1))
+    return payload * repeat
+
+
+def build_void_ticket(section: dict, invoice: dict, lines: list[dict], *, copies: int | None = None) -> bytes:
+    """Render a kitchen cancellation ticket for the given voided lines."""
+    b = _Builder(
+        encoding=str(section.get("encoding") or "cp1256"),
+        width_mm=int(section.get("paper_width_mm") or 80),
+    )
+    b.init()
+    b.align(1)
+    b.size(double_width=True, double_height=True)
+    b.bold(True)
+    b.line("إلغاء")
+    b.size()
+    b.bold(False)
+    b.line(str(section.get("name") or "قسم"))
+    b.align(0)
+    b.divider("=")
+    ref = str(invoice.get("reference") or "").strip()
+    b.line(f"فاتورة: #{invoice.get('id')}" + (f"  ({ref})" if ref else ""))
+    b.divider("-")
+    for line in lines:
+        name = str(line.get("name") or line.get("description") or "").strip()
+        b.bold(True)
+        b.wrapped(f"إلغاء {_fmt_qty(line.get('quantity'))} × {name}")
+        b.bold(False)
+    b.divider("=")
     b.feed(2)
     b.cut()
 

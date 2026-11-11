@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 from nano_offline.core import escpos
 from nano_offline.core.database import Database
@@ -87,13 +88,88 @@ class SectionPrintService:
         """Send only the lines added since the order was last sent to kitchen."""
         return self.enqueue_invoice(int(invoice_id), only_new=True)
 
+    def enqueue_void_diffs(
+        self,
+        invoice_id: int,
+        before_lines: list[dict],
+        after_lines: list[dict],
+        *,
+        dispatch: bool | None = None,
+    ) -> int:
+        """Print a cancellation ticket for lines removed/reduced on an edit.
+
+        Lines are matched by (item, description); a quantity drop on any
+        match is voided. Only sections with a configured printer receive one.
+        """
+        invoice = self._invoice_header(invoice_id)
+        if invoice is None or str(invoice.get("type")) != "sale":
+            return 0
+
+        def key_of(line: dict) -> tuple:
+            return (line.get("item_id"), str(line.get("description") or ""))
+
+        old_qty: dict[tuple, float] = {}
+        for line in before_lines:
+            old_qty[key_of(line)] = old_qty.get(key_of(line), 0.0) + float(line.get("quantity") or 0)
+        new_qty: dict[tuple, float] = {}
+        for line in after_lines:
+            new_qty[key_of(line)] = new_qty.get(key_of(line), 0.0) + float(line.get("quantity") or 0)
+        voids = [
+            (item_key, old_qty[item_key] - new_qty.get(item_key, 0.0))
+            for item_key in old_qty
+            if old_qty[item_key] - new_qty.get(item_key, 0.0) > 1e-9
+        ]
+        if not voids:
+            return 0
+
+        grouped: dict[int, list[dict]] = {}
+        for (item_id, description), qty in voids:
+            section_id = self.sections.section_for_item(item_id) if item_id is not None else None
+            if section_id is None:
+                continue
+            section = self.sections.get(section_id)
+            if section is None or not int(section.get("active") or 0):
+                continue
+            if not str(section.get("printer_host") or "").strip():
+                continue
+            grouped.setdefault(section_id, []).append({"name": description, "quantity": qty})
+
+        enqueued = 0
+        stamp = int(time.time() * 1000)
+        for section_id, lines in grouped.items():
+            section = self.sections.get(section_id)
+            if section is None:
+                continue
+            try:
+                payload = escpos.build_void_ticket(section, invoice, lines)
+            except Exception:
+                _LOG.exception("failed to build void ticket for section %s", section_id)
+                continue
+            if self.sections.enqueue_job(
+                invoice_id=int(invoice_id),
+                section_id=int(section_id),
+                printer_host=str(section.get("printer_host")),
+                printer_port=int(section.get("printer_port") or 9100),
+                payload=payload,
+                dedupe_key=f"invoice:{int(invoice_id)}:void:{int(section_id)}:{stamp}",
+            ):
+                enqueued += 1
+        should_dispatch = self.auto_dispatch if dispatch is None else dispatch
+        if enqueued and should_dispatch:
+            self.dispatch_async()
+        return enqueued
+
     # ---- dispatch ------------------------------------------------------ #
 
     def dispatch_pending(self, limit: int = 50, *, sender=None) -> dict:
         """Send pending jobs in order. ``sender`` is injectable for tests."""
         send = sender or escpos.send_bytes
         result = {"sent": 0, "failed": 0, "pending": 0}
-        for job in self.sections.pending_jobs(limit=limit):
+        attempted: set[int] = set()
+
+        def _attempt(job: dict) -> None:
+            job_id = int(job["id"])
+            attempted.add(job_id)
             try:
                 send(
                     str(job["printer_host"]),
@@ -103,12 +179,43 @@ class SectionPrintService:
             except Exception as exc:  # noqa: BLE001 - any network error is a retry
                 attempts = int(job.get("attempts") or 0) + 1
                 final = attempts >= MAX_ATTEMPTS
-                self.sections.mark_failed(int(job["id"]), str(exc), final=final)
+                self.sections.mark_failed(job_id, str(exc), final=final)
                 result["failed" if final else "pending"] += 1
+                if final:
+                    self._try_fallback(job)
             else:
-                self.sections.mark_sent(int(job["id"]))
+                self.sections.mark_sent(job_id)
                 result["sent"] += 1
+
+        for job in self.sections.pending_jobs(limit=limit):
+            _attempt(job)
+        # A job that just permanently failed may have queued its section's
+        # fallback printer above; send those now without re-attempting any job
+        # already handled in this pass.
+        for job in self.sections.pending_jobs(limit=limit):
+            if int(job["id"]) in attempted:
+                continue
+            _attempt(job)
         return result
+
+    def _try_fallback(self, job: dict) -> None:
+        """Re-queue a permanently failed job to its section's fallback printer."""
+        if ":fallback:" in str(job.get("dedupe_key") or ""):
+            return  # never chain fallbacks (prevents loops)
+        fallback = self.sections.fallback_for(job.get("section_id"))
+        if fallback is None or not int(fallback.get("active") or 0):
+            return
+        host = str(fallback.get("printer_host") or "").strip()
+        if not host:
+            return
+        self.sections.enqueue_job(
+            invoice_id=int(job["invoice_id"]),
+            section_id=int(fallback["id"]),
+            printer_host=host,
+            printer_port=int(fallback.get("printer_port") or 9100),
+            payload=bytes(job["payload"]),
+            dedupe_key=f"invoice:{int(job['invoice_id'])}:fallback:{int(job['id'])}",
+        )
 
     def dispatch_async(self) -> None:
         """Drain the queue on a daemon thread (one drain at a time)."""

@@ -41,21 +41,23 @@ class SectionRepository:
         encoding: str = "cp1256",
         active: bool = True,
         sort_order: int = 0,
+        fallback_section_id: int | None = None,
     ) -> int:
         values = self._validate(
             name=name, kind=kind, printer_host=printer_host, printer_port=printer_port,
             paper_width_mm=paper_width_mm, copies=copies, encoding=encoding, active=active,
-            sort_order=sort_order,
+            sort_order=sort_order, fallback_section_id=fallback_section_id,
         )
         with self.db.transaction() as conn:
             cur = conn.execute(
                 """INSERT INTO sections(
-                       name,kind,printer_host,printer_port,paper_width_mm,copies,encoding,active,sort_order
-                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                       name,kind,printer_host,printer_port,paper_width_mm,copies,encoding,active,sort_order,
+                       fallback_section_id
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     values["name"], values["kind"], values["printer_host"], values["printer_port"],
                     values["paper_width_mm"], values["copies"], values["encoding"],
-                    1 if values["active"] else 0, values["sort_order"],
+                    1 if values["active"] else 0, values["sort_order"], values["fallback_section_id"],
                 ),
             )
             section_id = int(cur.lastrowid)
@@ -78,22 +80,27 @@ class SectionRepository:
         encoding: str = "cp1256",
         active: bool = True,
         sort_order: int = 0,
+        fallback_section_id: int | None = None,
     ) -> None:
         values = self._validate(
             name=name, kind=kind, printer_host=printer_host, printer_port=printer_port,
             paper_width_mm=paper_width_mm, copies=copies, encoding=encoding, active=active,
-            sort_order=sort_order,
+            sort_order=sort_order, fallback_section_id=fallback_section_id,
         )
         with self.db.transaction() as conn:
             if conn.execute("SELECT 1 FROM sections WHERE id=?", (int(section_id),)).fetchone() is None:
                 raise ValueError("القسم غير موجود")
+            if values["fallback_section_id"] == int(section_id):
+                raise ValueError("لا يمكن أن يكون القسم بديلًا لنفسه")
             conn.execute(
                 """UPDATE sections SET name=?,kind=?,printer_host=?,printer_port=?,paper_width_mm=?,
-                       copies=?,encoding=?,active=?,sort_order=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                       copies=?,encoding=?,active=?,sort_order=?,fallback_section_id=?,
+                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 (
                     values["name"], values["kind"], values["printer_host"], values["printer_port"],
                     values["paper_width_mm"], values["copies"], values["encoding"],
-                    1 if values["active"] else 0, values["sort_order"], int(section_id),
+                    1 if values["active"] else 0, values["sort_order"], values["fallback_section_id"],
+                    int(section_id),
                 ),
             )
             conn.execute(
@@ -177,6 +184,19 @@ class SectionRepository:
                 f"UPDATE invoice_lines SET printed_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
                 ids,
             )
+
+    def section_for_item(self, item_id: int) -> int | None:
+        """Resolve an item's print section (item override, then category)."""
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """SELECT COALESCE(it.section_id, c.section_id) AS section_id
+                   FROM items it LEFT JOIN categories c ON c.id=it.category_id
+                   WHERE it.id=?""",
+                (int(item_id),),
+            ).fetchone()
+        if row is None or row["section_id"] is None:
+            return None
+        return int(row["section_id"])
 
     # ---- print queue --------------------------------------------------- #
 
@@ -300,6 +320,19 @@ class SectionRepository:
             result[str(row["status"])] = int(row["c"])
         return result
 
+    def fallback_for(self, section_id: int | None) -> dict | None:
+        """Return the configured fallback section for a section, if any."""
+        if section_id is None:
+            return None
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT * FROM sections WHERE id=?", (int(section_id),)).fetchone()
+            if row is None or row["fallback_section_id"] is None:
+                return None
+            fb = conn.execute(
+                "SELECT * FROM sections WHERE id=?", (int(row["fallback_section_id"]),)
+            ).fetchone()
+            return dict(fb) if fb else None
+
     @staticmethod
     def _validate(
         *,
@@ -312,6 +345,7 @@ class SectionRepository:
         encoding: str,
         active: bool,
         sort_order: int,
+        fallback_section_id: int | None = None,
     ) -> dict:
         name = (name or "").strip()
         if not name:
@@ -342,4 +376,5 @@ class SectionRepository:
             "encoding": (encoding or "cp1256").strip().lower() or "cp1256",
             "active": bool(active),
             "sort_order": order,
+            "fallback_section_id": int(fallback_section_id) if fallback_section_id not in (None, "") else None,
         }

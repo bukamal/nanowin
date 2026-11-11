@@ -324,3 +324,109 @@ def test_split_open_order_moves_selected_lines(tmp_path):
     assert len(moved["lines"]) == 1
     assert moved["reference"].endswith("تقسيم")
     assert {o["id"] for o in ctx.invoices.open_sale_orders()} == {src, new_id}
+
+
+def test_editing_open_order_prints_void_ticket(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    tea = ctx.items.create(name="شاي", item_type="مخزون", quantity=100, purchase_price=1, selling_price=2, section_id=sid)
+    cake = ctx.items.create(name="كعك", item_type="مخزون", quantity=100, purchase_price=2, selling_price=6, section_id=sid)
+
+    inv = _open_order(ctx, [(tea, "شاي", 2, 2), (cake, "كعك", 3, 6)], "طاولة 5")
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: None)
+    assert ctx.sections.counts()["pending"] == 0
+
+    customer_id = int(ctx.invoices.get_invoice(inv)["customer_id"])
+    # Remove the cake line -> one void ticket for the kitchen.
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="شاي", item_id=tea, quantity=2, unit_price=2)],
+        customer_id=customer_id,
+        paid_amount=0,
+        reference="طاولة 5",
+    )
+    pending = ctx.sections.pending_jobs()
+    assert len(pending) == 1
+    payload = bytes(pending[0]["payload"])
+    assert "إلغاء".encode("cp1256") in payload
+    assert "كعك".encode("cp1256") in payload
+
+
+def test_editing_open_order_voids_only_reduced_quantity(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    tea = ctx.items.create(name="شاي", item_type="مخزون", quantity=100, purchase_price=1, selling_price=2, section_id=sid)
+
+    inv = _open_order(ctx, [(tea, "شاي", 5, 2)], "طاولة 6")
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: None)
+
+    customer_id = int(ctx.invoices.get_invoice(inv)["customer_id"])
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="شاي", item_id=tea, quantity=3, unit_price=2)],
+        customer_id=customer_id,
+        paid_amount=0,
+        reference="طاولة 6",
+    )
+    pending = ctx.sections.pending_jobs()
+    assert len(pending) == 1
+    assert "إلغاء".encode("cp1256") in bytes(pending[0]["payload"])
+
+    # No further change -> no additional void.
+    ctx.section_print.dispatch_pending(sender=lambda h, p, d: None)
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="شاي", item_id=tea, quantity=3, unit_price=2)],
+        customer_id=customer_id,
+        paid_amount=0,
+        reference="طاولة 6",
+    )
+    assert ctx.sections.pending_jobs() == []
+
+
+def test_sales_by_section_date_filter(tmp_path):
+    ctx = _ctx(tmp_path)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="شوربة", item_type="مخزون", quantity=100, purchase_price=1, selling_price=5, section_id=sid)
+    ctx.invoices.create_invoice(
+        invoice_type="sale",
+        invoice_date="2026-01-15",
+        lines=[InvoiceLineInput(description="شوربة", item_id=item, quantity=2, unit_price=5)],
+        paid_amount=10,
+    )
+
+    inside = ctx.sections.sales_by_section(date_from="2026-01-01", date_to="2026-01-31")
+    assert sum(r["revenue"] for r in inside) == pytest.approx(10)
+    outside = ctx.sections.sales_by_section(date_from="2026-02-01", date_to="2026-02-28")
+    assert outside == []
+
+
+def test_section_fallback_printer_on_repeated_failure(tmp_path):
+    ctx = _ctx(tmp_path)
+    primary = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    backup = ctx.sections.create(name="الاحتياطي", printer_host="10.0.0.2")
+    ctx.sections.update(primary, name="المطبخ", printer_host="10.0.0.1", fallback_section_id=backup)
+    assert ctx.sections.fallback_for(primary)["id"] == backup
+
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=primary)
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+
+    reached: list[str] = []
+
+    def sender(host, port, data):
+        if host == "10.0.0.1":
+            raise OSError("primary printer down")
+        reached.append(host)
+
+    for _ in range(3):
+        ctx.section_print.dispatch_pending(sender=sender)
+
+    assert "10.0.0.2" in reached
+    counts = ctx.sections.counts()
+    assert counts["failed"] == 1   # the primary job is recorded as failed
+    assert counts["sent"] == 1     # the fallback delivery succeeded
