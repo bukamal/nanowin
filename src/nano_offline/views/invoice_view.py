@@ -291,6 +291,18 @@ class InvoiceCenter:
                 warnings.append(result.get("message") or "بيع تحت التكلفة")
         return warnings
 
+    @staticmethod
+    def _selectable_items(items: list[dict], invoice_type: str | None) -> list[dict]:
+        """Items allowed to appear on an invoice of ``invoice_type``.
+
+        Composite items are sellable recipes and can never be purchased (the
+        service layer rejects it), so they are hidden from purchase pickers
+        while staying available for sales.
+        """
+        if (invoice_type or "sale") == "purchase":
+            return [i for i in items if not int(i.get("is_composite") or 0)]
+        return items
+
     def _show_center_error(self, exc: Exception) -> None:
         """Render a recoverable error state instead of leaving a gray Flutter ErrorWidget."""
         if self.on_title_change:
@@ -1410,7 +1422,7 @@ class InvoiceCenter:
             hidden_keys=line_visibility.hidden_keys,
             picker_options=lambda _col, _row: [
                 (int(item_row["id"]), item_row["name"])
-                for item_row in items
+                for item_row in self._selectable_items(items, type_dd.value)
             ],
             on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
             formatter=row_formatter,
@@ -2243,7 +2255,7 @@ class InvoiceCenter:
             picker_options=lambda col, row: (
                 [
                     (int(item_row["id"]), item_row["name"])
-                    for item_row in items
+                    for item_row in self._selectable_items(items, type_dd.value)
                 ]
                 if col.key == "item"
                 else [
@@ -3279,7 +3291,7 @@ class InvoiceCenter:
             picker_options=lambda col, row: (
                 [
                     (int(item_row["id"]), item_row["name"])
-                    for item_row in items
+                    for item_row in self._selectable_items(items, type_dd.value)
                 ]
                 if col.key == "item"
                 else [
@@ -3667,7 +3679,7 @@ class InvoiceCenter:
             }
             item_dd = SearchSelect(
                 label="المادة / الخدمة",
-                choices=[(str(i["id"]), i["name"]) for i in items],
+                choices=[(str(i["id"]), i["name"]) for i in self._selectable_items(items, type_dd.value)],
                 value=str(initial["item_id"]) if initial.get("item_id") else None,
             )
             description = SelectAllTextField(label="البيان", value=initial.get("description") or "")
@@ -3970,7 +3982,7 @@ class InvoiceCenter:
                 center_cells=True,
                 picker_options=lambda _col, _row: [
                     (int(item_row["id"]), item_row["name"])
-                    for item_row in items
+                    for item_row in self._selectable_items(items, type_dd.value or self.invoice_type)
                 ],
                 on_cell_commit=lambda index, key, value: commit_bulk_cell(index, key, value),
                 on_enter=lambda: apply_lines(),
