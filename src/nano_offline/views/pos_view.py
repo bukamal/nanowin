@@ -1983,24 +1983,18 @@ class POSCenter:
             expand=True,
         )
 
-        # Restaurant mode: a tables strip above the body lists open orders so
-        # the cashier can load a table's order into the cart directly.
+        # Restaurant mode: a strip above the body lists every table (free or
+        # occupied) so the cashier can pick a table or resume its order.
         tables_row = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
         order_indicator = ft.Text("", size=11, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK, visible=False)
 
-        def refresh_tables() -> None:
-            try:
-                orders = self.ctx.invoices.open_sale_orders(limit=30)
-            except Exception:
-                orders = []
-            cards: list[ft.Control] = []
-            for order in orders:
-                label = str(order.get("reference") or "").strip() or f"طاولة #{order['id']}"
-                cards.append(ft.Container(
+        def _table_chip(label: str, *, order: dict | None, name: str | None) -> ft.Control:
+            if order is not None:
+                return ft.Container(
                     ft.Column(
                         [
                             ft.Text(label, size=12, weight=ft.FontWeight.W_600),
-                            ft.Text(self._fmt(float(order.get("remaining_amount") or 0)), size=10, color=Colors.DANGER),
+                            ft.Text(self.money(float(order.get("remaining_amount") or 0)), size=10, color=Colors.DANGER),
                         ],
                         spacing=0, tight=True,
                     ),
@@ -2010,10 +2004,51 @@ class POSCenter:
                     border_radius=Radius.MD,
                     ink=True,
                     on_click=lambda _, i=int(order["id"]): _load_order(i),
-                ))
+                )
+            return ft.Container(
+                ft.Column(
+                    [
+                        ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                        ft.Text("متاحة", size=10, color=Colors.TEXT_SECONDARY),
+                    ],
+                    spacing=0, tight=True,
+                ),
+                padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                bgcolor=Colors.BACKGROUND_ALT,
+                border=ft.border.all(1, Colors.BORDER),
+                border_radius=Radius.MD,
+                ink=True,
+                on_click=lambda _, n=name or label: _set_pending_table(n),
+            )
+
+        def refresh_tables() -> None:
+            try:
+                table_list = self.ctx.tables.list(active_only=True)
+            except Exception:
+                table_list = []
+            try:
+                orders = self.ctx.invoices.open_sale_orders(limit=80)
+            except Exception:
+                orders = []
+            known = {str(t.get("name")) for t in table_list}
+            by_ref: dict[str, dict] = {}
+            loose: list[dict] = []
+            for order in orders:
+                ref = str(order.get("reference") or "").strip()
+                if ref and ref in known:
+                    by_ref[ref] = order
+                else:
+                    loose.append(order)
+            cards: list[ft.Control] = []
+            for table in table_list:
+                name = str(table.get("name"))
+                cards.append(_table_chip(name, order=by_ref.get(name), name=name))
+            for order in loose:
+                label = str(order.get("reference") or "").strip() or f"طاولة #{order['id']}"
+                cards.append(_table_chip(label, order=order, name=None))
             if not cards:
                 cards.append(ft.Text(
-                    "لا توجد طلبات مفتوحة — أضف أصنافًا ثم «حفظ كطلب».",
+                    "لا توجد طاولات — أضِفها من الإدارة ← المطعم ← الطاولات.",
                     size=11, color=Colors.TEXT_SECONDARY,
                 ))
             tables_row.controls = cards
@@ -2058,7 +2093,7 @@ class POSCenter:
                             ft.TextButton(
                                 "لوحة الطاولات", icon=ft.Icons.APPS_ROUNDED,
                                 on_click=lambda _=None: open_tables_board(
-                                    self.page, self.ctx, self.notify, self._fmt,
+                                    self.page, self.ctx, self.notify, self.money,
                                     on_open_order=lambda i: _load_order(i) if i is not None else None,
                                     on_free_table=_set_pending_table,
                                 ),

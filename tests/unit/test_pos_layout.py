@@ -151,3 +151,25 @@ def test_recent_items_stay_collapsed_until_requested():
 
     pos._recent_toggle.on_click(None)
     assert pos._recent_row.visible is True
+
+
+def test_pos_builds_in_restaurant_mode_with_tables():
+    """Regression: restaurant-mode POS must build (tables strip + board hook)
+    without raising -- a bad self._fmt reference previously crashed the whole
+    screen ('POSCenter object has no attribute _fmt')."""
+    from nano_offline.core import restaurant_settings
+
+    db_path = Path(tempfile.mkdtemp()) / "pos_restaurant.db"
+    ctx = AppContext.create(db_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    unit_id = ctx.definitions.create_unit("قطعة", "ق")
+    ctx.items.create(name="برغر", item_type="مخزون", selling_price=5, quantity=10, base_unit_id=unit_id)
+    ctx.tables.create(name="1", area="صالة")
+
+    page = _FakePage(1200)
+    pos = POSCenter(page, ctx, ft.Container())
+    pos.show_center()
+    assert pos._pos_wide is True
+    # The tables strip is inserted only in restaurant mode.
+    main_column = pos.content.content.controls[0]
+    assert len(main_column.controls) == 3  # header + tables strip + body

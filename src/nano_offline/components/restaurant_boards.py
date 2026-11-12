@@ -266,7 +266,11 @@ def open_tables_board(
                     on_close=close,
                     trailing=ft.IconButton(icon=ft.Icons.REFRESH, tooltip="تحديث", on_click=lambda _=None: render()),
                 ),
-                ft.Row([ft.FilledButton("طلب جديد", icon=ft.Icons.ADD, on_click=new_order)]),
+                *(
+                    [ft.Row([ft.FilledButton("طلب جديد", icon=ft.Icons.ADD, on_click=new_order)])]
+                    if callable(on_open_order)
+                    else []
+                ),
                 ft.Container(
                     ft.Column([areas_row], scroll=ft.ScrollMode.AUTO),
                     expand=True,
