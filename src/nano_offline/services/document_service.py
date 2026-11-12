@@ -751,6 +751,47 @@ table th, table td {{ text-align:center; }}
         doc_number = f"سند #{voucher_id}" if voucher_id is not None else title
         return self._shell(title, title, body, doc_number=doc_number)
 
+    def section_ticket_preview_html(
+        self,
+        section: dict,
+        lines: list[dict],
+        *,
+        reference: str = "(معاينة)",
+        invoice_no: int | str = "—",
+    ) -> str:
+        """A thermal-style HTML preview of a section's station ticket.
+
+        Purely for on-screen preview before printing -- the real ticket is
+        ESC/POS bytes (see core/escpos). Prices are intentionally omitted,
+        matching what the kitchen actually receives.
+        """
+        name = self._e(section.get("name") or "قسم")
+        rows = "".join(
+            f'<div class="ln">إلغاء {self._e(line.get("quantity"))} × {self._e(line.get("name"))}</div>'
+            if line.get("void")
+            else f'<div class="ln">{self._e(line.get("quantity"))} × {self._e(line.get("name"))}</div>'
+            for line in lines
+        )
+        subject = str(section.get("name") or "قسم")
+        return f"""<!doctype html><html dir="rtl"><head><meta charset="utf-8">
+<style>
+  body {{ font-family: monospace, "Courier New"; padding: 8px; color:#000; background:#fff; }}
+  .h {{ text-align: center; font-weight: bold; font-size: 18px; }}
+  .sub {{ text-align: center; font-size: 12px; color:#333; }}
+  .ln {{ font-size: 14px; margin: 4px 0; font-weight: 600; }}
+  .div {{ border-top: 1px dashed #000; margin: 6px 0; }}
+  .foot {{ text-align: center; font-weight: bold; margin-top: 6px; }}
+</style></head><body>
+<div class="h">{name}</div>
+<div class="sub">تذكرة تحضير — بلا أسعار</div>
+<div class="div"></div>
+<div class="ln">فاتورة: #{self._e(invoice_no)}  {self._e(reference)}</div>
+<div class="div"></div>
+{rows or '<div class="ln">—</div>'}
+<div class="div"></div>
+<div class="foot">تحضير — {self._e(subject)}</div>
+</body></html>"""
+
     def barcode_labels_html(
         self,
         labels: list[dict],

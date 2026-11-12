@@ -508,3 +508,17 @@ def test_device_printer_override_takes_precedence(tmp_path):
     _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 8ج")
     ctx.section_print.dispatch_pending(sender=lambda h, p, d: reached.append((h, p)))
     assert reached == [("10.0.0.1", 9100)]
+
+
+def test_section_ticket_preview_html(tmp_path):
+    ctx = _ctx(tmp_path)
+    html = ctx.documents.section_ticket_preview_html(
+        {"name": "المطبخ", "paper_width_mm": 80},
+        [{"name": "برغر", "quantity": 2}, {"name": "برغر", "quantity": 1, "void": True}],
+        reference="طاولة 1",
+        invoice_no=5,
+    )
+    assert "المطبخ" in html and "برغر" in html
+    assert "طاولة 1" in html and "#5" in html
+    assert "إلغاء" in html            # void line marked
+    assert "$" not in html and "سعر" not in html  # prices intentionally omitted

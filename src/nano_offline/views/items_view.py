@@ -4003,6 +4003,27 @@ class ItemsCenter:
                         notify(f"تعذرت الطباعة: {exc}", kind="error")
                 page.run_task(_run)
 
+            def preview_ticket(section: dict) -> None:
+                async def _run() -> None:
+                    if self.native_files is None:
+                        notify("المعاينة غير مهيأة في هذا البناء", kind="error")
+                        return
+                    html = ctx.documents.section_ticket_preview_html(
+                        section, [{"name": "مادة تجريبية", "quantity": 1}]
+                    )
+                    try:
+                        result = await preview_document(
+                            self.native_files,
+                            html,
+                            name="nano-section-ticket",
+                            layout="roll",
+                            roll_width_mm=int(section.get("paper_width_mm") or 80),
+                        )
+                        notify("تم فتح المعاينة في المتصفح." if result == "browser" else "تم تجهيز معاينة PDF.")
+                    except Exception as exc:
+                        notify(f"تعذرت المعاينة: {exc}", kind="error")
+                page.run_task(_run)
+
             def _section_card(section: dict) -> ft.Control:
                 host = str(section.get("printer_host") or "").strip()
                 target = f"{host}:{section.get('printer_port') or 9100}" if host else "بلا طابعة"
@@ -4031,6 +4052,7 @@ class ItemsCenter:
                                 on_change=lambda e, sid=int(section["id"]), sec=section: toggle_active(sid, sec, e.control.value),
                             ),
                             inline_icon_button(ft.Icons.SETTINGS_ETHERNET, lambda _, sec=section: open_override(sec), tooltip="تجاوز طابعة هذا الجهاز"),
+                            inline_icon_button(ft.Icons.VISIBILITY_OUTLINED, lambda _, sec=section: preview_ticket(sec), tooltip="معاينة التذكرة"),
                             inline_icon_button(ft.Icons.EDIT_OUTLINED, lambda _, sec=section: open_form(sec), tooltip="تعديل"),
                             inline_icon_button(ft.Icons.CONTACT_PHONE_OUTLINED, lambda _, sec=section: test_print(sec), tooltip="طباعة تجريبية", color=Colors.SUCCESS),
                             inline_icon_button(ft.Icons.DELETE_OUTLINE, lambda _, sec=section: confirm_delete(sec), tooltip="حذف", color=Colors.DANGER),
