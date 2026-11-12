@@ -247,6 +247,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         on_fullscreen_enter=lambda: pos_fullscreen_enter(),
         on_fullscreen_exit=lambda: pos_fullscreen_exit(),
         on_toggle_fullscreen=lambda: pos_toggle_fullscreen(),
+        on_open_invoice=invoice_center.show_editor,
     )
     # set_context_actions is defined a little further below -- wrap it in a
     # late-bound lambda so the name resolves when finance publishes its

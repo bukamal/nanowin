@@ -25,6 +25,7 @@ from nano_offline.core import currency
 from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_margin
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
+from nano_offline.core import restaurant_settings
 from nano_offline.core.units import is_weighted_unit
 from nano_offline.core.platform_capabilities import supports
 from nano_offline.core import sound as sound_engine
@@ -110,6 +111,7 @@ class POSCenter:
         on_fullscreen_enter=None,
         on_fullscreen_exit=None,
         on_toggle_fullscreen=None,
+        on_open_invoice=None,
     ):
         self.page = page
         self.ctx = ctx
@@ -127,6 +129,9 @@ class POSCenter:
         # Toggles the real OS fullscreen (taskbar/title bar) without leaving
         # POS; returns the new state so the header button can update its icon.
         self.on_toggle_fullscreen = on_toggle_fullscreen
+        # Restaurant mode only: opens an existing open order (table) in the
+        # invoice editor, reusing the full order-editing surface.
+        self.on_open_invoice = on_open_invoice
 
         # Cart lines keyed by item_id -> {"item": row, "qty": float}.
         # A dict (not a list) means "scan again" is a single lookup+bump,
@@ -1323,6 +1328,86 @@ class POSCenter:
         checkout_btn.on_click = open_payment_sheet
         self._checkout_btn = checkout_btn
 
+        def _commit_order(reference: str | None = None) -> None:
+            """Restaurant mode: send the cart as an unpaid open order."""
+            rows_list = [self.cart[key] for key in self.cart_order if key in self.cart]
+            lines = [
+                InvoiceLineInput(
+                    description=str(row["item"]["name"]),
+                    item_id=int(row["item"]["id"]),
+                    quantity=float(row["qty"]),
+                    unit_price=_cart_line_price(row),
+                    unit_id=row.get("unit_id"),
+                    conversion_factor=float(row.get("factor") or 1),
+                )
+                for row in rows_list
+            ]
+            discount_lines = [
+                f"{r['item']['name']} {self._qty(r.get('discount_pct') or 0)}%"
+                for r in rows_list if float(r.get("discount_pct") or 0) > 0
+            ]
+            sale_notes = ("خصومات — " + "، ".join(discount_lines[:8])) if discount_lines else None
+            try:
+                invoice_id = self.ctx.invoices.create_invoice(
+                    invoice_type="sale",
+                    lines=lines,
+                    customer_id=None,
+                    paid_amount=0,
+                    reference=(reference or "").strip() or None,
+                    notes=sale_notes,
+                    allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
+                )
+            except Exception as exc:
+                self.notify(str(exc), kind="error", sound_kind="barcode_error")
+                return
+            self._last_invoice_id = invoice_id
+            self._undo_state = None
+            clear_cart(undoable=False)
+            refresh_cart()
+            refresh_today_summary()
+            try:
+                if self.on_saved:
+                    self.on_saved()
+            except Exception:
+                pass
+            self.notify(f"تم إرسال الطلب للمطبخ — طلب #{invoice_id}", kind="success")
+            try:
+                refresh_tables()
+            except Exception:
+                pass
+
+        def save_as_order(_=None):
+            if not self.cart_order:
+                self.notify("السلة فارغة — أضف أصنافًا أولًا", kind="warning")
+                return
+            dialog = ft.AlertDialog(modal=True)
+            name_field = SelectAllTextField(label="اسم/رقم الطاولة (اختياري)")
+
+            def do_save(_e=None) -> None:
+                self.page.close(dialog)
+                _commit_order(name_field.value)
+
+            dialog.title = ft.Text("حفظ كطلب (تحضير)")
+            dialog.content = ft.Column(
+                [
+                    ft.Text(
+                        "سيُحفظ الطلب غير مدفوع وتُطبع تذاكر الأقسام فورًا. اسم الطاولة يُستخدم لتمييز الطلب.",
+                        size=11, color=Colors.TEXT_SECONDARY,
+                    ),
+                    name_field,
+                ],
+                spacing=8, tight=True, width=360,
+            )
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=lambda _=None: self.page.close(dialog)),
+                ft.FilledButton("حفظ وإرسال للمطبخ", icon=ft.Icons.SEND, on_click=do_save),
+            ]
+            self.page.open(dialog)
+
+        order_btn = hero_button("حفظ كطلب (تحضير)", icon=ft.Icons.RECEIPT_LONG_OUTLINED, on_click=save_as_order)
+        order_btn.visible = restaurant_settings.enabled(self.ctx.settings)
+        order_btn.expand = True
+
         def customer_changed(_=None):
             self.customer_id = int(customer_dd.value) if customer_dd.value else None
             # A shortfall's meaning (blocking warning vs. valid credit sale)
@@ -1504,7 +1589,7 @@ class POSCenter:
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     total_text,
-                    ft.Row([checkout_btn], spacing=0),
+                    ft.Row([order_btn, checkout_btn], spacing=8),
                 ],
                 spacing=6,
             ),
@@ -1751,9 +1836,75 @@ class POSCenter:
             expand=True,
         )
 
+        # Restaurant mode: a tables strip above the body lists open orders so
+        # the cashier can jump into an open table from the POS screen.
+        tables_row = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
+
+        def refresh_tables() -> None:
+            try:
+                orders = self.ctx.invoices.open_sale_orders(limit=30)
+            except Exception:
+                orders = []
+            cards: list[ft.Control] = []
+            for order in orders:
+                label = str(order.get("reference") or "").strip() or f"طاولة #{order['id']}"
+                cards.append(ft.Container(
+                    ft.Column(
+                        [
+                            ft.Text(label, size=12, weight=ft.FontWeight.W_600),
+                            ft.Text(self._fmt(float(order.get("remaining_amount") or 0)), size=10, color=Colors.DANGER),
+                        ],
+                        spacing=0, tight=True,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                    bgcolor=Colors.WARNING_BG,
+                    border=ft.border.all(1, Colors.WARNING),
+                    border_radius=Radius.MD,
+                    ink=True,
+                    on_click=lambda _, i=int(order["id"]): (
+                        self.on_open_invoice(i) if callable(self.on_open_invoice)
+                        else self.notify("افتح الطلب من شاشة الفواتير")
+                    ),
+                ))
+            if not cards:
+                cards.append(ft.Text(
+                    "لا توجد طلبات مفتوحة — أضف أصنافًا ثم «حفظ كطلب».",
+                    size=11, color=Colors.TEXT_SECONDARY,
+                ))
+            tables_row.controls = cards
+            try:
+                tables_row.update()
+            except Exception:
+                pass
+
+        tables_strip = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=16, color=Colors.PRIMARY),
+                            ft.Text("الطلبات المفتوحة (الطاولات)", size=12, weight=ft.FontWeight.W_600),
+                            ft.Container(expand=True),
+                            ft.IconButton(
+                                icon=ft.Icons.REFRESH, tooltip="تحديث الطاولات",
+                                on_click=lambda _=None: refresh_tables(), icon_size=18,
+                            ),
+                        ],
+                        spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    tables_row,
+                ],
+                spacing=4, tight=True,
+            ),
+            padding=ft.padding.only(left=18, right=18, top=8, bottom=4),
+            visible=restaurant_settings.enabled(self.ctx.settings),
+        )
+        refresh_tables()
+
         main_column = ft.Column(
             [
                 pos_header,
+                *([tables_strip] if restaurant_settings.enabled(self.ctx.settings) else []),
                 body,
             ],
             spacing=0,

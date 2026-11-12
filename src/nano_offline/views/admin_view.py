@@ -14,6 +14,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, DataGrid, GridColumn, SmartDateField
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
+from nano_offline.components.sections_sheet import open_sections_sheet
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -109,6 +110,7 @@ class AdminCenter:
             ("باركود", ft.Icons.QR_CODE_2_OUTLINED),
             ("الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED),
             ("البيع", ft.Icons.POINT_OF_SALE_OUTLINED),
+            ("المطعم", ft.Icons.RESTAURANT_OUTLINED),
             ("الجرد", ft.Icons.FACT_CHECK_OUTLINED),
             ("الصوت", ft.Icons.VOLUME_UP_OUTLINED),
             ("التقارير", ft.Icons.BAR_CHART_OUTLINED),
@@ -2743,6 +2745,33 @@ class AdminCenter:
         _render_api_status()
 
         section_panels: dict[str, ft.Container] = {
+            "restaurant": self._section(
+                "المطعم والطباعة",
+                [
+                    ft.Text(
+                        "شغّل وضع المطاعم، وأدر الأقسام والطابعات الشبكية، وراقب طابور الطباعة والطلبات المفتوحة. "
+                        "أسند كل مادة إلى قسمها من عمود «القسم» في شاشة المواد.",
+                        size=11, color=Colors.TEXT_SECONDARY,
+                    ),
+                    ft.Row(
+                        [
+                            primary_button(
+                                "إدارة الأقسام والطابعات",
+                                icon=ft.Icons.PRINT_OUTLINED,
+                                width=None,
+                                size="md",
+                                on_click=lambda _=None: open_sections_sheet(
+                                    self.page,
+                                    self.ctx,
+                                    self._notify,
+                                    lambda v: currency.format_display_value(v, self.ctx.settings),
+                                    self.native_files,
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
             "appearance": self._section(
                 "المظهر والوضع الليلي",
                 [
@@ -3342,6 +3371,7 @@ class AdminCenter:
             ("barcode", "الباركود", ft.Icons.QR_CODE_2_OUTLINED),
             ("invoice", "الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED),
             ("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE_OUTLINED),
+            ("restaurant", "المطعم", ft.Icons.RESTAURANT_OUTLINED),
             ("lan", "شاشة الأسعار", ft.Icons.STOREFRONT_OUTLINED),
             ("server", "الخادم والعميل", ft.Icons.CLOUD_OUTLINED),
             ("stocktake", "الجرد", ft.Icons.FACT_CHECK_OUTLINED),
