@@ -8,6 +8,7 @@ ago it was sent, so the kitchen can see what is waiting and what is late.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 import flet as ft
@@ -16,6 +17,26 @@ from nano_offline.components import sheets
 from nano_offline.core.theme import Colors, Radius, Shadow
 
 __all__ = ["open_tables_board", "open_kitchen_board"]
+
+#: Boards re-render themselves on this cadence while open.
+AUTO_REFRESH_SECONDS = 15
+
+
+def _start_auto_refresh(page: ft.Page, render, stop: dict) -> None:
+    async def _loop() -> None:
+        while not stop.get("flag"):
+            await asyncio.sleep(AUTO_REFRESH_SECONDS)
+            if stop.get("flag"):
+                break
+            try:
+                render()
+            except Exception:
+                pass
+
+    try:
+        page.run_task(_loop)
+    except Exception:
+        pass
 
 
 def _minutes_since(timestamp) -> float | None:
@@ -81,8 +102,10 @@ def open_tables_board(
     """
     sheet, width = sheets.new_desktop_sheet(page, cap=1000)
     areas_row = ft.Row(spacing=14, run_spacing=14, wrap=True)
+    stop = {"flag": False}
 
     def close(_=None) -> None:
+        stop["flag"] = True
         page.close(sheet)
 
     def _table_card(name: str, order: dict | None) -> ft.Control:
@@ -234,15 +257,19 @@ def open_tables_board(
         height=sheets.sheet_height(page, 0.85),
     )
     render()
+    sheet.on_dismiss = lambda e: stop.__setitem__("flag", True)
     page.open(sheet)
+    _start_auto_refresh(page, render, stop)
 
 
 def open_kitchen_board(page: ft.Page, ctx, notify) -> None:
     """A kitchen display: each open order's lines grouped by section, with age."""
     sheet, width = sheets.new_desktop_sheet(page, cap=1100)
     board = ft.Row(spacing=10, run_spacing=10, wrap=True)
+    stop = {"flag": False}
 
     def close(_=None) -> None:
+        stop["flag"] = True
         page.close(sheet)
 
     def render() -> None:
@@ -335,4 +362,6 @@ def open_kitchen_board(page: ft.Page, ctx, notify) -> None:
         height=sheets.sheet_height(page, 0.85),
     )
     render()
+    sheet.on_dismiss = lambda e: stop.__setitem__("flag", True)
     page.open(sheet)
+    _start_auto_refresh(page, render, stop)
