@@ -26,6 +26,7 @@ from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_marg
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import restaurant_settings
+from nano_offline.components.restaurant_boards import open_tables_board
 from nano_offline.core.units import is_weighted_unit
 from nano_offline.core.platform_capabilities import supports
 from nano_offline.core import sound as sound_engine
@@ -2033,6 +2034,13 @@ class POSCenter:
                             ft.Text("الطلبات المفتوحة (الطاولات)", size=12, weight=ft.FontWeight.W_600),
                             order_indicator,
                             ft.Container(expand=True),
+                            ft.TextButton(
+                                "لوحة الطاولات", icon=ft.Icons.APPS_ROUNDED,
+                                on_click=lambda _=None: open_tables_board(
+                                    self.page, self.ctx, self.notify, self._fmt,
+                                    on_open_order=lambda i: _load_order(i) if i is not None else None,
+                                ),
+                            ),
                             ft.TextButton("طلب جديد", icon=ft.Icons.ADD, on_click=_new_order),
                             ft.IconButton(
                                 icon=ft.Icons.REFRESH, tooltip="تحديث الطاولات",
