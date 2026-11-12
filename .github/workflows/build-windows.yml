@@ -144,9 +144,21 @@ jobs:
         # and verify the compiler component with vswhere before building.
         shell: pwsh
         run: |
-          choco install visualstudio2019buildtools -y --no-progress
-          if ($LASTEXITCODE -ne 0) {
-            throw "Chocolatey could not install Visual Studio 2019 Build Tools"
+          $baseReady = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            Write-Host "Installing Visual Studio 2019 Build Tools (attempt $attempt/4)"
+            choco install visualstudio2019buildtools -y --no-progress
+            if ($LASTEXITCODE -eq 0) {
+              $baseReady = $true
+              break
+            }
+            # community.chocolatey.org intermittently returns 5xx; a short
+            # backoff clears the feed hiccup on the next attempt.
+            Write-Warning "Chocolatey base install failed (exit $LASTEXITCODE); retrying..."
+            if ($attempt -lt 4) { Start-Sleep -Seconds 20 }
+          }
+          if (-not $baseReady) {
+            throw "Chocolatey could not install Visual Studio 2019 Build Tools after 4 attempts"
           }
 
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
