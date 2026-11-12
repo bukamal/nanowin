@@ -1987,6 +1987,7 @@ class POSCenter:
         # occupied) so the cashier can pick a table or resume its order.
         tables_row = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
         order_indicator = ft.Text("", size=11, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK, visible=False)
+        cancel_order_btn = ft.TextButton("إلغاء التعديل", icon=ft.Icons.CLOSE, on_click=_new_order, visible=False)
 
         def _table_chip(label: str, *, order: dict | None, name: str | None) -> ft.Control:
             if order is not None:
@@ -2071,7 +2072,8 @@ class POSCenter:
                 label = self._editing_order_ref or f"#{self._editing_order_id}"
                 order_indicator.value = f"تعديل الطلب: {label}"
             order_indicator.visible = editing
-            for ctrl in (order_btn, update_btn, settle_btn, order_indicator):
+            cancel_order_btn.visible = editing
+            for ctrl in (order_btn, update_btn, settle_btn, order_indicator, cancel_order_btn):
                 try:
                     ctrl.update()
                 except Exception:
@@ -2087,18 +2089,20 @@ class POSCenter:
                     ft.Row(
                         [
                             ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=16, color=Colors.PRIMARY),
-                            ft.Text("الطلبات المفتوحة (الطاولات)", size=12, weight=ft.FontWeight.W_600),
+                            ft.Text("الطاولات", size=12, weight=ft.FontWeight.W_600),
                             order_indicator,
                             ft.Container(expand=True),
-                            ft.TextButton(
-                                "لوحة الطاولات", icon=ft.Icons.APPS_ROUNDED,
+                            cancel_order_btn,
+                            ft.IconButton(
+                                icon=ft.Icons.APPS_ROUNDED, tooltip="لوحة الطاولات",
                                 on_click=lambda _=None: open_tables_board(
                                     self.page, self.ctx, self.notify, self.money,
                                     on_open_order=lambda i: _load_order(i) if i is not None else None,
                                     on_free_table=_set_pending_table,
                                 ),
+                                icon_size=18,
                             ),
-                            ft.TextButton("طلب جديد", icon=ft.Icons.ADD, on_click=_new_order),
+                            ft.IconButton(icon=ft.Icons.ADD, tooltip="طلب جديد", on_click=_new_order, icon_size=18),
                             ft.IconButton(
                                 icon=ft.Icons.REFRESH, tooltip="تحديث الطاولات",
                                 on_click=lambda _=None: refresh_tables(), icon_size=18,

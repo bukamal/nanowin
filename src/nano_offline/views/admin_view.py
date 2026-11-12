@@ -15,7 +15,7 @@ from nano_offline.core.toast import toast
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, DataGrid, GridColumn, SmartDateField
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components.sections_sheet import open_sections_sheet
-from nano_offline.components.restaurant_boards import open_kitchen_board, open_tables_board
+from nano_offline.components.restaurant_boards import open_kitchen_board
 from nano_offline.components.tables_admin import open_tables_admin
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
@@ -34,6 +34,7 @@ from nano_offline.core import lan_settings
 from nano_offline.core import api_settings
 from nano_offline.core import remote_settings
 from nano_offline.core import pos_settings
+from nano_offline.core import restaurant_settings
 from nano_offline.core import backup_settings
 from nano_offline.core import reporting_settings
 from nano_offline.core import sound_settings
@@ -62,6 +63,13 @@ class AdminCenter:
 
     def _notify(self, text: str, kind: str | None = None, sound_kind: str | None = None):
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
+
+    def _toggle_restaurant_mode(self, e) -> None:
+        try:
+            restaurant_settings.set_enabled(self.ctx.settings, bool(e.control.value))
+            self._notify("تم تحديث وضع المطاعم", kind="success")
+        except Exception as exc:
+            self._notify_error(str(exc))
 
     def _notify_error(self, text: str):
         # A SnackBar is easy to miss: it auto-dismisses on its own timer and
@@ -2748,17 +2756,37 @@ class AdminCenter:
 
         section_panels: dict[str, ft.Container] = {
             "restaurant": self._section(
-                "المطعم والطباعة",
+                "المطعم",
                 [
-                    ft.Text(
-                        "شغّل وضع المطاعم، وأدر الأقسام والطابعات الشبكية، وراقب طابور الطباعة والطلبات المفتوحة. "
-                        "أسند كل مادة إلى قسمها من عمود «القسم» في شاشة المواد.",
-                        size=11, color=Colors.TEXT_SECONDARY,
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=18, color=Colors.PRIMARY),
+                                ft.Column(
+                                    [
+                                        ft.Text("وضع المطاعم (الطلب قبل الدفع)", size=13, weight=ft.FontWeight.W_600),
+                                        ft.Text(
+                                            "عند التفعيل: احفظ الطلب غير مدفوع من نقطة البيع وتُطبع تذاكر الأقسام فورًا.",
+                                            size=10, color=Colors.TEXT_SECONDARY,
+                                        ),
+                                    ],
+                                    spacing=1, expand=True, tight=True,
+                                ),
+                                ft.Switch(
+                                    value=restaurant_settings.enabled(self.ctx.settings),
+                                    on_change=self._toggle_restaurant_mode,
+                                ),
+                            ],
+                            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.padding.all(10),
+                        bgcolor=Colors.PRIMARY_BG,
+                        border_radius=Radius.MD,
                     ),
                     ft.Row(
                         [
                             primary_button(
-                                "إدارة الأقسام والطابعات",
+                                "الأقسام والطابعات",
                                 icon=ft.Icons.PRINT_OUTLINED,
                                 width=None,
                                 size="md",
@@ -2771,15 +2799,12 @@ class AdminCenter:
                                 ),
                             ),
                             secondary_button(
-                                "لوحة الطاولات",
+                                "الطاولات",
                                 icon=ft.Icons.APPS_ROUNDED,
                                 width=None,
                                 size="md",
-                                on_click=lambda _=None: open_tables_board(
-                                    self.page,
-                                    self.ctx,
-                                    self._notify,
-                                    lambda v: currency.format_display_value(v, self.ctx.settings),
+                                on_click=lambda _=None: open_tables_admin(
+                                    self.page, self.ctx, self._notify
                                 ),
                             ),
                             secondary_button(
@@ -2788,15 +2813,6 @@ class AdminCenter:
                                 width=None,
                                 size="md",
                                 on_click=lambda _=None: open_kitchen_board(
-                                    self.page, self.ctx, self._notify
-                                ),
-                            ),
-                            secondary_button(
-                                "الطاولات",
-                                icon=ft.Icons.APPS_ROUNDED,
-                                width=None,
-                                size="md",
-                                on_click=lambda _=None: open_tables_admin(
                                     self.page, self.ctx, self._notify
                                 ),
                             ),

@@ -17,7 +17,6 @@ import flet as ft
 from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, sheets
 from nano_offline.components.buttons import primary_button, secondary_button, inline_icon_button
 from nano_offline.components.print_profile import preview_document
-from nano_offline.core import restaurant_settings
 from nano_offline.core.theme import Colors, Radius
 
 __all__ = ["open_sections_sheet"]
@@ -93,37 +92,6 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
 
     def close(_=None) -> None:
         page.close(sheet)
-
-    def _restaurant_mode_control() -> ft.Control:
-        open_count = len(ctx.invoices.open_sale_orders())
-
-        def _toggle(e) -> None:
-            restaurant_settings.set_enabled(ctx.settings, bool(e.control.value))
-            notify("تم تحديث وضع المطاعم")
-
-        return ft.Container(
-            ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=17, color=Colors.PRIMARY),
-                            ft.Text("وضع المطاعم (الطلب قبل الدفع)", size=12, weight=ft.FontWeight.W_600, expand=True),
-                            ft.Switch(value=restaurant_settings.enabled(ctx.settings), on_change=_toggle),
-                        ],
-                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Text(
-                        "عند التفعيل يمكن حفظ فاتورة بيع غير مدفوعة دون اختيار عميل (تُنسب إلى «طلبات مفتوحة»)، "
-                        f"وتُطبع تذاكر الأقسام فورًا. طلبات مفتوحة حاليًا: {open_count}",
-                        size=10, color=Colors.TEXT_SECONDARY,
-                    ),
-                ],
-                spacing=4, tight=True,
-            ),
-            padding=ft.padding.all(10),
-            bgcolor=Colors.PRIMARY_BG,
-            border_radius=Radius.MD,
-        )
 
     _PERIOD_LABELS = {"today": "اليوم", "week": "آخر 7 أيام", "month": "هذا الشهر", "all": "كل الفترات"}
     period_dd = SegmentedToggle(
@@ -459,7 +427,6 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
                 ft.Container(
                     ft.Column(
                         [
-                            _restaurant_mode_control(),
                             ft.Text(
                                 "أسند كل مادة إلى قسمها من عمود «القسم» في بطاقة المادة أو شيت الجدول، "
                                 "وعند البيع تُطبع تذكرة تحضير على طابعة القسم.",
