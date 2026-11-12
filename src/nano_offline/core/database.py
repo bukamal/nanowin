@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 22  # kitchen tickets: per-line "ready" marker
+SCHEMA_VERSION = 23  # restaurant tables (floors/areas)
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -38,6 +38,18 @@ CREATE TABLE IF NOT EXISTS sections (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Restaurant dining tables (optionally grouped by area/floor). Purely a
+-- labelling aid: an open order stores the table name in its reference so the
+-- tables/kitchen boards can display it.
+CREATE TABLE IF NOT EXISTS restaurant_tables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    area TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS customers (

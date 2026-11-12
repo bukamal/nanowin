@@ -16,6 +16,7 @@ from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components.sections_sheet import open_sections_sheet
 from nano_offline.components.restaurant_boards import open_kitchen_board, open_tables_board
+from nano_offline.components.tables_admin import open_tables_admin
 from nano_offline.services.auth_service import ROLE_LABELS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -2787,6 +2788,15 @@ class AdminCenter:
                                 width=None,
                                 size="md",
                                 on_click=lambda _=None: open_kitchen_board(
+                                    self.page, self.ctx, self._notify
+                                ),
+                            ),
+                            secondary_button(
+                                "الطاولات",
+                                icon=ft.Icons.APPS_ROUNDED,
+                                width=None,
+                                size="md",
+                                on_click=lambda _=None: open_tables_admin(
                                     self.page, self.ctx, self._notify
                                 ),
                             ),

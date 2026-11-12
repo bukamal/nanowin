@@ -10,6 +10,7 @@ from nano_offline.repositories.party_repository import PartyRepository
 from nano_offline.repositories.section_repository import SectionRepository
 from nano_offline.repositories.settings_repository import SettingsRepository
 from nano_offline.repositories.stocktake_repository import StocktakeRepository
+from nano_offline.repositories.table_repository import TableRepository
 from nano_offline.services.auth_service import AuthService
 from nano_offline.services.audit_service import AuditService
 from nano_offline.services.backup_service import BackupService
@@ -53,6 +54,7 @@ class AppContext:
     settings: SettingsRepository
     sections: SectionRepository
     section_print: SectionPrintService
+    tables: TableRepository
     auth: AuthService
     audit: AuditService
     backup: BackupService
@@ -153,6 +155,7 @@ class AppContext:
             settings=settings_repo,
             sections=sections_repo,
             section_print=section_print_svc,
+            tables=TableRepository(db),
             auth=auth,
             audit=AuditService(db),
             backup=backup,

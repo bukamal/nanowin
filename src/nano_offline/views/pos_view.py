@@ -1496,19 +1496,28 @@ class POSCenter:
                 self.notify("السلة فارغة — أضف أصنافًا أولًا", kind="warning")
                 return
             dialog = ft.AlertDialog(modal=True)
-            name_field = SelectAllTextField(label="اسم/رقم الطاولة (اختياري)")
+            try:
+                table_options = [
+                    (str(t["name"]), f"{t['name']}" + (f" — {t['area']}" if t.get("area") else ""))
+                    for t in self.ctx.tables.list(active_only=True)
+                ]
+            except Exception:
+                table_options = []
+            table_dd = SearchSelect(label="الطاولة (اختياري)", choices=table_options)
+            name_field = SelectAllTextField(label="أو اكتب اسمًا آخر (اختياري)")
 
             def do_save(_e=None) -> None:
                 self.page.close(dialog)
-                _commit_order(name_field.value)
+                _commit_order((table_dd.value or "") or (name_field.value or ""))
 
             dialog.title = ft.Text("حفظ كطلب (تحضير)")
             dialog.content = ft.Column(
                 [
                     ft.Text(
-                        "سيُحفظ الطلب غير مدفوع وتُطبع تذاكر الأقسام فورًا. اسم الطاولة يُستخدم لتمييز الطلب.",
+                        "سيُحفظ الطلب غير مدفوع وتُطبع تذاكر الأقسام فورًا. اختر طاولة أو اكتب اسمًا لتمييز الطلب.",
                         size=11, color=Colors.TEXT_SECONDARY,
                     ),
+                    table_dd,
                     name_field,
                 ],
                 spacing=8, tight=True, width=360,

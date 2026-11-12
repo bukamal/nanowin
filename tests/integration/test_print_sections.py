@@ -533,3 +533,15 @@ def test_mark_order_ready_sets_line_marker(tmp_path):
     ctx.sections.mark_order_ready(inv)
     lines = ctx.invoices.get_invoice(inv)["lines"]
     assert lines and all(line.get("kitchen_ready_at") for line in lines)
+
+
+def test_restaurant_tables_crud(tmp_path):
+    ctx = _ctx(tmp_path)
+    tid = ctx.tables.create(name="1", area="صالة")
+    ctx.tables.create(name="2", area="تراس")
+    ctx.tables.update(tid, name="1", area="تراس", sort_order=2)
+    names = [t["name"] for t in ctx.tables.list()]
+    assert "1" in names and "2" in names
+    assert ctx.tables.get(tid)["area"] == "تراس"
+    ctx.tables.delete(tid)
+    assert ctx.tables.get(tid) is None
