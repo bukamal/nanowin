@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 21  # adds a per-section fallback printer
+SCHEMA_VERSION = 22  # kitchen tickets: per-line "ready" marker
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -213,7 +213,10 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
     -- When this line's station ticket has been sent to its section printer
     -- (schema 20). Lets "send new items to kitchen" print only what was added
     -- since the order was last sent, instead of reprinting the whole ticket.
-    printed_at TEXT
+    printed_at TEXT,
+    -- When the kitchen marked this line ready (schema 22). A newer send
+    -- (printed_at) than ready (kitchen_ready_at) means it is cooking again.
+    kitchen_ready_at TEXT
 );
 
 -- Frozen snapshot of a composite sale line's exploded leaf components, taken
@@ -815,6 +818,10 @@ class Database:
         # Schema 21: per-section fallback printer.
         if self._table_exists(conn, "sections") and not self._has_column(conn, "sections", "fallback_section_id"):
             conn.execute("ALTER TABLE sections ADD COLUMN fallback_section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL")
+
+        # Schema 22: kitchen "ready" marker per line.
+        if self._table_exists(conn, "invoice_lines") and not self._has_column(conn, "invoice_lines", "kitchen_ready_at"):
+            conn.execute("ALTER TABLE invoice_lines ADD COLUMN kitchen_ready_at TEXT")
 
         added_opening_qty = False
         added_opening_cost = False

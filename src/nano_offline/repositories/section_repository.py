@@ -198,6 +198,14 @@ class SectionRepository:
             return None
         return int(row["section_id"])
 
+    def mark_order_ready(self, invoice_id: int) -> None:
+        """Mark all lines of an order as prepared (kitchen display action)."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE invoice_lines SET kitchen_ready_at=CURRENT_TIMESTAMP WHERE invoice_id=?",
+                (int(invoice_id),),
+            )
+
     # ---- print queue --------------------------------------------------- #
 
     def enqueue_job(

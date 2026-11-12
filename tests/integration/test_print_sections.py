@@ -522,3 +522,14 @@ def test_section_ticket_preview_html(tmp_path):
     assert "طاولة 1" in html and "#5" in html
     assert "إلغاء" in html            # void line marked
     assert "$" not in html and "سعر" not in html  # prices intentionally omitted
+
+
+def test_mark_order_ready_sets_line_marker(tmp_path):
+    ctx = _ctx(tmp_path)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+
+    ctx.sections.mark_order_ready(inv)
+    lines = ctx.invoices.get_invoice(inv)["lines"]
+    assert lines and all(line.get("kitchen_ready_at") for line in lines)

@@ -52,6 +52,17 @@ def _order_elapsed(order_lines: list[dict]) -> float | None:
     return _minutes_since(max(stamps))
 
 
+def _order_ready(order_lines: list[dict]) -> bool:
+    """True when the latest kitchen 'ready' is not older than the last send."""
+    ready = [line.get("kitchen_ready_at") for line in order_lines if line.get("kitchen_ready_at")]
+    if not ready:
+        return False
+    sent = [line.get("printed_at") for line in order_lines if line.get("printed_at")]
+    if not sent:
+        return True
+    return max(ready) >= max(sent)
+
+
 def _section_names(ctx) -> dict[int, str]:
     try:
         return {int(s["id"]): str(s["name"]) for s in ctx.sections.list()}
@@ -79,6 +90,7 @@ def open_tables_board(page: ft.Page, ctx, notify, money, on_open_order=None) -> 
             except Exception:
                 invoice = {}
             elapsed = _order_elapsed(invoice.get("lines") or [])
+            ready = _order_ready(invoice.get("lines") or [])
             label = str(order.get("reference") or "").strip() or f"طاولة #{order['id']}"
 
             def _open(_=None, i=int(order["id"])) -> None:
@@ -95,9 +107,10 @@ def open_tables_board(page: ft.Page, ctx, notify, money, on_open_order=None) -> 
                             [
                                 ft.Text(label, size=14, weight=ft.FontWeight.BOLD, expand=True),
                                 ft.Container(
-                                    ft.Text(_age_label(elapsed), size=10, color="#FFFFFF"),
+                                    ft.Text("جاهز" if ready else _age_label(elapsed), size=10, color="#FFFFFF"),
                                     padding=ft.padding.symmetric(horizontal=8, vertical=3),
-                                    bgcolor=_age_color(elapsed), border_radius=10,
+                                    bgcolor=Colors.SUCCESS_DARK if ready else _age_color(elapsed),
+                                    border_radius=10,
                                 ),
                             ],
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -109,7 +122,7 @@ def open_tables_board(page: ft.Page, ctx, notify, money, on_open_order=None) -> 
                 ),
                 width=200, padding=14,
                 bgcolor=Colors.WHITE,
-                border=ft.border.all(2, _age_color(elapsed)),
+                border=ft.border.all(2, Colors.SUCCESS_DARK if ready else _age_color(elapsed)),
                 border_radius=Radius.LG,
                 shadow=Shadow.SM,
                 ink=True, on_click=_open,
@@ -180,15 +193,17 @@ def open_kitchen_board(page: ft.Page, ctx, notify) -> None:
             except Exception:
                 invoice = {}
             elapsed = _order_elapsed(invoice.get("lines") or [])
+            ready = _order_ready(invoice.get("lines") or [])
             label = str(order.get("reference") or "").strip() or f"#{order['id']}"
             body: list[ft.Control] = [
                 ft.Row(
                     [
                         ft.Text(label, size=14, weight=ft.FontWeight.BOLD, expand=True),
                         ft.Container(
-                            ft.Text(_age_label(elapsed), size=10, color="#FFFFFF"),
+                            ft.Text("جاهز" if ready else _age_label(elapsed), size=10, color="#FFFFFF"),
                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
-                            bgcolor=_age_color(elapsed), border_radius=10,
+                            bgcolor=Colors.SUCCESS_DARK if ready else _age_color(elapsed),
+                            border_radius=10,
                         ),
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -205,11 +220,19 @@ def open_kitchen_board(page: ft.Page, ctx, notify) -> None:
                         f"{float(line.get('quantity') or 0):g} × {line.get('name')}",
                         size=12, color=Colors.TEXT_PRIMARY,
                     ))
+            if not ready:
+                def _mark_ready(_=None, i=int(order["id"])) -> None:
+                    try:
+                        ctx.sections.mark_order_ready(int(i))
+                    except Exception:
+                        pass
+                    render()
+                body.append(ft.ElevatedButton("تم التحضير", icon=ft.Icons.CHECK_CIRCLE_OUTLINE, on_click=_mark_ready))
             cards.append(ft.Container(
                 ft.Column(body, spacing=4, tight=True),
                 width=240, padding=12,
                 bgcolor=Colors.WHITE,
-                border=ft.border.all(2, _age_color(elapsed)),
+                border=ft.border.all(2, Colors.SUCCESS_DARK if ready else _age_color(elapsed)),
                 border_radius=Radius.LG,
                 shadow=Shadow.SM,
             ))

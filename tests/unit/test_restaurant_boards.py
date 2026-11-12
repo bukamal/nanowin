@@ -24,3 +24,11 @@ def test_age_color_thresholds():
     assert _age_color(5) == Colors.SUCCESS_DARK
     assert _age_color(15) == Colors.WARNING_DARKER
     assert _age_color(45) == Colors.DANGER
+
+def test_order_ready_resets_on_newer_send():
+    from nano_offline.components.restaurant_boards import _order_ready
+
+    assert _order_ready([]) is False
+    assert _order_ready([{"printed_at": "2026-01-01 10:00:00", "kitchen_ready_at": "2026-01-01 10:05:00"}]) is True
+    # A send newer than the ready mark means it is cooking again.
+    assert _order_ready([{"printed_at": "2026-01-01 10:10:00", "kitchen_ready_at": "2026-01-01 10:05:00"}]) is False
