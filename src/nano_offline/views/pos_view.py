@@ -138,6 +138,10 @@ class POSCenter:
         # never a duplicate row.
         self.cart: dict[int, dict] = {}
         self.cart_order: list[int] = []  # insertion order, for undo + display
+        # Restaurant mode: the open order currently loaded into the cart for
+        # editing (None = a brand-new sale).
+        self._editing_order_id: int | None = None
+        self._editing_order_ref: str = ""
         self.held: list[dict] = []  # [{"label": str, "cart": dict, "order": list, "customer_id": int|None}]
         self.customer_id: int | None = None
         self.received_digits: str = ""
@@ -1328,8 +1332,7 @@ class POSCenter:
         checkout_btn.on_click = open_payment_sheet
         self._checkout_btn = checkout_btn
 
-        def _commit_order(reference: str | None = None) -> None:
-            """Restaurant mode: send the cart as an unpaid open order."""
+        def _cart_lines():
             rows_list = [self.cart[key] for key in self.cart_order if key in self.cart]
             lines = [
                 InvoiceLineInput(
@@ -1342,11 +1345,18 @@ class POSCenter:
                 )
                 for row in rows_list
             ]
+            return rows_list, lines
+
+        def _discount_notes(rows_list) -> str | None:
             discount_lines = [
                 f"{r['item']['name']} {self._qty(r.get('discount_pct') or 0)}%"
                 for r in rows_list if float(r.get("discount_pct") or 0) > 0
             ]
-            sale_notes = ("خصومات — " + "، ".join(discount_lines[:8])) if discount_lines else None
+            return ("خصومات — " + "، ".join(discount_lines[:8])) if discount_lines else None
+
+        def _commit_order(reference: str | None = None) -> None:
+            """Restaurant mode: send the cart as a new unpaid open order."""
+            rows_list, lines = _cart_lines()
             try:
                 invoice_id = self.ctx.invoices.create_invoice(
                     invoice_type="sale",
@@ -1354,7 +1364,7 @@ class POSCenter:
                     customer_id=None,
                     paid_amount=0,
                     reference=(reference or "").strip() or None,
-                    notes=sale_notes,
+                    notes=_discount_notes(rows_list),
                     allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
                 )
             except Exception as exc:
@@ -1365,6 +1375,7 @@ class POSCenter:
             clear_cart(undoable=False)
             refresh_cart()
             refresh_today_summary()
+            _refresh_order_mode()
             try:
                 if self.on_saved:
                     self.on_saved()
@@ -1376,7 +1387,110 @@ class POSCenter:
             except Exception:
                 pass
 
-        def save_as_order(_=None):
+        def _update_order() -> None:
+            """Restaurant mode: save edits back onto the open order."""
+            rows_list, lines = _cart_lines()
+            try:
+                invoice = self.ctx.invoices.get_invoice(int(self._editing_order_id))
+            except Exception:
+                invoice = None
+            if not invoice:
+                self.notify("الطلب غير موجود", kind="error")
+                return
+            try:
+                self.ctx.invoices.update_invoice(
+                    int(self._editing_order_id),
+                    invoice_type="sale",
+                    lines=lines,
+                    customer_id=invoice.get("customer_id"),
+                    paid_amount=float(invoice.get("paid_amount") or 0),
+                    reference=invoice.get("reference"),
+                    notes=_discount_notes(rows_list) or invoice.get("notes"),
+                    allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
+                )
+            except Exception as exc:
+                self.notify(str(exc), kind="error", sound_kind="barcode_error")
+                return
+            # The update prints cancellations for removed lines automatically;
+            # send anything that was added since the last kitchen send.
+            try:
+                self.ctx.section_print.send_new_invoice(int(self._editing_order_id))
+            except Exception:
+                pass
+            edited_id = self._editing_order_id
+            self._editing_order_id = None
+            self._editing_order_ref = ""
+            clear_cart(undoable=False)
+            refresh_cart()
+            refresh_today_summary()
+            _refresh_order_mode()
+            try:
+                if self.on_saved:
+                    self.on_saved()
+            except Exception:
+                pass
+            self.notify(f"تم تحديث الطلب #{edited_id}", kind="success")
+            try:
+                refresh_tables()
+            except Exception:
+                pass
+
+        def _load_order(invoice_id: int) -> None:
+            try:
+                invoice = self.ctx.invoices.get_invoice(int(invoice_id))
+            except Exception:
+                invoice = None
+            if not invoice:
+                self.notify("الطلب غير موجود", kind="error")
+                return
+            clear_cart(undoable=False)
+            missing = 0
+            for line in invoice.get("lines") or []:
+                item_id = line.get("item_id")
+                if item_id is None or int(item_id) not in self.item_map:
+                    missing += 1
+                    continue
+                item = self.item_map[int(item_id)]
+                unit_id = line.get("unit_id")
+                if unit_id is not None and int(unit_id) == int(item.get("base_unit_id") or 0):
+                    unit_id = None
+                key = _cart_key(item, unit_id)
+                if key in self.cart:
+                    self.cart[key]["qty"] += float(line.get("quantity") or 0)
+                else:
+                    self.cart[key] = {
+                        "key": key,
+                        "item": item,
+                        "qty": float(line.get("quantity") or 0),
+                        "unit_price": float(line.get("unit_price") or 0),
+                        "unit_id": unit_id,
+                        "factor": float(line.get("conversion_factor") or 1),
+                        "discount_pct": 0.0,
+                    }
+                    self.cart_order.append(key)
+            self._editing_order_id = int(invoice_id)
+            self._editing_order_ref = str(invoice.get("reference") or "")
+            refresh_cart()
+            _refresh_order_mode()
+            message = f"تم تحميل الطلب #{invoice_id}"
+            if missing:
+                message += f" ({missing} بند غير متاح)"
+            self.notify(message, kind="warning" if missing else None)
+
+        def _new_order(_=None) -> None:
+            self._editing_order_id = None
+            self._editing_order_ref = ""
+            clear_cart(undoable=False)
+            refresh_cart()
+            _refresh_order_mode()
+
+        def save_as_order(_=None) -> None:
+            if self._editing_order_id is not None:
+                if not self.cart_order:
+                    self.notify("الطلب فارغ — احذف الطلب أو أضف أصنافًا", kind="warning")
+                    return
+                _update_order()
+                return
             if not self.cart_order:
                 self.notify("السلة فارغة — أضف أصنافًا أولًا", kind="warning")
                 return
@@ -1404,9 +1518,20 @@ class POSCenter:
             ]
             self.page.open(dialog)
 
+        def _settle_order(_=None) -> None:
+            if self._editing_order_id is None:
+                return
+            if callable(self.on_open_invoice):
+                self.on_open_invoice(int(self._editing_order_id))
+            else:
+                self.notify("افتح الطلب من شاشة الفواتير للسداد")
+
         order_btn = hero_button("حفظ كطلب (تحضير)", icon=ft.Icons.RECEIPT_LONG_OUTLINED, on_click=save_as_order)
-        order_btn.visible = restaurant_settings.enabled(self.ctx.settings)
         order_btn.expand = True
+        update_btn = hero_button("تحديث الطلب", icon=ft.Icons.SAVE_OUTLINED, on_click=save_as_order)
+        update_btn.expand = True
+        settle_btn = hero_button("دفع الطلب", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_settle_order)
+        settle_btn.expand = True
 
         def customer_changed(_=None):
             self.customer_id = int(customer_dd.value) if customer_dd.value else None
@@ -1589,7 +1714,7 @@ class POSCenter:
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     total_text,
-                    ft.Row([order_btn, checkout_btn], spacing=8),
+                    ft.Row([order_btn, update_btn, settle_btn, checkout_btn], spacing=8),
                 ],
                 spacing=6,
             ),
@@ -1837,8 +1962,9 @@ class POSCenter:
         )
 
         # Restaurant mode: a tables strip above the body lists open orders so
-        # the cashier can jump into an open table from the POS screen.
+        # the cashier can load a table's order into the cart directly.
         tables_row = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
+        order_indicator = ft.Text("", size=11, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK, visible=False)
 
         def refresh_tables() -> None:
             try:
@@ -1861,10 +1987,7 @@ class POSCenter:
                     border=ft.border.all(1, Colors.WARNING),
                     border_radius=Radius.MD,
                     ink=True,
-                    on_click=lambda _, i=int(order["id"]): (
-                        self.on_open_invoice(i) if callable(self.on_open_invoice)
-                        else self.notify("افتح الطلب من شاشة الفواتير")
-                    ),
+                    on_click=lambda _, i=int(order["id"]): _load_order(i),
                 ))
             if not cards:
                 cards.append(ft.Text(
@@ -1877,6 +2000,30 @@ class POSCenter:
             except Exception:
                 pass
 
+        def _refresh_order_mode() -> None:
+            restaurant_on = restaurant_settings.enabled(self.ctx.settings)
+            editing = self._editing_order_id is not None
+            order_btn.visible = restaurant_on and not editing
+            update_btn.visible = restaurant_on and editing
+            settle_btn.visible = restaurant_on and editing
+            try:
+                self._checkout_btn.visible = not editing
+            except Exception:
+                pass
+            if editing:
+                label = self._editing_order_ref or f"#{self._editing_order_id}"
+                order_indicator.value = f"تعديل الطلب: {label}"
+            order_indicator.visible = editing
+            for ctrl in (order_btn, update_btn, settle_btn, order_indicator):
+                try:
+                    ctrl.update()
+                except Exception:
+                    pass
+            try:
+                self._checkout_btn.update()
+            except Exception:
+                pass
+
         tables_strip = ft.Container(
             ft.Column(
                 [
@@ -1884,7 +2031,9 @@ class POSCenter:
                         [
                             ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=16, color=Colors.PRIMARY),
                             ft.Text("الطلبات المفتوحة (الطاولات)", size=12, weight=ft.FontWeight.W_600),
+                            order_indicator,
                             ft.Container(expand=True),
+                            ft.TextButton("طلب جديد", icon=ft.Icons.ADD, on_click=_new_order),
                             ft.IconButton(
                                 icon=ft.Icons.REFRESH, tooltip="تحديث الطاولات",
                                 on_click=lambda _=None: refresh_tables(), icon_size=18,
@@ -1900,6 +2049,7 @@ class POSCenter:
             visible=restaurant_settings.enabled(self.ctx.settings),
         )
         refresh_tables()
+        _refresh_order_mode()
 
         main_column = ft.Column(
             [
