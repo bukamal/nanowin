@@ -143,6 +143,7 @@ class POSCenter:
         # editing (None = a brand-new sale).
         self._editing_order_id: int | None = None
         self._editing_order_ref: str = ""
+        self._pending_table_name: str = ""
         self.held: list[dict] = []  # [{"label": str, "cart": dict, "order": list, "customer_id": int|None}]
         self.customer_id: int | None = None
         self.received_digits: str = ""
@@ -1373,6 +1374,7 @@ class POSCenter:
                 return
             self._last_invoice_id = invoice_id
             self._undo_state = None
+            self._pending_table_name = ""
             clear_cart(undoable=False)
             refresh_cart()
             refresh_today_summary()
@@ -1481,9 +1483,14 @@ class POSCenter:
         def _new_order(_=None) -> None:
             self._editing_order_id = None
             self._editing_order_ref = ""
+            self._pending_table_name = ""
             clear_cart(undoable=False)
             refresh_cart()
             _refresh_order_mode()
+
+        def _set_pending_table(name: str) -> None:
+            self._pending_table_name = str(name or "")
+            self.notify(f"طاولة {name}: أضف الأصناف ثم «حفظ كطلب»")
 
         def save_as_order(_=None) -> None:
             if self._editing_order_id is not None:
@@ -1503,8 +1510,13 @@ class POSCenter:
                 ]
             except Exception:
                 table_options = []
-            table_dd = SearchSelect(label="الطاولة (اختياري)", choices=table_options)
-            name_field = SelectAllTextField(label="أو اكتب اسمًا آخر (اختياري)")
+            pending = self._pending_table_name
+            table_dd = SearchSelect(
+                label="الطاولة (اختياري)",
+                choices=table_options,
+                value=pending if pending and any(pending == key for key, _ in table_options) else None,
+            )
+            name_field = SelectAllTextField(label="أو اكتب اسمًا آخر (اختياري)", value="" if pending else "")
 
             def do_save(_e=None) -> None:
                 self.page.close(dialog)
@@ -2048,6 +2060,7 @@ class POSCenter:
                                 on_click=lambda _=None: open_tables_board(
                                     self.page, self.ctx, self.notify, self._fmt,
                                     on_open_order=lambda i: _load_order(i) if i is not None else None,
+                                    on_free_table=_set_pending_table,
                                 ),
                             ),
                             ft.TextButton("طلب جديد", icon=ft.Icons.ADD, on_click=_new_order),

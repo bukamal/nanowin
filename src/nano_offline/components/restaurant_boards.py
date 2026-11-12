@@ -70,28 +70,30 @@ def _section_names(ctx) -> dict[int, str]:
         return {}
 
 
-def open_tables_board(page: ft.Page, ctx, notify, money, on_open_order=None) -> None:
-    """A colour-coded grid of open orders (tables) with elapsed time."""
+def open_tables_board(
+    page: ft.Page, ctx, notify, money, on_open_order=None, on_free_table=None
+) -> None:
+    """A floor plan of tables grouped by area, coloured by status.
+
+    Occupied tables (open orders whose reference matches a table name) show
+    their total + age/ready badge and open the order on tap; free tables show
+    grey and notify the host (``on_free_table``).
+    """
     sheet, width = sheets.new_desktop_sheet(page, cap=1000)
-    grid = ft.Row(spacing=10, run_spacing=10, wrap=True)
+    areas_row = ft.Row(spacing=14, run_spacing=14, wrap=True)
 
     def close(_=None) -> None:
         page.close(sheet)
 
-    def render() -> None:
-        try:
-            orders = ctx.invoices.open_sale_orders(limit=60)
-        except Exception:
-            orders = []
-        cards: list[ft.Control] = []
-        for order in orders:
+    def _table_card(name: str, order: dict | None) -> ft.Control:
+        if order is not None:
             try:
                 invoice = ctx.invoices.get_invoice(int(order["id"])) or {}
             except Exception:
                 invoice = {}
             elapsed = _order_elapsed(invoice.get("lines") or [])
             ready = _order_ready(invoice.get("lines") or [])
-            label = str(order.get("reference") or "").strip() or f"طاولة #{order['id']}"
+            color = Colors.SUCCESS_DARK if ready else _age_color(elapsed)
 
             def _open(_=None, i=int(order["id"])) -> None:
                 if callable(on_open_order):
@@ -100,38 +102,105 @@ def open_tables_board(page: ft.Page, ctx, notify, money, on_open_order=None) -> 
                 else:
                     notify("افتح الطلب من شاشة الفواتير")
 
-            cards.append(ft.Container(
+            return ft.Container(
                 ft.Column(
                     [
-                        ft.Row(
-                            [
-                                ft.Text(label, size=14, weight=ft.FontWeight.BOLD, expand=True),
-                                ft.Container(
-                                    ft.Text("جاهز" if ready else _age_label(elapsed), size=10, color="#FFFFFF"),
-                                    padding=ft.padding.symmetric(horizontal=8, vertical=3),
-                                    bgcolor=Colors.SUCCESS_DARK if ready else _age_color(elapsed),
-                                    border_radius=10,
-                                ),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ft.Text(name, size=14, weight=ft.FontWeight.BOLD),
+                        ft.Text(money(float(order.get("remaining_amount") or 0)), size=13, weight=ft.FontWeight.W_600),
+                        ft.Container(
+                            ft.Text("جاهز" if ready else _age_label(elapsed), size=10, color="#FFFFFF"),
+                            padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                            bgcolor=color, border_radius=10,
                         ),
-                        ft.Text(money(float(order.get("remaining_amount") or 0)), size=15, weight=ft.FontWeight.W_600),
-                        ft.Text(f"#{order['id']}", size=10, color=Colors.TEXT_SECONDARY),
                     ],
-                    spacing=4, tight=True,
+                    spacing=3, tight=True,
                 ),
-                width=200, padding=14,
-                bgcolor=Colors.WHITE,
-                border=ft.border.all(2, Colors.SUCCESS_DARK if ready else _age_color(elapsed)),
-                border_radius=Radius.LG,
-                shadow=Shadow.SM,
-                ink=True, on_click=_open,
-            ))
-        if not cards:
-            cards.append(ft.Text("لا توجد طلبات مفتوحة حاليًا.", size=12, color=Colors.TEXT_SECONDARY))
-        grid.controls = cards
+                width=150, padding=12, bgcolor=Colors.WHITE,
+                border=ft.border.all(2, color), border_radius=Radius.LG,
+                shadow=Shadow.SM, ink=True, on_click=_open,
+            )
+
+        def _free(_=None, n=name) -> None:
+            if callable(on_free_table):
+                close()
+                on_free_table(n)
+            else:
+                notify("طاولة متاحة — أنشئ الطلب من نقطة البيع")
+
+        return ft.Container(
+            ft.Column(
+                [
+                    ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    ft.Text("متاحة", size=11, color=Colors.TEXT_SECONDARY),
+                ],
+                spacing=3, tight=True,
+            ),
+            width=150, padding=12, bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.all(1, Colors.BORDER), border_radius=Radius.LG,
+            ink=True, on_click=_free,
+        )
+
+    def render() -> None:
         try:
-            grid.update()
+            tables = ctx.tables.list(active_only=True)
+        except Exception:
+            tables = []
+        try:
+            orders = ctx.invoices.open_sale_orders(limit=80)
+        except Exception:
+            orders = []
+        known = {str(t.get("name")) for t in tables}
+        by_ref: dict[str, dict] = {}
+        loose: list[dict] = []
+        for order in orders:
+            ref = str(order.get("reference") or "").strip()
+            if ref and ref in known:
+                by_ref[ref] = order
+            else:
+                loose.append(order)
+
+        grouped: dict[str, list[dict]] = {}
+        for table in tables:
+            grouped.setdefault(str(table.get("area") or "بلا منطقة"), []).append(table)
+
+        columns: list[ft.Control] = []
+        for area, items in grouped.items():
+            cards = [_table_card(str(t.get("name")), by_ref.get(str(t.get("name")))) for t in items]
+            columns.append(ft.Container(
+                ft.Column(
+                    [
+                        ft.Text(area, size=13, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                        ft.Row(cards, spacing=10, run_spacing=10, wrap=True),
+                    ],
+                    spacing=8, tight=True,
+                ),
+                padding=12, bgcolor=Colors.BACKGROUND_ALT, border_radius=Radius.MD,
+            ))
+
+        if loose:
+            loose_cards: list[ft.Control] = []
+            for order in loose:
+                label = str(order.get("reference") or "").strip() or f"#{order['id']}"
+                loose_cards.append(_table_card(label, order))
+            columns.append(ft.Container(
+                ft.Column(
+                    [
+                        ft.Text("طلبات بلا طاولة", size=13, weight=ft.FontWeight.BOLD, color=Colors.WARNING_DARKER),
+                        ft.Row(loose_cards, spacing=10, run_spacing=10, wrap=True),
+                    ],
+                    spacing=8, tight=True,
+                ),
+                padding=12, bgcolor=Colors.WARNING_BG, border_radius=Radius.MD,
+            ))
+
+        if not columns:
+            columns.append(ft.Text(
+                "لا توجد طاولات معرّفة — أضِفها من الإدارة ← المطعم ← الطاولات.",
+                size=12, color=Colors.TEXT_SECONDARY,
+            ))
+        areas_row.controls = columns
+        try:
+            areas_row.update()
         except Exception:
             pass
 
@@ -148,14 +217,14 @@ def open_tables_board(page: ft.Page, ctx, notify, money, on_open_order=None) -> 
                 ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
                 sheets.sheet_header(
                     title="لوحة الطاولات",
-                    subtitle="الطلبات المفتوحة مرتّبة حسب الزمن — اللون يشير للتأخير",
+                    subtitle="خريطة الطاولات حسب المنطقة — اللون يشير للحالة والتأخير",
                     icon=ft.Icons.APPS_ROUNDED,
                     on_close=close,
                     trailing=ft.IconButton(icon=ft.Icons.REFRESH, tooltip="تحديث", on_click=lambda _=None: render()),
                 ),
                 ft.Row([ft.FilledButton("طلب جديد", icon=ft.Icons.ADD, on_click=new_order)]),
                 ft.Container(
-                    ft.Column([grid], scroll=ft.ScrollMode.AUTO),
+                    ft.Column([areas_row], scroll=ft.ScrollMode.AUTO),
                     expand=True,
                 ),
             ],
