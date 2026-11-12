@@ -37,6 +37,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
+from nano_offline.core import restaurant_settings
 from nano_offline.core import sound
 from nano_offline.core.margin_guard import check_sale_margin
 from nano_offline.core import invoice_settings
@@ -1617,8 +1618,11 @@ class InvoiceCenter:
             lines_summary_text.value = f"{count} بند" if count else "لا بنود بعد"
             # Anonymous invoices are cash by definition (same rule the page
             # editor and the accounting service enforce): with no party the
-            # paid field auto-fills with the total and locks.
-            cash_without_party = not bool(party_dd.value)
+            # paid field auto-fills with the total and locks. In restaurant
+            # mode a sale may be left unpaid (an open preparation order), so
+            # the field stays editable and keeps the cashier's value.
+            restaurant_open = (type_dd.value or "sale") == "sale" and restaurant_settings.enabled(settings)
+            cash_without_party = (not bool(party_dd.value)) and not restaurant_open
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
             if cash_without_party:
@@ -2692,7 +2696,10 @@ class InvoiceCenter:
                 lines_grid.set_footer(None)
             # Anonymous invoices are cash by definition (same rule the wizard
             # and the accounting service enforce): no party -> paid == total.
-            cash_without_party = not bool(party_dd.value)
+            # Restaurant mode leaves the field editable so a sale can be saved
+            # as an unpaid open order.
+            restaurant_open = (type_dd.value or "sale") == "sale" and restaurant_settings.enabled(settings)
+            cash_without_party = (not bool(party_dd.value)) and not restaurant_open
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
             if cash_without_party:
@@ -3547,7 +3554,9 @@ class InvoiceCenter:
 
             # Anonymous invoices are cash by definition: if no customer/supplier
             # is selected, Cashir settles the invoice in full automatically.
-            cash_without_party = not bool(party_dd.value)
+            # Restaurant mode allows saving an unpaid sale (open order) instead.
+            restaurant_open = (type_dd.value or "sale") == "sale" and restaurant_settings.enabled(self.ctx.settings)
+            cash_without_party = (not bool(party_dd.value)) and not restaurant_open
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", self.ctx.settings)
             if cash_without_party:
