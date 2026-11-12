@@ -163,6 +163,24 @@ def open_tables_board(
             ink=True, on_click=_free,
         )
 
+    def _drag(table: dict, card: ft.Control) -> ft.Control:
+        def _drop(e) -> None:
+            try:
+                src = getattr(getattr(e, "src", None), "data", None)
+                if src is None:
+                    return
+                ctx.tables.reorder(int(src), int(table["id"]))
+            except Exception as exc:
+                notify(str(exc), kind="error")
+                return
+            render()
+
+        return ft.DragTarget(
+            group="nano-tables",
+            content=ft.Draggable(group="nano-tables", content=card, data=str(table["id"])),
+            on_accept=_drop,
+        )
+
     def render() -> None:
         try:
             tables = ctx.tables.list(active_only=True)
@@ -188,7 +206,10 @@ def open_tables_board(
 
         columns: list[ft.Control] = []
         for area, items in grouped.items():
-            cards = [_table_card(str(t.get("name")), by_ref.get(str(t.get("name")))) for t in items]
+            cards = [
+                _drag(t, _table_card(str(t.get("name")), by_ref.get(str(t.get("name")))))
+                for t in items
+            ]
             columns.append(ft.Container(
                 ft.Column(
                     [

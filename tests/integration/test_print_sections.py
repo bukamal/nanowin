@@ -545,3 +545,16 @@ def test_restaurant_tables_crud(tmp_path):
     assert ctx.tables.get(tid)["area"] == "تراس"
     ctx.tables.delete(tid)
     assert ctx.tables.get(tid) is None
+
+
+def test_reorder_tables_moves_into_target_area_before_it(tmp_path):
+    ctx = _ctx(tmp_path)
+    a = ctx.tables.create(name="1", area="صالة", sort_order=0)
+    b = ctx.tables.create(name="2", area="صالة", sort_order=1)
+    c = ctx.tables.create(name="3", area="تراس", sort_order=0)
+
+    ctx.tables.reorder(c, a)  # move table 3 into صالة, just before table 1
+    hall = [t["name"] for t in ctx.tables.list() if t["area"] == "صالة"]
+    assert hall == ["3", "1", "2"]
+    assert ctx.tables.get(c)["area"] == "صالة"
+    _ = b

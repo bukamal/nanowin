@@ -60,6 +60,39 @@ class TableRepository:
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM restaurant_tables WHERE id=?", (int(table_id),))
 
+    def reorder(self, table_id: int, target_id: int) -> None:
+        """Move ``table_id`` into ``target_id``'s area, just before it."""
+        if int(table_id) == int(target_id):
+            return
+        with self.db.transaction() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT id,area,sort_order FROM restaurant_tables ORDER BY area, sort_order, name"
+                ).fetchall()
+            ]
+            by_id = {int(r["id"]): r for r in rows}
+            dragged = by_id.get(int(table_id))
+            target = by_id.get(int(target_id))
+            if dragged is None or target is None:
+                raise ValueError("طاولة غير موجودة")
+            areas: dict = {}
+            for row in rows:
+                areas.setdefault(row["area"], []).append(int(row["id"]))
+            for ids in areas.values():
+                if int(table_id) in ids:
+                    ids.remove(int(table_id))
+            target_area = target["area"]
+            target_list = areas.setdefault(target_area, [])
+            index = target_list.index(int(target_id)) if int(target_id) in target_list else len(target_list)
+            target_list.insert(index, int(table_id))
+            for area, ids in areas.items():
+                for order, tid in enumerate(ids):
+                    conn.execute(
+                        "UPDATE restaurant_tables SET area=?,sort_order=? WHERE id=?",
+                        (area, order, tid),
+                    )
+
     @staticmethod
     def _validate(name: str, area: str | None, sort_order: int) -> tuple[str, str | None, int]:
         name = (name or "").strip()
