@@ -730,13 +730,15 @@ class InvoiceService:
     @staticmethod
     def _ensure_restaurant_party(conn) -> int:
         row = conn.execute(
-            "SELECT id FROM customers WHERE name=? COLLATE NOCASE",
+            "SELECT id,is_system FROM customers WHERE name=? COLLATE NOCASE",
             (restaurant_settings.DEFAULT_PARTY_NAME,),
         ).fetchone()
         if row is not None:
+            if not int(row["is_system"] or 0):
+                conn.execute("UPDATE customers SET is_system=1 WHERE id=?", (int(row["id"]),))
             return int(row["id"])
         cur = conn.execute(
-            "INSERT INTO customers(name) VALUES(?)",
+            "INSERT INTO customers(name,is_system) VALUES(?,1)",
             (restaurant_settings.DEFAULT_PARTY_NAME,),
         )
         return int(cur.lastrowid)

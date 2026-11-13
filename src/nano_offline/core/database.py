@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 23  # restaurant tables (floors/areas)
+SCHEMA_VERSION = 24  # system parties flag (restaurant open-orders account)
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS customers (
     phone TEXT,
     address TEXT,
     balance REAL NOT NULL DEFAULT 0,
+    -- 1 for internal accounts (e.g. the restaurant open-orders ledger) that
+    -- must never appear in the customer list / pickers (schema 24).
+    is_system INTEGER NOT NULL DEFAULT 0 CHECK(is_system IN (0,1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -834,6 +837,10 @@ class Database:
         # Schema 22: kitchen "ready" marker per line.
         if self._table_exists(conn, "invoice_lines") and not self._has_column(conn, "invoice_lines", "kitchen_ready_at"):
             conn.execute("ALTER TABLE invoice_lines ADD COLUMN kitchen_ready_at TEXT")
+
+        # Schema 24: system party flag (hidden from customer lists/pickers).
+        if self._table_exists(conn, "customers") and not self._has_column(conn, "customers", "is_system"):
+            conn.execute("ALTER TABLE customers ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
 
         added_opening_qty = False
         added_opening_cost = False

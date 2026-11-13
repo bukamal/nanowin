@@ -48,6 +48,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
     report_col = ft.Column(spacing=4, tight=True)
     queue_col = ft.Column(spacing=4, tight=True)
     period_state = {"key": "all"}
+    pay_state = {"key": "all"}
 
     def _period_range() -> tuple[str | None, str | None]:
         today = date.today()
@@ -110,9 +111,24 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
 
     period_dd.on_change = _on_period
 
+    pay_dd = SegmentedToggle(
+        options=[
+            SegmentOption("all", "الكل"),
+            SegmentOption("paid", "مدفوع"),
+            SegmentOption("open", "مفتوح"),
+        ],
+        value="all",
+    )
+
+    def _on_pay(_=None) -> None:
+        pay_state["key"] = pay_dd.value or "all"
+        render_report()
+
+    pay_dd.on_change = _on_pay
+
     def render_report() -> None:
         date_from, date_to = _period_range()
-        rows = ctx.sections.sales_by_section(date_from=date_from, date_to=date_to)
+        rows = ctx.sections.sales_by_section(date_from=date_from, date_to=date_to, payment=pay_state["key"])
         controls: list[ft.Control] = [
             ft.Text(
                 f"مبيعات الأقسام ({_PERIOD_LABELS.get(period_state['key'], 'كل الفترات')})",
@@ -438,6 +454,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
                                         ft.Row([ft.Icon(ft.Icons.BAR_CHART_OUTLINED, size=16, color=Colors.PRIMARY),
                                                 ft.Text("تقرير الأقسام", size=12, weight=ft.FontWeight.W_600)], spacing=6),
                                         period_dd,
+                                        pay_dd,
                                         report_col,
                                     ],
                                     spacing=6, tight=True,

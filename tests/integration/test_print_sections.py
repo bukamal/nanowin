@@ -223,7 +223,7 @@ def test_restaurant_mode_keeps_unpaid_order_open(tmp_path):
     assert float(row["paid_amount"]) == pytest.approx(0)
     assert row["customer_id"] is not None
     assert [o["id"] for o in ctx.invoices.open_sale_orders()] == [inv_open]
-    assert "طلبات مفتوحة" in {c["name"] for c in ctx.customers.list()}
+    assert "طلبات مفتوحة" in {c["name"] for c in ctx.customers.list(include_system=True)}
     assert ctx.sections.counts()["pending"] >= 1
 
 
@@ -613,3 +613,39 @@ def test_settling_open_order_with_customer_switches_party(tmp_path):
         paid_amount=10,
     )
     assert ctx.invoices.get_invoice(inv)["customer_id"] == customer_id
+
+
+def test_restaurant_party_hidden_from_customer_list(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+
+    visible = [c["name"] for c in ctx.customers.list()]
+    assert "طلبات مفتوحة" not in visible
+    assert ctx.customers.count() == len(visible)
+    all_names = [c["name"] for c in ctx.customers.list(include_system=True)]
+    assert "طلبات مفتوحة" in all_names
+
+
+def test_sales_by_section_payment_filter(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+
+    # Fully-paid cash sale.
+    ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=item, quantity=2, unit_price=10)],
+        paid_amount=20,
+        customer_id=None,
+    )
+    # Open (unpaid) order.
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+
+    paid_rows = ctx.sections.sales_by_section(payment="paid")
+    open_rows = ctx.sections.sales_by_section(payment="open")
+    assert sum(r["revenue"] for r in paid_rows) == pytest.approx(20)
+    assert sum(r["revenue"] for r in open_rows) == pytest.approx(10)

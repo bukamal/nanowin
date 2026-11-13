@@ -269,16 +269,25 @@ class SectionRepository:
             return int(cur.rowcount or 0)
 
     def sales_by_section(
-        self, *, date_from: str | None = None, date_to: str | None = None
+        self,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        payment: str = "all",
     ) -> list[dict]:
         """Revenue/COGS/profit per section over posted sale invoices.
 
         Lines resolve with the same rule as printing (item override, then
         category default); unassigned items are grouped under a NULL section
-        and labelled by the caller.
+        and labelled by the caller. ``payment`` filters by settlement state:
+        ``all`` (default), ``paid`` (fully settled) or ``open`` (still owed).
         """
         clauses = ["inv.type='sale'", "inv.status='posted'"]
         params: list[object] = []
+        if payment == "paid":
+            clauses.append("(inv.total - inv.paid_amount) <= 1e-9")
+        elif payment == "open":
+            clauses.append("(inv.total - inv.paid_amount) > 1e-9")
         if date_from:
             clauses.append("inv.invoice_date >= ?")
             params.append(str(date_from))

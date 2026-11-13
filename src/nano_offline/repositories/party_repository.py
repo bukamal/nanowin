@@ -18,45 +18,61 @@ class PartyRepository(Offloadable):
         return "customer" if self.table == "customers" else "supplier"
 
     @blocking
-    def list(self, search: str = "", limit: int | None = None, offset: int = 0) -> list[dict]:
+    def list(
+        self,
+        search: str = "",
+        limit: int | None = None,
+        offset: int = 0,
+        *,
+        include_system: bool = False,
+    ) -> list[dict]:
         """Parties filtered by substring name, with optional paging.
 
-        ``limit``/``offset`` are optional so existing callers keep working;
-        a screen rendering a long list should pass a ``limit`` and page with
-        ``offset`` (see ItemRepository.list for the reasoning). Search is
-        answered from the FTS5 trigram index (see core/search_index.py) when
-        available, and by the equivalent literal-substring LIKE otherwise.
+        System parties (e.g. the restaurant "طلبات مفتوحة" open-orders account)
+        are hidden unless ``include_system`` is set -- they exist for
+        accounting, not for the user to pick or browse.
         """
         with self.db.connect() as conn:
             query = search.strip()
             fts_table = f"{self.table}_fts"
             use_fts = search_index.is_fts_eligible(conn, fts_table, query)
+            hide_system = self.table == "customers" and not include_system
             sql = f"SELECT {self.table}.* FROM {self.table}"
             params: list = []
-            try:
+            if use_fts:
+                sql += f" JOIN {fts_table} ON {fts_table}.rowid = {self.table}.id"
+            conditions: list[str] = []
+            if query:
                 if use_fts:
-                    sql += f" JOIN {fts_table} ON {fts_table}.rowid = {self.table}.id"
-                if query:
-                    if use_fts:
-                        sql += f" WHERE {fts_table} MATCH ?"
-                        params.append(search_index.match_expression(query))
-                    else:
-                        sql += " WHERE name LIKE ? ESCAPE '\\'"
-                        params.append(search_index.like_pattern(query))
-                sql += " ORDER BY name"
-                if limit is not None:
-                    sql += " LIMIT ? OFFSET ?"
-                    params.extend([int(limit), int(offset)])
+                    conditions.append(f"{fts_table} MATCH ?")
+                    params.append(search_index.match_expression(query))
+                else:
+                    conditions.append("name LIKE ? ESCAPE '\\'")
+                    params.append(search_index.like_pattern(query))
+            if hide_system:
+                conditions.append(f"{self.table}.is_system=0")
+            if conditions:
+                sql += " WHERE " + " AND ".join(conditions)
+            sql += " ORDER BY name"
+            if limit is not None:
+                sql += " LIMIT ? OFFSET ?"
+                params.extend([int(limit), int(offset)])
+            try:
                 return [dict(r) for r in conn.execute(sql, params).fetchall()]
             except Exception:
                 if not use_fts:
                     raise
                 # FTS path unavailable at runtime; retry with the LIKE fallback.
-                like = f"SELECT {self.table}.* FROM {self.table}"
+                like_conditions: list[str] = []
                 like_params: list = []
                 if query:
-                    like += " WHERE name LIKE ? ESCAPE '\\'"
+                    like_conditions.append("name LIKE ? ESCAPE '\\'")
                     like_params.append(search_index.like_pattern(query))
+                if hide_system:
+                    like_conditions.append(f"{self.table}.is_system=0")
+                like = f"SELECT {self.table}.* FROM {self.table}"
+                if like_conditions:
+                    like += " WHERE " + " AND ".join(like_conditions)
                 like += " ORDER BY name"
                 if limit is not None:
                     like += " LIMIT ? OFFSET ?"
@@ -64,28 +80,21 @@ class PartyRepository(Offloadable):
                 return [dict(r) for r in conn.execute(like, like_params).fetchall()]
 
     @blocking
-    def count(self, search: str = "") -> int:
+    def count(self, search: str = "", *, include_system: bool = False) -> int:
         """Total parties matching ``search`` (literal name substring)."""
         query = search.strip()
+        hide_system = self.table == "customers" and not include_system
         with self.db.connect() as conn:
-            fts_table = f"{self.table}_fts"
-            if search_index.is_fts_eligible(conn, fts_table, query):
-                try:
-                    return int(
-                        conn.execute(
-                            f"SELECT COUNT(*) FROM {fts_table} WHERE {fts_table} MATCH ?",
-                            (search_index.match_expression(query),),
-                        ).fetchone()[0]
-                    )
-                except Exception:
-                    pass
             if query:
                 row = conn.execute(
-                    f"SELECT COUNT(*) FROM {self.table} WHERE name LIKE ? ESCAPE '\\'",
+                    f"SELECT COUNT(*) FROM {self.table} WHERE name LIKE ? ESCAPE '\\'"
+                    + (" AND is_system=0" if hide_system else ""),
                     (search_index.like_pattern(query),),
                 ).fetchone()
             else:
-                row = conn.execute(f"SELECT COUNT(*) FROM {self.table}").fetchone()
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM {self.table}" + (" WHERE is_system=0" if hide_system else "")
+                ).fetchone()
             return int(row[0])
 
     @blocking
