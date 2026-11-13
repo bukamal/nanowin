@@ -737,3 +737,21 @@ def test_cancel_paid_sale_is_refused(tmp_path):
     )
     with pytest.raises(ValueError):
         ctx.invoices.cancel_sale_order(inv)
+
+
+def test_reworded_line_does_not_void_same_item(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+    ctx.section_print.dispatch_pending(sender=lambda *a: None)
+    customer_id = ctx.invoices.get_invoice(inv)["customer_id"]
+
+    # Same item & quantity, different wording -> not a cancellation.
+    ctx.invoices.update_invoice(
+        inv, invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا كبيرة", item_id=item, quantity=1, unit_price=10)],
+        customer_id=customer_id, paid_amount=0, reference="طاولة 1",
+    )
+    assert ctx.sections.pending_jobs() == []

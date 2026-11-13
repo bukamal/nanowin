@@ -185,21 +185,32 @@ class SectionPrintService:
 
     def _void_tickets(self, invoice: dict, before_lines: list[dict], after_lines: list[dict]) -> list[tuple]:
         def key_of(line: dict) -> tuple:
-            return (line.get("item_id"), str(line.get("description") or ""))
+            # Match inventory lines by item id so a reworded description on the
+            # same item does not look like a removal; free-text lines (no item)
+            # fall back to their description.
+            item_id = line.get("item_id")
+            if item_id is not None:
+                return ("item", int(item_id))
+            return ("desc", str(line.get("description") or ""))
 
         old_qty: dict[tuple, float] = {}
+        meta: dict[tuple, tuple] = {}
         for line in before_lines:
-            old_qty[key_of(line)] = old_qty.get(key_of(line), 0.0) + float(line.get("quantity") or 0)
+            k = key_of(line)
+            old_qty[k] = old_qty.get(k, 0.0) + float(line.get("quantity") or 0)
+            meta.setdefault(k, (line.get("item_id"), str(line.get("description") or "")))
         new_qty: dict[tuple, float] = {}
         for line in after_lines:
-            new_qty[key_of(line)] = new_qty.get(key_of(line), 0.0) + float(line.get("quantity") or 0)
-        voids = [
-            (item_key, old_qty[item_key] - new_qty.get(item_key, 0.0))
-            for item_key in old_qty
-            if old_qty[item_key] - new_qty.get(item_key, 0.0) > 1e-9
-        ]
+            k = key_of(line)
+            new_qty[k] = new_qty.get(k, 0.0) + float(line.get("quantity") or 0)
+        voids: list[tuple] = []
+        for item_key, old in old_qty.items():
+            delta = old - new_qty.get(item_key, 0.0)
+            if delta > 1e-9:
+                item_id, description = meta.get(item_key, (None, ""))
+                voids.append((item_id, description, delta))
         grouped: dict[int, list[dict]] = {}
-        for (item_id, description), qty in voids:
+        for item_id, description, qty in voids:
             section_id = self.sections.section_for_item(item_id) if item_id is not None else None
             if section_id is None:
                 continue

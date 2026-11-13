@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from datetime import datetime, timezone
 
 import copy
 import flet as ft
@@ -148,6 +149,7 @@ class POSCenter:
         # editing (None = a brand-new sale).
         self._editing_order_id: int | None = None
         self._editing_order_ref: str = ""
+        self._editing_sent_at: str | None = None
         self._pending_table_name: str = ""
         self.held: list[dict] = []  # [{"label": str, "cart": dict, "order": list, "customer_id": int|None}]
         self.customer_id: int | None = None
@@ -1071,6 +1073,7 @@ class POSCenter:
                     )
                     self._editing_order_id = None
                     self._editing_order_ref = ""
+                    self._editing_sent_at = None
                     self._pending_table_name = ""
                     try:
                         _refresh_order_mode()
@@ -1537,6 +1540,7 @@ class POSCenter:
             edited_id = self._editing_order_id
             self._editing_order_id = None
             self._editing_order_ref = ""
+            self._editing_sent_at = None
             clear_cart(undoable=False)
             refresh_cart()
             refresh_today_summary()
@@ -1587,6 +1591,8 @@ class POSCenter:
                     self.cart_order.append(key)
             self._editing_order_id = int(invoice_id)
             self._editing_order_ref = str(invoice.get("reference") or "")
+            stamps = [ln.get("printed_at") for ln in (invoice.get("lines") or []) if ln.get("printed_at")]
+            self._editing_sent_at = max(stamps) if stamps else None
             refresh_cart()
             _refresh_order_mode()
             message = f"تم تحميل الطلب #{invoice_id}"
@@ -1597,6 +1603,7 @@ class POSCenter:
         def _new_order(_=None) -> None:
             self._editing_order_id = None
             self._editing_order_ref = ""
+            self._editing_sent_at = None
             self._pending_table_name = ""
             clear_cart(undoable=False)
             refresh_cart()
@@ -2242,7 +2249,16 @@ class POSCenter:
                 pass
             if editing:
                 label = self._editing_order_ref or f"#{self._editing_order_id}"
-                order_indicator.value = f"تعديل الطلب: {label}"
+                elapsed = ""
+                sent_at = getattr(self, "_editing_sent_at", None)
+                if sent_at:
+                    try:
+                        sent = datetime.strptime(str(sent_at)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                        mins = int(max(0.0, (datetime.now(timezone.utc) - sent).total_seconds()) / 60)
+                        elapsed = f" · منذ {mins} د"
+                    except Exception:
+                        elapsed = ""
+                order_indicator.value = f"تعديل الطلب: {label}{elapsed}"
             order_indicator.visible = editing
             cancel_order_btn.visible = editing
             for ctrl in (order_btn, update_btn, settle_btn, order_indicator, cancel_order_btn):
@@ -2311,7 +2327,7 @@ class POSCenter:
         # without leaving POS (nothing stays a separate screen).
         _restaurant_on = restaurant_settings.enabled(self.ctx.settings)
         tab_state = {"key": "sale"}
-        body_holder = ft.Container(body, expand=True)
+        body_holder = ft.Container(body, expand=True, opacity=1, animate_opacity=ft.Animation(160, ft.AnimationCurve.EASE_OUT))
         workspace_controls = {"sale": body}
         workspace_renders: dict = {}
         tab_toggle = None
@@ -2345,6 +2361,7 @@ class POSCenter:
                 key = tab_toggle.value or "sale"
                 tab_state["key"] = key
                 body_holder.content = workspace_controls.get(key, body)
+                body_holder.opacity = 0
                 try:
                     body_holder.update()
                 except Exception:
@@ -2355,10 +2372,19 @@ class POSCenter:
                         render()
                     except Exception:
                         pass
+
+                async def _fade_in() -> None:
+                    await asyncio.sleep(0.02)
+                    body_holder.opacity = 1
+                    try:
+                        body_holder.update()
+                    except Exception:
+                        pass
+
                 try:
-                    self.page.update()
+                    self.page.run_task(_fade_in)
                 except Exception:
-                    pass
+                    body_holder.opacity = 1
 
             tab_toggle.on_change = _select_tab
             try:
