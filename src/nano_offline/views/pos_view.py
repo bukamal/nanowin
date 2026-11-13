@@ -26,7 +26,12 @@ from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_marg
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import restaurant_settings
-from nano_offline.components.restaurant_boards import open_kitchen_board, open_tables_board
+from nano_offline.components.restaurant_boards import (
+    open_kitchen_board,
+    open_tables_board,
+    kitchen_workspace,
+    tables_workspace,
+)
 from nano_offline.core.units import is_weighted_unit
 from nano_offline.core.platform_capabilities import supports
 from nano_offline.core import sound as sound_engine
@@ -2211,11 +2216,70 @@ class POSCenter:
         refresh_tables()
         _refresh_order_mode()
 
+        # Restaurant workspace: switch the body between sale / orders / kitchen
+        # without leaving POS (nothing stays a separate screen).
+        _restaurant_on = restaurant_settings.enabled(self.ctx.settings)
+        tab_state = {"key": "sale"}
+        body_holder = ft.Container(body, expand=True)
+        workspace_controls = {"sale": body}
+        workspace_renders: dict = {}
+        tab_toggle = None
+        if _restaurant_on:
+            try:
+                orders_ctrl, orders_render = tables_workspace(
+                    self.ctx, self.notify, self.money,
+                    on_open_order=lambda i: _load_order(i) if i is not None else None,
+                    on_free_table=_set_pending_table,
+                    use_tables=self._use_tables,
+                )
+                kitchen_ctrl, kitchen_render = kitchen_workspace(self.ctx, self.notify)
+                workspace_controls["orders"] = orders_ctrl
+                workspace_controls["kitchen"] = kitchen_ctrl
+                workspace_renders = {"orders": orders_render, "kitchen": kitchen_render}
+                orders_render()
+                kitchen_render()
+            except Exception:
+                pass
+            tab_toggle = SegmentedToggle(
+                options=[
+                    SegmentOption("sale", "البيع"),
+                    SegmentOption("orders", "الطلبات"),
+                    SegmentOption("kitchen", "المطبخ"),
+                ],
+                value="sale",
+            )
+
+            def _select_tab(_=None) -> None:
+                key = tab_toggle.value or "sale"
+                tab_state["key"] = key
+                body_holder.content = workspace_controls.get(key, body)
+                try:
+                    body_holder.update()
+                except Exception:
+                    pass
+                render = workspace_renders.get(key)
+                if render is not None:
+                    try:
+                        render()
+                    except Exception:
+                        pass
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+
+            tab_toggle.on_change = _select_tab
+            try:
+                header_row = tables_strip.content.controls[0]
+                header_row.controls.insert(0, tab_toggle)
+            except Exception:
+                pass
+
         main_column = ft.Column(
             [
                 pos_header,
-                *([tables_strip] if restaurant_settings.enabled(self.ctx.settings) else []),
-                body,
+                *([tables_strip] if _restaurant_on else []),
+                body_holder if _restaurant_on else body,
             ],
             spacing=0,
             expand=True,
