@@ -60,6 +60,11 @@ class TableRepository:
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM restaurant_tables WHERE id=?", (int(table_id),))
 
+    def delete_all(self) -> int:
+        with self.db.transaction() as conn:
+            cur = conn.execute("DELETE FROM restaurant_tables")
+            return int(cur.rowcount or 0)
+
     def create_many(
         self, *, area: str | None = None, start: int = 1, count: int = 10, prefix: str = ""
     ) -> int:

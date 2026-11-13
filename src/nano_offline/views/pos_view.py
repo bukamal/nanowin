@@ -2305,11 +2305,6 @@ class POSCenter:
                                 on_click=lambda _=None: open_kitchen_board(self.page, self.ctx, self.notify),
                                 icon_size=18,
                             ),
-                            ft.IconButton(icon=ft.Icons.ADD, tooltip="طلب جديد", on_click=_new_order, icon_size=18),
-                            ft.IconButton(
-                                icon=ft.Icons.REFRESH, tooltip="تحديث",
-                                on_click=lambda _=None: refresh_tables(), icon_size=18,
-                            ),
                         ],
                         spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),

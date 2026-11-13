@@ -755,3 +755,10 @@ def test_reworded_line_does_not_void_same_item(tmp_path):
         customer_id=customer_id, paid_amount=0, reference="طاولة 1",
     )
     assert ctx.sections.pending_jobs() == []
+
+
+def test_tables_delete_all(tmp_path):
+    ctx = _ctx(tmp_path)
+    ctx.tables.create_many(area="صالة", start=1, count=5)
+    assert ctx.tables.delete_all() == 5
+    assert ctx.tables.list() == []

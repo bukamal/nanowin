@@ -104,7 +104,7 @@ def tables_workspace(
     toolbar = ft.Row(spacing=6, run_spacing=6, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     areas_row = ft.Row(spacing=14, run_spacing=14, wrap=True)
     list_col = ft.Column(spacing=8, tight=True)
-    body = ft.Container(areas_row, expand=True)
+    body = ft.Container(areas_row, expand=True, bgcolor=Colors.WHITE)
 
     def _entry(name: str, order: dict | None) -> dict:
         if order is None:
@@ -384,7 +384,7 @@ def tables_workspace(
 
     control = ft.Container(
         ft.Column([toolbar, body], spacing=8, expand=True),
-        expand=True, padding=4,
+        expand=True, padding=4, bgcolor=Colors.WHITE,
     )
     return control, render
 

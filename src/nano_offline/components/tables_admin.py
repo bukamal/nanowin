@@ -158,6 +158,26 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
         page.open(dialog)
 
     bulk_btn = secondary_button("إنشاء بالعدد", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=lambda _=None: open_bulk(), width=None, size="md")
+
+    def confirm_delete_all() -> None:
+        dialog = ft.AlertDialog(modal=True, title=ft.Text("حذف كل الطاولات"))
+
+        def yes(_=None) -> None:
+            try:
+                removed = ctx.tables.delete_all()
+            except Exception as exc:
+                notify(str(exc), kind="error")
+                page.close(dialog)
+                return
+            page.close(dialog)
+            render()
+            notify(f"تم حذف {removed} طاولة", kind="success")
+
+        dialog.content = ft.Text("سيتم حذف كل الطاولات. هل تريد المتابعة؟")
+        dialog.actions = [ft.TextButton("إلغاء", on_click=lambda _=None: page.close(dialog)), ft.FilledButton("حذف الكل", on_click=yes)]
+        page.open(dialog)
+
+    delete_all_btn = secondary_button("حذف الكل", icon=ft.Icons.DELETE_SWEEP, on_click=lambda _=None: confirm_delete_all(), width=None, size="md")
     sheet.content = sheets.sheet_frame(
         ft.Column(
             [
@@ -167,7 +187,7 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
                     subtitle="تسميات الطاولات والمناطق — تظهر في نقطة البيع ولوحة الطاولات",
                     icon=ft.Icons.APPS_ROUNDED,
                     on_close=close,
-                    trailing=ft.Row([bulk_btn, add_btn], spacing=8),
+                    trailing=ft.Row([bulk_btn, delete_all_btn, add_btn], spacing=8),
                 ),
                 ft.Container(
                     ft.Column([list_col], scroll=ft.ScrollMode.AUTO),
