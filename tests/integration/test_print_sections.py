@@ -649,3 +649,28 @@ def test_sales_by_section_payment_filter(tmp_path):
     open_rows = ctx.sections.sales_by_section(payment="open")
     assert sum(r["revenue"] for r in paid_rows) == pytest.approx(20)
     assert sum(r["revenue"] for r in open_rows) == pytest.approx(10)
+
+
+def test_partial_payments_accumulate_on_open_order(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+    customer_id = ctx.invoices.get_invoice(inv)["customer_id"]
+    line = InvoiceLineInput(description="بيتزا", item_id=item, quantity=1, unit_price=10)
+
+    def pay(amount: float) -> None:
+        ctx.invoices.update_invoice(
+            inv, invoice_type="sale", lines=[line],
+            customer_id=customer_id, paid_amount=amount, reference="طاولة 1",
+        )
+
+    pay(4.0)
+    row = ctx.invoices.get_invoice(inv)
+    assert float(row["paid_amount"]) == pytest.approx(4)
+    assert [o["id"] for o in ctx.invoices.open_sale_orders()] == [inv]
+
+    pay(10.0)  # pays the rest -> closes
+    assert float(ctx.invoices.get_invoice(inv)["paid_amount"]) == pytest.approx(10)
+    assert ctx.invoices.open_sale_orders() == []

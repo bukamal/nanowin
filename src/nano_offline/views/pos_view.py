@@ -1027,21 +1027,26 @@ class POSCenter:
                     for r in rows_list if float(r.get("discount_pct") or 0) > 0
                 ]
                 sale_notes = ("خصومات — " + "، ".join(discount_lines[:8])) if discount_lines else None
+                prepaid = 0.0
                 if self._editing_order_id is not None:
-                    # Restaurant mode: paying an existing open order settles it
-                    # through this same POS payment sheet (no invoice-editor
-                    # detour). The used customer/reference are kept.
+                    # Restaurant mode: paying a loaded open order through this
+                    # same POS payment sheet. A partial amount keeps it open
+                    # with a smaller remaining (supports several payments);
+                    # paying the rest closes it.
                     try:
                         existing = self.ctx.invoices.get_invoice(int(self._editing_order_id)) or {}
                     except Exception:
                         existing = {}
                     invoice_id = int(self._editing_order_id)
+                    already_paid = float(existing.get("paid_amount") or 0)
+                    prepaid = already_paid
+                    target_paid = min(total, already_paid + received)
                     self.ctx.invoices.update_invoice(
                         invoice_id,
                         invoice_type="sale",
                         lines=lines,
                         customer_id=self.customer_id or existing.get("customer_id"),
-                        paid_amount=total,
+                        paid_amount=target_paid,
                         reference=existing.get("reference"),
                         notes=sale_notes or existing.get("notes"),
                         allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
@@ -1067,7 +1072,7 @@ class POSCenter:
                         allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
                     )
                 self._last_invoice_id = invoice_id
-                change_amt = max(0.0, received - total)
+                change_amt = max(0.0, received - max(0.0, total - prepaid))
                 # The sale is committed from this point on. Clear the cart
                 # immediately so a second click (or a UI glitch while showing
                 # the success overlay) can never turn one sale into two.
