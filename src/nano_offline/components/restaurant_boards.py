@@ -61,13 +61,14 @@ def _order_elapsed(order_lines: list[dict]) -> float | None:
 
 
 def _order_ready(order_lines: list[dict]) -> bool:
-    ready = [line.get("kitchen_ready_at") for line in order_lines if line.get("kitchen_ready_at")]
-    if not ready:
-        return False
-    sent = [line.get("printed_at") for line in order_lines if line.get("printed_at")]
+    """True only when every sent line has been marked ready after its send."""
+    sent = [line for line in order_lines if line.get("printed_at")]
     if not sent:
-        return True
-    return max(ready) >= max(sent)
+        return False
+    return all(
+        line.get("kitchen_ready_at") and line["kitchen_ready_at"] >= line["printed_at"]
+        for line in sent
+    )
 
 
 def _section_names(ctx) -> dict[int, str]:
@@ -266,12 +267,20 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
             elapsed = _order_elapsed(invoice.get("lines") or [])
             ready = _order_ready(invoice.get("lines") or [])
             label = str(order.get("reference") or "").strip() or f"#{order['id']}"
+            sent_lines = [ln for ln in (invoice.get("lines") or []) if ln.get("printed_at")]
+            ready_lines = [
+                ln for ln in sent_lines
+                if ln.get("kitchen_ready_at") and ln["kitchen_ready_at"] >= ln["printed_at"]
+            ]
+            status_text = "جاهز" if ready else _age_label(elapsed)
+            if sent_lines and not ready:
+                status_text = f"{_age_label(elapsed)} · {len(ready_lines)}/{len(sent_lines)}"
             body: list[ft.Control] = [
                 ft.Row(
                     [
                         ft.Text(label, size=14, weight=ft.FontWeight.BOLD, expand=True),
                         ft.Container(
-                            ft.Text("جاهز" if ready else _age_label(elapsed), size=10, color="#FFFFFF"),
+                            ft.Text(status_text, size=10, color="#FFFFFF"),
                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
                             bgcolor=Colors.SUCCESS_DARK if ready else _age_color(elapsed),
                             border_radius=10,
@@ -287,8 +296,30 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                 body.append(ft.Text(str(names.get(int(section_id)) or f"قسم {section_id}"),
                                     size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK))
                 for line in lines:
-                    body.append(ft.Text(f"{float(line.get('quantity') or 0):g} × {line.get('name')}",
-                                        size=12, color=Colors.TEXT_PRIMARY))
+                    line_ready = (
+                        line.get("printed_at") and line.get("kitchen_ready_at")
+                        and line["kitchen_ready_at"] >= line["printed_at"]
+                    )
+                    row_controls: list[ft.Control] = [
+                        ft.Text(
+                            f"{float(line.get('quantity') or 0):g} × {line.get('name')}",
+                            size=12, color=Colors.TEXT_PRIMARY, expand=True,
+                        )
+                    ]
+                    if line.get("printed_at") and not line_ready:
+                        def _mark_line(_=None, lid=int(line["line_id"])) -> None:
+                            try:
+                                ctx.sections.mark_lines_ready([int(lid)])
+                            except Exception:
+                                pass
+                            render()
+                        row_controls.append(ft.IconButton(
+                            icon=ft.Icons.CHECK_CIRCLE_OUTLINE, tooltip="جاهز",
+                            on_click=_mark_line, icon_size=18, icon_color=Colors.SUCCESS_DARK,
+                        ))
+                    elif line_ready:
+                        row_controls.append(ft.Icon(ft.Icons.CHECK_CIRCLE, size=16, color=Colors.SUCCESS_DARK))
+                    body.append(ft.Row(row_controls, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
             if not ready:
                 def _mark_ready(_=None, i=int(order["id"])) -> None:
                     try:
@@ -296,7 +327,7 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                     except Exception:
                         pass
                     render()
-                body.append(ft.ElevatedButton("تم التحضير", icon=ft.Icons.CHECK_CIRCLE_OUTLINE, on_click=_mark_ready))
+                body.append(ft.ElevatedButton("تم كل التحضير", icon=ft.Icons.DONE_ALL, on_click=_mark_ready))
             cards.append(ft.Container(
                 ft.Column(body, spacing=4, tight=True),
                 width=240, padding=12, bgcolor=Colors.WHITE,

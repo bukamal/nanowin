@@ -32,3 +32,14 @@ def test_order_ready_resets_on_newer_send():
     assert _order_ready([{"printed_at": "2026-01-01 10:00:00", "kitchen_ready_at": "2026-01-01 10:05:00"}]) is True
     # A send newer than the ready mark means it is cooking again.
     assert _order_ready([{"printed_at": "2026-01-01 10:10:00", "kitchen_ready_at": "2026-01-01 10:05:00"}]) is False
+
+
+def test_order_ready_requires_every_sent_line():
+    from nano_offline.components.restaurant_boards import _order_ready
+
+    partial = [
+        {"printed_at": "2026-01-01 10:00:00", "kitchen_ready_at": "2026-01-01 10:05:00"},
+        {"printed_at": "2026-01-01 10:00:00", "kitchen_ready_at": None},
+    ]
+    assert _order_ready(partial) is False
+    assert _order_ready([{**partial[1], "kitchen_ready_at": "2026-01-01 10:06:00"}, partial[0]]) is True

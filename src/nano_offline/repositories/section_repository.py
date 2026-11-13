@@ -149,6 +149,7 @@ class SectionRepository:
         included (incremental "send new items to kitchen").
         """
         sql = """SELECT il.id AS line_id, il.quantity, il.description,
+                          il.printed_at, il.kitchen_ready_at,
                           it.name AS item_name,
                           COALESCE(it.section_id, c.section_id) AS section_id
                    FROM invoice_lines il
@@ -170,9 +171,22 @@ class SectionRepository:
                     "line_id": int(row["line_id"]),
                     "name": str(row["item_name"] or row["description"] or ""),
                     "quantity": float(row["quantity"] or 0),
+                    "printed_at": row["printed_at"],
+                    "kitchen_ready_at": row["kitchen_ready_at"],
                 }
             )
         return grouped
+
+    def mark_lines_ready(self, line_ids: list[int]) -> None:
+        ids = [int(i) for i in line_ids if i is not None]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"UPDATE invoice_lines SET kitchen_ready_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
+                ids,
+            )
 
     def mark_lines_printed(self, line_ids: list[int]) -> None:
         ids = [int(i) for i in line_ids if i is not None]

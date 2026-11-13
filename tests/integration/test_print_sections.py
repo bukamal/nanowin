@@ -674,3 +674,20 @@ def test_partial_payments_accumulate_on_open_order(tmp_path):
     pay(10.0)  # pays the rest -> closes
     assert float(ctx.invoices.get_invoice(inv)["paid_amount"]) == pytest.approx(10)
     assert ctx.invoices.open_sale_orders() == []
+
+
+def test_mark_single_line_ready(tmp_path):
+    ctx = _ctx(tmp_path)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    a = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    b = ctx.items.create(name="سلطة", item_type="مخزون", quantity=100, selling_price=5, section_id=sid)
+    inv = _open_order(ctx, [(a, "بيتزا", 1, 10), (b, "سلطة", 1, 5)], "طاولة 1")
+
+    grouped = ctx.sections.invoice_section_lines(inv)
+    line_ids = [line["line_id"] for lines in grouped.values() for line in lines]
+    assert len(line_ids) == 2
+
+    ctx.sections.mark_lines_ready([line_ids[0]])
+    lines = ctx.invoices.get_invoice(inv)["lines"]
+    ready = [ln for ln in lines if ln.get("kitchen_ready_at")]
+    assert len(ready) == 1
