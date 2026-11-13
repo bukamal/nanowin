@@ -60,6 +60,34 @@ class TableRepository:
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM restaurant_tables WHERE id=?", (int(table_id),))
 
+    def create_many(
+        self, *, area: str | None = None, start: int = 1, count: int = 10, prefix: str = ""
+    ) -> int:
+        """Create numbered tables ``prefix + start`` .. ``prefix + start+n-1``."""
+        try:
+            start = int(start)
+            count = int(count)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("قيم الإنشاء غير صحيحة") from exc
+        if count < 1 or count > 500:
+            raise ValueError("عدد الطاولات يجب أن يكون بين 1 و 500")
+        area = (area or "").strip() or None
+        prefix = (prefix or "").strip()
+        created = 0
+        with self.db.transaction() as conn:
+            existing = {str(r["name"]) for r in conn.execute("SELECT name FROM restaurant_tables").fetchall()}
+            for number in range(start, start + count):
+                name = f"{prefix}{number}".strip()
+                if not name or name in existing:
+                    continue
+                conn.execute(
+                    "INSERT INTO restaurant_tables(name,area,sort_order,active) VALUES(?,?,?,1)",
+                    (name, area, number),
+                )
+                existing.add(name)
+                created += 1
+        return created
+
     def reorder(self, table_id: int, target_id: int) -> None:
         """Move ``table_id`` into ``target_id``'s area, just before it."""
         if int(table_id) == int(target_id):

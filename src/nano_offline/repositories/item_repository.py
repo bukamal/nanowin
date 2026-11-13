@@ -137,6 +137,7 @@ class ItemRepository(Offloadable):
         """
         sql = """
         SELECT i.*, c.name AS category_name, u.abbreviation AS unit_abbreviation,
+               COALESCE(i.section_id, c.section_id) AS section_id,
                COALESCE(SUM(CASE WHEN inv.type='sale' THEN il.quantity_in_base ELSE 0 END), 0) AS sold_qty
         FROM items i
         LEFT JOIN categories c ON c.id = i.category_id

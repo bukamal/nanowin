@@ -26,7 +26,7 @@ from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_marg
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import restaurant_settings
-from nano_offline.components.restaurant_boards import open_tables_board
+from nano_offline.components.restaurant_boards import open_kitchen_board, open_tables_board
 from nano_offline.core.units import is_weighted_unit
 from nano_offline.core.platform_capabilities import supports
 from nano_offline.core import sound as sound_engine
@@ -277,7 +277,16 @@ class POSCenter:
         self._pos_active = True
         items = self.ctx.items.pos_catalog()
         self.item_map = {int(i["id"]): i for i in items}
-        categories = self.ctx.definitions.list_categories()
+        # Restaurant mode groups the catalog rail by print section (kitchen,
+        # bar, ...) instead of category, so the cashier thinks in stations.
+        self._group_by_section = restaurant_settings.enabled(self.ctx.settings)
+        if self._group_by_section:
+            try:
+                groups = [{"id": int(s["id"]), "name": str(s["name"])} for s in self.ctx.sections.list(active_only=True)]
+            except Exception:
+                groups = []
+        else:
+            groups = self.ctx.definitions.list_categories()
         customers = self.ctx.customers.list()
         customer_map = {int(c["id"]): c for c in customers}
 
@@ -433,12 +442,13 @@ class POSCenter:
                     Colors.TEXT_MUTED_DARK, ft.Icons.APPS, lambda _: set_category(None),
                 )
             ]
-            for idx, cat in enumerate(categories):
+            for idx, cat in enumerate(groups):
                 active = state["category_id"] == int(cat["id"])
                 color = CHIP_PALETTE[idx % len(CHIP_PALETTE)]
                 controls.append(
                     self._rail_category(
-                        cat["name"], active, color, ft.Icons.LABEL_OUTLINE,
+                        cat["name"], active, color,
+                        ft.Icons.RESTAURANT_OUTLINED if self._group_by_section else ft.Icons.LABEL_OUTLINE,
                         lambda _, c=int(cat["id"]): set_category(c),
                     )
                 )
@@ -493,8 +503,12 @@ class POSCenter:
             cat_id = state["category_id"]
             matched = []
             for item in items:
-                if cat_id is not None and item.get("category_id") != cat_id:
-                    continue
+                if cat_id is not None:
+                    if self._group_by_section:
+                        if item.get("section_id") != cat_id:
+                            continue
+                    elif item.get("category_id") != cat_id:
+                        continue
                 if q:
                     name = normalize_ar(str(item["name"]).casefold())
                     barcode = str(item.get("barcode") or "")
@@ -1492,6 +1506,44 @@ class POSCenter:
             self._pending_table_name = str(name or "")
             self.notify(f"طاولة {name}: أضف الأصناف ثم «حفظ كطلب»")
 
+        def _quick_add_tables(_=None) -> None:
+            dialog = ft.AlertDialog(modal=True)
+            area_f = SelectAllTextField(label="المنطقة (اختياري)")
+            start_f = SelectAllTextField(label="تبدأ من الرقم", value="1", keyboard_type=ft.KeyboardType.NUMBER)
+            count_f = SelectAllTextField(label="العدد", value="10", keyboard_type=ft.KeyboardType.NUMBER)
+            status = ft.Text("", size=11, color=Colors.DANGER)
+
+            def save(_e=None) -> None:
+                try:
+                    created = self.ctx.tables.create_many(
+                        area=area_f.value or "",
+                        start=int(start_f.value or 1),
+                        count=int(count_f.value or 0),
+                    )
+                except Exception as exc:
+                    status.value = str(exc)
+                    status.update()
+                    return
+                self.page.close(dialog)
+                refresh_tables()
+                self.notify(f"تمت إضافة {created} طاولة", kind="success")
+
+            dialog.title = ft.Text("إنشاء طاولات بالعدد")
+            dialog.content = ft.Column(
+                [
+                    ft.Text("مثال: العدد 10 ينتج الطاولات 1..10.", size=11, color=Colors.TEXT_SECONDARY),
+                    area_f,
+                    ft.Row([ft.Container(start_f, expand=True), ft.Container(count_f, expand=True)], spacing=8),
+                    status,
+                ],
+                spacing=9, tight=True, width=380,
+            )
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=lambda _=None: self.page.close(dialog)),
+                ft.FilledButton("إنشاء", icon=ft.Icons.ADD, on_click=save),
+            ]
+            self.page.open(dialog)
+
         def save_as_order(_=None) -> None:
             if self._editing_order_id is not None:
                 if not self.cart_order:
@@ -2093,6 +2145,15 @@ class POSCenter:
                             order_indicator,
                             ft.Container(expand=True),
                             cancel_order_btn,
+                            ft.IconButton(
+                                icon=ft.Icons.ADD_CIRCLE_OUTLINE, tooltip="إضافة طاولات",
+                                on_click=_quick_add_tables, icon_size=18,
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.RECEIPT_LONG_OUTLINED, tooltip="شاشة المطبخ",
+                                on_click=lambda _=None: open_kitchen_board(self.page, self.ctx, self.notify),
+                                icon_size=18,
+                            ),
                             ft.IconButton(
                                 icon=ft.Icons.APPS_ROUNDED, tooltip="لوحة الطاولات",
                                 on_click=lambda _=None: open_tables_board(

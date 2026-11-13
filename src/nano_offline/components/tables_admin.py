@@ -5,7 +5,7 @@ from __future__ import annotations
 import flet as ft
 
 from nano_offline.components import SelectAllTextField, sheets
-from nano_offline.components.buttons import primary_button, inline_icon_button
+from nano_offline.components.buttons import primary_button, secondary_button, inline_icon_button
 from nano_offline.core.theme import Colors, Radius
 
 __all__ = ["open_tables_admin"]
@@ -112,6 +112,52 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
         page.open(dialog)
 
     add_btn = primary_button("طاولة جديدة", icon=ft.Icons.ADD_ROUNDED, on_click=lambda _=None: open_form(), width=None, size="md")
+
+    def open_bulk() -> None:
+        dialog = ft.AlertDialog(modal=True)
+        area_f = SelectAllTextField(label="المنطقة (اختياري)")
+        start_f = SelectAllTextField(label="تبدأ من الرقم", value="1", keyboard_type=ft.KeyboardType.NUMBER)
+        count_f = SelectAllTextField(label="العدد", value="10", keyboard_type=ft.KeyboardType.NUMBER)
+        prefix_f = SelectAllTextField(label="بادئة الاسم (اختياري)")
+        status = ft.Text("", size=11, color=Colors.DANGER)
+
+        def save(_=None) -> None:
+            try:
+                created = ctx.tables.create_many(
+                    area=area_f.value or "",
+                    start=int(start_f.value or 1),
+                    count=int(count_f.value or 0),
+                    prefix=prefix_f.value or "",
+                )
+            except Exception as exc:
+                status.value = str(exc)
+                status.update()
+                return
+            page.close(dialog)
+            render()
+            notify(f"تمت إضافة {created} طاولة", kind="success")
+
+        dialog.title = ft.Text("إنشاء طاولات بالعدد")
+        dialog.content = ft.Column(
+            [
+                ft.Text("مثال: العدد 10 ينتج الطاولات 1..10 في المنطقة المحددة.", size=11, color=Colors.TEXT_SECONDARY),
+                area_f,
+                ft.Row(
+                    [ft.Container(start_f, expand=True), ft.Container(count_f, expand=True)],
+                    spacing=8,
+                ),
+                prefix_f,
+                status,
+            ],
+            spacing=9, tight=True, width=400,
+        )
+        dialog.actions = [
+            ft.TextButton("إلغاء", on_click=lambda _=None: page.close(dialog)),
+            ft.FilledButton("إنشاء", icon=ft.Icons.ADD, on_click=save),
+        ]
+        page.open(dialog)
+
+    bulk_btn = secondary_button("إنشاء بالعدد", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=lambda _=None: open_bulk(), width=None, size="md")
     sheet.content = sheets.sheet_frame(
         ft.Column(
             [
@@ -121,7 +167,7 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
                     subtitle="تسميات الطاولات والمناطق — تظهر في نقطة البيع ولوحة الطاولات",
                     icon=ft.Icons.APPS_ROUNDED,
                     on_close=close,
-                    trailing=add_btn,
+                    trailing=ft.Row([bulk_btn, add_btn], spacing=8),
                 ),
                 ft.Container(
                     ft.Column([list_col], scroll=ft.ScrollMode.AUTO),

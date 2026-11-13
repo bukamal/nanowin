@@ -558,3 +558,13 @@ def test_reorder_tables_moves_into_target_area_before_it(tmp_path):
     assert hall == ["3", "1", "2"]
     assert ctx.tables.get(c)["area"] == "صالة"
     _ = b
+
+
+def test_create_many_tables_by_count(tmp_path):
+    ctx = _ctx(tmp_path)
+    created = ctx.tables.create_many(area="صالة", start=1, count=5)
+    assert created == 5
+    assert [t["name"] for t in ctx.tables.list() if t["area"] == "صالة"] == ["1", "2", "3", "4", "5"]
+    # Re-running skips existing numbers.
+    assert ctx.tables.create_many(area="صالة", start=1, count=3) == 0
+    assert ctx.tables.create_many(area="تراس", start=6, count=2, prefix="ط-") == 2
