@@ -1040,7 +1040,7 @@ class POSCenter:
                         invoice_id,
                         invoice_type="sale",
                         lines=lines,
-                        customer_id=existing.get("customer_id"),
+                        customer_id=self.customer_id or existing.get("customer_id"),
                         paid_amount=total,
                         reference=existing.get("reference"),
                         notes=sale_notes or existing.get("notes"),

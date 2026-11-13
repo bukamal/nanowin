@@ -577,3 +577,39 @@ def test_restaurant_use_tables_flag(tmp_path):
     assert restaurant_settings.use_tables(ctx.settings) is True
     restaurant_settings.set_use_tables(ctx.settings, False)
     assert restaurant_settings.use_tables(ctx.settings) is False
+
+
+def test_restaurant_anonymous_paid_sale_has_no_party(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    inv = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=item, quantity=1, unit_price=10)],
+        paid_amount=10,
+        customer_id=None,
+    )
+    # A normal cash sale without a customer stays anonymous (نقدي), it is NOT
+    # parked on the open-orders account.
+    assert ctx.invoices.get_invoice(inv)["customer_id"] is None
+
+
+def test_settling_open_order_with_customer_switches_party(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+    system_party = ctx.invoices.get_invoice(inv)["customer_id"]
+    assert system_party is not None
+
+    customer_id = ctx.customers.create("علي", "0999", "دمشق")
+    ctx.invoices.update_invoice(
+        inv,
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=item, quantity=1, unit_price=10)],
+        customer_id=customer_id,
+        paid_amount=10,
+    )
+    assert ctx.invoices.get_invoice(inv)["customer_id"] == customer_id
