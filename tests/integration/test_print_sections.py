@@ -568,3 +568,12 @@ def test_create_many_tables_by_count(tmp_path):
     # Re-running skips existing numbers.
     assert ctx.tables.create_many(area="صالة", start=1, count=3) == 0
     assert ctx.tables.create_many(area="تراس", start=6, count=2, prefix="ط-") == 2
+
+
+def test_restaurant_use_tables_flag(tmp_path):
+    ctx = _ctx(tmp_path)
+    assert restaurant_settings.use_tables(ctx.settings) is False
+    restaurant_settings.set_use_tables(ctx.settings, True)
+    assert restaurant_settings.use_tables(ctx.settings) is True
+    restaurant_settings.set_use_tables(ctx.settings, False)
+    assert restaurant_settings.use_tables(ctx.settings) is False

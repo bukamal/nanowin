@@ -71,6 +71,13 @@ class AdminCenter:
         except Exception as exc:
             self._notify_error(str(exc))
 
+    def _toggle_use_tables(self, e) -> None:
+        try:
+            restaurant_settings.set_use_tables(self.ctx.settings, bool(e.control.value))
+            self._notify("تم تحديث خيار الطاولات", kind="success")
+        except Exception as exc:
+            self._notify_error(str(exc))
+
     def _notify_error(self, text: str):
         # A SnackBar is easy to miss: it auto-dismisses on its own timer and
         # can be visually subtle. Restore/validation failures are exactly
@@ -2781,6 +2788,31 @@ class AdminCenter:
                         ),
                         padding=ft.padding.all(10),
                         bgcolor=Colors.PRIMARY_BG,
+                        border_radius=Radius.MD,
+                    ),
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.APPS_ROUNDED, size=18, color=Colors.PRIMARY),
+                                ft.Column(
+                                    [
+                                        ft.Text("استخدام الطاولات", size=13, weight=ft.FontWeight.W_600),
+                                        ft.Text(
+                                            "عند الإطفاء: يُسمّى كل طلب برقم تلقائي ولا تظهر الطاولات (للطلبات السريعة/التيك أواي).",
+                                            size=10, color=Colors.TEXT_SECONDARY,
+                                        ),
+                                    ],
+                                    spacing=1, expand=True, tight=True,
+                                ),
+                                ft.Switch(
+                                    value=restaurant_settings.use_tables(self.ctx.settings),
+                                    on_change=self._toggle_use_tables,
+                                ),
+                            ],
+                            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.padding.all(10),
+                        bgcolor=Colors.BACKGROUND_ALT,
                         border_radius=Radius.MD,
                     ),
                     ft.Row(

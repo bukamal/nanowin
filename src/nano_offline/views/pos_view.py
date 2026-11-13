@@ -280,6 +280,7 @@ class POSCenter:
         # Restaurant mode groups the catalog rail by print section (kitchen,
         # bar, ...) instead of category, so the cashier thinks in stations.
         self._group_by_section = restaurant_settings.enabled(self.ctx.settings)
+        self._use_tables = restaurant_settings.use_tables(self.ctx.settings)
         if self._group_by_section:
             try:
                 groups = [{"id": int(s["id"]), "name": str(s["name"])} for s in self.ctx.sections.list(active_only=True)]
@@ -1554,6 +1555,9 @@ class POSCenter:
             if not self.cart_order:
                 self.notify("السلة فارغة — أضف أصنافًا أولًا", kind="warning")
                 return
+            if not self._use_tables:
+                _commit_order(None)
+                return
             dialog = ft.AlertDialog(modal=True)
             try:
                 table_options = [
@@ -2076,13 +2080,33 @@ class POSCenter:
 
         def refresh_tables() -> None:
             try:
-                table_list = self.ctx.tables.list(active_only=True)
-            except Exception:
-                table_list = []
-            try:
                 orders = self.ctx.invoices.open_sale_orders(limit=80)
             except Exception:
                 orders = []
+            if not self._use_tables:
+                # No tables: just list the open (auto-numbered) orders.
+                cards: list[ft.Control] = [
+                    _table_chip(
+                        str(order.get("reference") or "").strip() or f"طلب #{order['id']}",
+                        order=order, name=None,
+                    )
+                    for order in orders
+                ]
+                if not cards:
+                    cards.append(ft.Text(
+                        "لا توجد طلبات مفتوحة — أضف أصنافًا ثم «حفظ كطلب».",
+                        size=11, color=Colors.TEXT_SECONDARY,
+                    ))
+                tables_row.controls = cards
+                try:
+                    tables_row.update()
+                except Exception:
+                    pass
+                return
+            try:
+                table_list = self.ctx.tables.list(active_only=True)
+            except Exception:
+                table_list = []
             known = {str(t.get("name")) for t in table_list}
             by_ref: dict[str, dict] = {}
             loose: list[dict] = []
@@ -2092,12 +2116,12 @@ class POSCenter:
                     by_ref[ref] = order
                 else:
                     loose.append(order)
-            cards: list[ft.Control] = []
+            cards = []
             for table in table_list:
                 name = str(table.get("name"))
                 cards.append(_table_chip(name, order=by_ref.get(name), name=name))
             for order in loose:
-                label = str(order.get("reference") or "").strip() or f"طاولة #{order['id']}"
+                label = str(order.get("reference") or "").strip() or f"طلب #{order['id']}"
                 cards.append(_table_chip(label, order=order, name=None))
             if not cards:
                 cards.append(ft.Text(
@@ -2141,31 +2165,37 @@ class POSCenter:
                     ft.Row(
                         [
                             ft.Icon(ft.Icons.RESTAURANT_OUTLINED, size=16, color=Colors.PRIMARY),
-                            ft.Text("الطاولات", size=12, weight=ft.FontWeight.W_600),
+                            ft.Text("الطاولات" if self._use_tables else "الطلبات المفتوحة", size=12, weight=ft.FontWeight.W_600),
                             order_indicator,
                             ft.Container(expand=True),
                             cancel_order_btn,
-                            ft.IconButton(
-                                icon=ft.Icons.ADD_CIRCLE_OUTLINE, tooltip="إضافة طاولات",
-                                on_click=_quick_add_tables, icon_size=18,
+                            *(
+                                [
+                                    ft.IconButton(
+                                        icon=ft.Icons.ADD_CIRCLE_OUTLINE, tooltip="إضافة طاولات",
+                                        on_click=_quick_add_tables, icon_size=18,
+                                    ),
+                                    ft.IconButton(
+                                        icon=ft.Icons.APPS_ROUNDED, tooltip="لوحة الطاولات",
+                                        on_click=lambda _=None: open_tables_board(
+                                            self.page, self.ctx, self.notify, self.money,
+                                            on_open_order=lambda i: _load_order(i) if i is not None else None,
+                                            on_free_table=_set_pending_table,
+                                        ),
+                                        icon_size=18,
+                                    ),
+                                ]
+                                if self._use_tables
+                                else []
                             ),
                             ft.IconButton(
                                 icon=ft.Icons.RECEIPT_LONG_OUTLINED, tooltip="شاشة المطبخ",
                                 on_click=lambda _=None: open_kitchen_board(self.page, self.ctx, self.notify),
                                 icon_size=18,
                             ),
-                            ft.IconButton(
-                                icon=ft.Icons.APPS_ROUNDED, tooltip="لوحة الطاولات",
-                                on_click=lambda _=None: open_tables_board(
-                                    self.page, self.ctx, self.notify, self.money,
-                                    on_open_order=lambda i: _load_order(i) if i is not None else None,
-                                    on_free_table=_set_pending_table,
-                                ),
-                                icon_size=18,
-                            ),
                             ft.IconButton(icon=ft.Icons.ADD, tooltip="طلب جديد", on_click=_new_order, icon_size=18),
                             ft.IconButton(
-                                icon=ft.Icons.REFRESH, tooltip="تحديث الطاولات",
+                                icon=ft.Icons.REFRESH, tooltip="تحديث",
                                 on_click=lambda _=None: refresh_tables(), icon_size=18,
                             ),
                         ],
