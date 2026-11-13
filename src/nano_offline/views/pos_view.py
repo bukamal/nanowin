@@ -1027,14 +1027,45 @@ class POSCenter:
                     for r in rows_list if float(r.get("discount_pct") or 0) > 0
                 ]
                 sale_notes = ("خصومات — " + "، ".join(discount_lines[:8])) if discount_lines else None
-                invoice_id = self.ctx.invoices.create_invoice(
-                    invoice_type="sale",
-                    lines=lines,
-                    customer_id=self.customer_id,
-                    paid_amount=paid,
-                    notes=sale_notes,
-                    allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
-                )
+                if self._editing_order_id is not None:
+                    # Restaurant mode: paying an existing open order settles it
+                    # through this same POS payment sheet (no invoice-editor
+                    # detour). The used customer/reference are kept.
+                    try:
+                        existing = self.ctx.invoices.get_invoice(int(self._editing_order_id)) or {}
+                    except Exception:
+                        existing = {}
+                    invoice_id = int(self._editing_order_id)
+                    self.ctx.invoices.update_invoice(
+                        invoice_id,
+                        invoice_type="sale",
+                        lines=lines,
+                        customer_id=existing.get("customer_id"),
+                        paid_amount=total,
+                        reference=existing.get("reference"),
+                        notes=sale_notes or existing.get("notes"),
+                        allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
+                    )
+                    self._editing_order_id = None
+                    self._editing_order_ref = ""
+                    self._pending_table_name = ""
+                    try:
+                        _refresh_order_mode()
+                    except Exception:
+                        pass
+                    try:
+                        refresh_tables()
+                    except Exception:
+                        pass
+                else:
+                    invoice_id = self.ctx.invoices.create_invoice(
+                        invoice_type="sale",
+                        lines=lines,
+                        customer_id=self.customer_id,
+                        paid_amount=paid,
+                        notes=sale_notes,
+                        allow_negative_stock=pos_settings.allow_negative_stock(self.ctx.settings),
+                    )
                 self._last_invoice_id = invoice_id
                 change_amt = max(0.0, received - total)
                 # The sale is committed from this point on. Clear the cart
@@ -1604,10 +1635,7 @@ class POSCenter:
         def _settle_order(_=None) -> None:
             if self._editing_order_id is None:
                 return
-            if callable(self.on_open_invoice):
-                self.on_open_invoice(int(self._editing_order_id))
-            else:
-                self.notify("افتح الطلب من شاشة الفواتير للسداد")
+            open_payment_sheet()
 
         order_btn = hero_button("حفظ كطلب (تحضير)", icon=ft.Icons.RECEIPT_LONG_OUTLINED, on_click=save_as_order)
         order_btn.expand = True
