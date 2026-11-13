@@ -957,6 +957,47 @@ class InvoiceService:
             for row in rows
         ]
 
+    def cancel_sale_order(
+        self, invoice_id: int, *, reason: str | None = None, print_void: bool = True
+    ) -> None:
+        """Cancel an *unpaid* open sale order.
+
+        Sends a kitchen void for its already-sent lines, then deletes it (the
+        rebuild restores stock/balances). Paid orders must be reversed via a
+        return instead, so this refuses them.
+        """
+        invoice_id = int(invoice_id)
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+            if row is None:
+                raise ValueError("الطلب غير موجود")
+            if str(row["type"]) != "sale":
+                raise ValueError("يمكن إلغاء طلبات البيع فقط")
+            if OPENING_BALANCE_MARKER in str(row["notes"] or ""):
+                raise ValueError("لا يمكن إلغاء فاتورة «أول المدة»")
+            if float(row["paid_amount"] or 0) > EPSILON:
+                raise ValueError("لا يمكن إلغاء طلب مدفوع — استخدم المرتجع")
+            sent_lines = [
+                {"item_id": r["item_id"], "description": r["description"], "quantity": float(r["quantity"] or 0)}
+                for r in conn.execute(
+                    "SELECT item_id,description,quantity FROM invoice_lines "
+                    "WHERE invoice_id=? AND printed_at IS NOT NULL ORDER BY id",
+                    (invoice_id,),
+                ).fetchall()
+            ]
+        if print_void and self.section_print is not None and sent_lines:
+            try:
+                self.section_print.send_void_now(invoice_id, sent_lines, [])
+            except Exception:
+                _LOG.exception("cancel void send failed for invoice %s", invoice_id)
+        self.delete_invoice(invoice_id)
+        if (reason or "").strip():
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('cancel','invoice',?,?)",
+                    (invoice_id, str(reason).strip()[:200]),
+                )
+
     def open_sale_orders(self, limit: int = 200) -> list[dict]:
         """Unpaid sale invoices (restaurant preparation orders awaiting payment)."""
         with self.db.connect() as conn:

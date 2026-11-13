@@ -909,6 +909,12 @@ class InvoiceCenter:
 
                     items.append(("إرسال البنود الجديدة للمطبخ", ft.Icons.SEND, _send_new))
                     items.append(("إعادة إرسال كل التذاكر", ft.Icons.PRINT_OUTLINED, _resend_all))
+                    if restaurant_settings.allow_cancel(self.ctx.settings):
+                        items.append((
+                            "إلغاء الطلب (إلغاء المطبخ)",
+                            ft.Icons.CANCEL_OUTLINED,
+                            lambda i=invoice_id: self.confirm_cancel_order(i),
+                        ))
 
                 if remaining > 1e-9 and str(row.get("type")) == "sale":
                     def _merge_open_order(i=invoice_id) -> None:
@@ -3070,6 +3076,41 @@ class InvoiceCenter:
             rtl=True,
         )
         self.page.open(sheet)
+
+    def confirm_cancel_order(self, invoice_id: int) -> None:
+        if not restaurant_settings.allow_cancel(self.ctx.settings):
+            self.notify("إلغاء الطلب غير مسموح من الإعدادات", kind="warning")
+            return
+        dialog = ft.AlertDialog(modal=True)
+        reason = SelectAllTextField(label="سبب الإلغاء (اختياري)")
+
+        def do_cancel(_=None) -> None:
+            try:
+                self.ctx.invoices.cancel_sale_order(
+                    int(invoice_id),
+                    reason=reason.value or "",
+                    print_void=restaurant_settings.cancel_print_void(self.ctx.settings),
+                )
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+                return
+            self.page.close(dialog)
+            self.show_center()
+            self.notify("تم إلغاء الطلب وإشعار المطبخ", kind="success")
+
+        dialog.title = ft.Text("إلغاء الطلب")
+        dialog.content = ft.Column(
+            [
+                ft.Text("سيُلغى الطلب ويُعاد المخزون، وتُطبع إشعارات إلغاء للمطبخ.", size=11, color=Colors.TEXT_SECONDARY),
+                reason,
+            ],
+            spacing=8, tight=True, width=380,
+        )
+        dialog.actions = [
+            ft.TextButton("رجوع", on_click=lambda _=None: self.page.close(dialog)),
+            ft.FilledButton("إلغاء الطلب", on_click=do_cancel),
+        ]
+        self.page.open(dialog)
 
     def show_editor(
         self,

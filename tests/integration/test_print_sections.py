@@ -704,3 +704,36 @@ def test_restaurant_pos_flags(tmp_path):
     assert restaurant_settings.allow_partial(ctx.settings) is True
     restaurant_settings.set_flag(ctx.settings, restaurant_settings.ALLOW_PARTIAL_KEY, False)
     assert restaurant_settings.allow_partial(ctx.settings) is False
+
+
+def test_cancel_open_order_voids_kitchen_and_restocks(tmp_path, monkeypatch):
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        "nano_offline.core.escpos.send_bytes",
+        lambda host, port, data, **kw: sent.append((host, port, data)),
+    )
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "طاولة 1")
+    assert float(ctx.items.get(item)["quantity"]) == pytest.approx(99)
+    ctx.section_print.dispatch_pending(sender=lambda *a: None)  # clear the initial ticket
+    sent.clear()
+
+    ctx.invoices.cancel_sale_order(inv, reason="العميل غادر")
+    assert ctx.invoices.get_invoice(inv) is None
+    assert float(ctx.items.get(item)["quantity"]) == pytest.approx(100)  # restocked
+    assert sent and "إلغاء".encode("cp1256") in bytes(sent[0][2])  # kitchen void sent
+
+
+def test_cancel_paid_sale_is_refused(tmp_path):
+    ctx = _ctx(tmp_path)
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10)
+    inv = ctx.invoices.create_invoice(
+        invoice_type="sale",
+        lines=[InvoiceLineInput(description="بيتزا", item_id=item, quantity=1, unit_price=10)],
+        paid_amount=10,
+    )
+    with pytest.raises(ValueError):
+        ctx.invoices.cancel_sale_order(inv)

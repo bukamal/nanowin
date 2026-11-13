@@ -144,7 +144,46 @@ class SectionPrintService:
         invoice = self._invoice_header(invoice_id)
         if invoice is None or str(invoice.get("type")) != "sale":
             return 0
+        tickets = self._void_tickets(invoice, before_lines, after_lines)
+        if not tickets:
+            return 0
+        enqueued = 0
+        stamp = int(time.time() * 1000)
+        for section_id, section, payload in tickets:
+            if self.sections.enqueue_job(
+                invoice_id=int(invoice_id),
+                section_id=int(section_id),
+                printer_host=str(section.get("printer_host")),
+                printer_port=int(section.get("printer_port") or 9100),
+                payload=payload,
+                dedupe_key=f"invoice:{int(invoice_id)}:void:{int(section_id)}:{stamp}",
+            ):
+                enqueued += 1
+        should_dispatch = self.auto_dispatch if dispatch is None else dispatch
+        if enqueued and should_dispatch:
+            self.dispatch_async()
+        return enqueued
 
+    def send_void_now(self, invoice_id: int, before_lines: list[dict], after_lines=None, *, sender=None) -> int:
+        """Build and send cancellation tickets immediately (not queued).
+
+        Used by order cancellation: the invoice is deleted right after, so a
+        queued job would be cascade-deleted before it ever sent.
+        """
+        invoice = self._invoice_header(invoice_id)
+        if invoice is None or str(invoice.get("type")) != "sale":
+            return 0
+        send = sender or escpos.send_bytes
+        sent = 0
+        for section_id, section, payload in self._void_tickets(invoice, before_lines, after_lines or []):
+            try:
+                send(str(section.get("printer_host")), int(section.get("printer_port") or 9100), payload)
+                sent += 1
+            except Exception:
+                _LOG.exception("void send failed for section %s", section_id)
+        return sent
+
+    def _void_tickets(self, invoice: dict, before_lines: list[dict], after_lines: list[dict]) -> list[tuple]:
         def key_of(line: dict) -> tuple:
             return (line.get("item_id"), str(line.get("description") or ""))
 
@@ -159,9 +198,6 @@ class SectionPrintService:
             for item_key in old_qty
             if old_qty[item_key] - new_qty.get(item_key, 0.0) > 1e-9
         ]
-        if not voids:
-            return 0
-
         grouped: dict[int, list[dict]] = {}
         for (item_id, description), qty in voids:
             section_id = self.sections.section_for_item(item_id) if item_id is not None else None
@@ -174,30 +210,16 @@ class SectionPrintService:
                 continue
             grouped.setdefault(section_id, []).append({"name": description, "quantity": qty})
 
-        enqueued = 0
-        stamp = int(time.time() * 1000)
+        tickets: list[tuple] = []
         for section_id, lines in grouped.items():
             section = self.sections.get(section_id)
             if section is None:
                 continue
             try:
-                payload = escpos.build_void_ticket(section, invoice, lines)
+                tickets.append((section_id, section, escpos.build_void_ticket(section, invoice, lines)))
             except Exception:
                 _LOG.exception("failed to build void ticket for section %s", section_id)
-                continue
-            if self.sections.enqueue_job(
-                invoice_id=int(invoice_id),
-                section_id=int(section_id),
-                printer_host=str(section.get("printer_host")),
-                printer_port=int(section.get("printer_port") or 9100),
-                payload=payload,
-                dedupe_key=f"invoice:{int(invoice_id)}:void:{int(section_id)}:{stamp}",
-            ):
-                enqueued += 1
-        should_dispatch = self.auto_dispatch if dispatch is None else dispatch
-        if enqueued and should_dispatch:
-            self.dispatch_async()
-        return enqueued
+        return tickets
 
     # ---- dispatch ------------------------------------------------------ #
 
