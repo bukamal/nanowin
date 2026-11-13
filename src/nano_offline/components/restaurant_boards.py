@@ -96,63 +96,44 @@ def _start_auto_refresh(page: ft.Page, render, stop: dict) -> None:
 
 
 def tables_workspace(
-    ctx, notify, money, *, on_open_order=None, on_free_table=None, use_tables: bool = True
+    ctx, notify, money, *, on_open_order=None, on_free_table=None, on_pay_order=None, use_tables: bool = True
 ) -> tuple[ft.Control, callable]:
-    """Tables/orders floor plan as a control + its render function."""
+    """Tables / open-orders workspace (grid or list) with status colours,
+    filters and quick actions. Returns ``(control, render)``."""
+    state = {"view": "grid", "filter": "all"}
+    toolbar = ft.Row(spacing=6, run_spacing=6, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     areas_row = ft.Row(spacing=14, run_spacing=14, wrap=True)
+    list_col = ft.Column(spacing=8, tight=True)
+    body = ft.Container(areas_row, expand=True)
 
-    def _order_card(label: str, order: dict) -> ft.Control:
+    def _entry(name: str, order: dict | None) -> dict:
+        if order is None:
+            return {"name": name, "order": None, "key": "free", "label": "متاحة",
+                    "color": Colors.TEXT_SECONDARY, "elapsed": None, "count": 0, "total": 0.0}
         try:
             invoice = ctx.invoices.get_invoice(int(order["id"])) or {}
         except Exception:
             invoice = {}
-        elapsed = _order_elapsed(invoice.get("lines") or [])
-        ready = _order_ready(invoice.get("lines") or [])
-        color = Colors.SUCCESS_DARK if ready else _age_color(elapsed)
+        order_lines = invoice.get("lines") or []
+        elapsed = _order_elapsed(order_lines)
+        ready = _order_ready(order_lines)
+        if ready:
+            key, label, color = "ready", "جاهزة", Colors.SUCCESS_DARK
+        elif elapsed is None:
+            key, label, color = "open", "مفتوحة", Colors.PRIMARY
+        elif elapsed >= 20:
+            key, label, color = "late", "متأخرة", Colors.DANGER
+        else:
+            key, label, color = "sent", "أُرسلت", Colors.WARNING_DARKER
+        return {"name": name, "order": order, "key": key, "label": label, "color": color,
+                "elapsed": elapsed, "count": len(order_lines),
+                "total": float(order.get("remaining_amount") or 0)}
 
-        def _open(_=None, i=int(order["id"])) -> None:
-            if callable(on_open_order):
-                on_open_order(i)
-            else:
-                notify("افتح الطلب من شاشة الفواتير")
-
-        return ft.Container(
-            ft.Column(
-                [
-                    ft.Text(label, size=14, weight=ft.FontWeight.BOLD),
-                    ft.Text(money(float(order.get("remaining_amount") or 0)), size=13, weight=ft.FontWeight.W_600),
-                    ft.Container(
-                        ft.Text("جاهز" if ready else _age_label(elapsed), size=10, color="#FFFFFF"),
-                        padding=ft.padding.symmetric(horizontal=8, vertical=2),
-                        bgcolor=color, border_radius=10,
-                    ),
-                ],
-                spacing=3, tight=True,
-            ),
-            width=150, padding=12, bgcolor=Colors.WHITE,
-            border=ft.border.all(2, color), border_radius=Radius.LG,
-            shadow=Shadow.SM, ink=True, on_click=_open,
-        )
-
-    def _free_card(name: str) -> ft.Control:
-        def _free(_=None, n=name) -> None:
-            if callable(on_free_table):
-                on_free_table(n)
-            else:
-                notify("طاولة متاحة — أنشئ الطلب من نقطة البيع")
-
-        return ft.Container(
-            ft.Column(
-                [
-                    ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
-                    ft.Text("متاحة", size=11, color=Colors.TEXT_SECONDARY),
-                ],
-                spacing=3, tight=True,
-            ),
-            width=150, padding=12, bgcolor=Colors.BACKGROUND_ALT,
-            border=ft.border.all(1, Colors.BORDER), border_radius=Radius.LG,
-            ink=True, on_click=_free,
-        )
+    def _open(order_id: int) -> None:
+        if callable(on_open_order):
+            on_open_order(int(order_id))
+        else:
+            notify("افتح الطلب من شاشة الفواتير")
 
     def _drag(table: dict, card: ft.Control) -> ft.Control:
         def _drop(e) -> None:
@@ -172,73 +153,237 @@ def tables_workspace(
             on_accept=_drop,
         )
 
+    def _order_card(entry: dict) -> ft.Control:
+        order = entry["order"]
+        color = entry["color"]
+
+        def _pay(_=None, i=int(order["id"])) -> None:
+            if callable(on_pay_order):
+                on_pay_order(int(i))
+            else:
+                _open(int(i))
+
+        return ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(entry["name"], size=14, weight=ft.FontWeight.BOLD, expand=True),
+                            ft.Container(
+                                ft.Text(entry["label"], size=9, color="#FFFFFF"),
+                                padding=ft.padding.symmetric(horizontal=7, vertical=2),
+                                bgcolor=color, border_radius=8,
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Text(money(entry["total"]), size=16, weight=ft.FontWeight.W_600),
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, size=13, color=Colors.TEXT_SECONDARY),
+                            ft.Text(f"{entry['count']} بند", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Container(expand=True),
+                            ft.Text(_age_label(entry["elapsed"]), size=10, color=color),
+                        ],
+                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            ft.TextButton("دفع", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_pay),
+                            ft.TextButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=lambda _=None, i=int(order["id"]): _open(i)),
+                        ],
+                        spacing=2,
+                    ),
+                ],
+                spacing=4, tight=True,
+            ),
+            width=185, padding=12, bgcolor=Colors.WHITE,
+            border=ft.border.all(2, color), border_radius=Radius.LG, shadow=Shadow.SM,
+        )
+
+    def _free_card(entry: dict) -> ft.Control:
+        name = entry["name"]
+
+        def _free(_=None, n=name) -> None:
+            if callable(on_free_table):
+                on_free_table(n)
+            else:
+                notify("طاولة متاحة — أنشئ الطلب من نقطة البيع")
+
+        return ft.Container(
+            ft.Column(
+                [
+                    ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    ft.Text("متاحة", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Container(height=6),
+                    ft.OutlinedButton("فتح طلب", icon=ft.Icons.ADD, on_click=_free),
+                ],
+                spacing=3, tight=True,
+            ),
+            width=185, padding=12, bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.all(1, Colors.BORDER), border_radius=Radius.LG,
+        )
+
+    def _list_row(area, entry: dict) -> ft.Control:
+        color = entry["color"]
+        actions: list[ft.Control] = []
+        if entry["order"] is not None:
+            def _pay(_=None, i=int(entry["order"]["id"])) -> None:
+                (on_pay_order or on_open_order)(int(i)) if (callable(on_pay_order) or callable(on_open_order)) else notify("افتح الطلب من شاشة الفواتير")
+            actions = [
+                ft.TextButton("دفع", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=_pay),
+                ft.TextButton("تعديل", icon=ft.Icons.EDIT_OUTLINED,
+                              on_click=lambda _=None, i=int(entry["order"]["id"]): _open(i)),
+            ]
+        else:
+            def _free(_=None, n=entry["name"]) -> None:
+                on_free_table(n) if callable(on_free_table) else notify("طاولة متاحة")
+            actions = [ft.OutlinedButton("فتح طلب", icon=ft.Icons.ADD, on_click=_free)]
+        return ft.Container(
+            ft.Row(
+                [
+                    ft.Container(width=6, height=34, bgcolor=color, border_radius=3),
+                    ft.Column(
+                        [
+                            ft.Text(entry["name"], size=13, weight=ft.FontWeight.W_600),
+                            ft.Text(f"{area or ''}", size=10, color=Colors.TEXT_SECONDARY) if area else ft.Container(height=0),
+                        ],
+                        spacing=0, width=150, tight=True,
+                    ),
+                    ft.Text(entry["label"], size=11, color=color, width=70),
+                    ft.Text(f"{entry['count']} بند", size=11, color=Colors.TEXT_SECONDARY, width=70),
+                    ft.Text(_age_label(entry["elapsed"]), size=11, color=Colors.TEXT_SECONDARY, width=70),
+                    ft.Container(expand=True),
+                    ft.Text(money(entry["total"]) if entry["order"] else "—", size=13, weight=ft.FontWeight.W_600),
+                    *actions,
+                ],
+                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=8, bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD,
+        )
+
+    def _chip(key: str, label: str) -> ft.Control:
+        active = state["filter"] == key
+        return ft.Container(
+            ft.Text(label, size=11, weight=ft.FontWeight.W_600, color=Colors.WHITE if active else Colors.TEXT_MUTED),
+            padding=ft.padding.symmetric(horizontal=12, vertical=7),
+            bgcolor=Colors.PRIMARY if active else Colors.WHITE,
+            border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
+            border_radius=16, ink=True,
+            on_click=lambda _=None, k=key: _set_filter(k),
+        )
+
+    def _set_filter(key: str) -> None:
+        state["filter"] = key
+        render()
+
+    def _set_view(mode: str) -> None:
+        state["view"] = mode
+        render()
+
     def render() -> None:
         try:
             orders = ctx.invoices.open_sale_orders(limit=80)
         except Exception:
             orders = []
-        if not use_tables:
-            cards = [
-                _order_card(str(o.get("reference") or "").strip() or f"طلب #{o['id']}", o)
-                for o in orders
-            ]
-            areas_row.controls = cards or [ft.Text("لا توجد طلبات مفتوحة.", size=12, color=Colors.TEXT_SECONDARY)]
+        table_list = []
+        if use_tables:
             try:
-                areas_row.update()
+                table_list = ctx.tables.list(active_only=True)
             except Exception:
-                pass
-            return
-        try:
-            tables = ctx.tables.list(active_only=True)
-        except Exception:
-            tables = []
-        known = {str(t.get("name")) for t in tables}
+                table_list = []
+        known = {str(t.get("name")) for t in table_list}
+        table_by_name = {str(t.get("name")): t for t in table_list}
         by_ref: dict[str, dict] = {}
         loose: list[dict] = []
         for order in orders:
             ref = str(order.get("reference") or "").strip()
-            if ref and ref in known:
+            if use_tables and ref and ref in known:
                 by_ref[ref] = order
             else:
                 loose.append(order)
-        grouped: dict[str, list[dict]] = {}
-        for table in tables:
-            grouped.setdefault(str(table.get("area") or "بلا منطقة"), []).append(table)
-        columns: list[ft.Control] = []
-        for area, items in grouped.items():
-            cards = []
-            for table in items:
-                name = str(table.get("name"))
-                card = _order_card(name, by_ref[name]) if name in by_ref else _free_card(name)
-                cards.append(_drag(table, card))
-            columns.append(ft.Container(
-                ft.Column(
-                    [ft.Text(area, size=13, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                     ft.Row(cards, spacing=10, run_spacing=10, wrap=True)],
-                    spacing=8, tight=True,
-                ),
-                padding=12, bgcolor=Colors.BACKGROUND_ALT, border_radius=Radius.MD,
-            ))
-        if loose:
-            columns.append(ft.Container(
-                ft.Column(
-                    [ft.Text("طلبات بلا طاولة", size=13, weight=ft.FontWeight.BOLD, color=Colors.WARNING_DARKER),
-                     ft.Row([_order_card(str(o.get("reference") or "").strip() or f"طلب #{o['id']}", o) for o in loose],
-                            spacing=10, run_spacing=10, wrap=True)],
-                    spacing=8, tight=True,
-                ),
-                padding=12, bgcolor=Colors.WARNING_BG, border_radius=Radius.MD,
-            ))
-        if not columns:
-            columns.append(ft.Text("لا توجد جداول — أضِفها من الإدارة ← المطعم ← الطاولات.", size=12, color=Colors.TEXT_SECONDARY))
-        areas_row.controls = columns
+
+        entries: list[tuple] = []  # (area, entry)
+        if use_tables:
+            grouped: dict[str, list[str]] = {}
+            for table in table_list:
+                grouped.setdefault(str(table.get("area") or "بلا منطقة"), []).append(str(table.get("name")))
+            for area, names in grouped.items():
+                for name in names:
+                    entries.append((area, _entry(name, by_ref.get(name))))
+        for order in loose:
+            name = str(order.get("reference") or "").strip() or f"طلب #{order['id']}"
+            entries.append((None, _entry(name, order)))
+
+        fkey = state["filter"]
+        if fkey != "all":
+            entries = [item for item in entries if item[1]["key"] == fkey]
+
+        if state["view"] == "list":
+            if entries:
+                list_col.controls = [_list_row(area, entry) for area, entry in entries]
+            else:
+                list_col.controls = [ft.Text("لا توجد نتائج.", size=12, color=Colors.TEXT_SECONDARY)]
+            body.content = ft.Column([list_col], scroll=ft.ScrollMode.AUTO)
+        else:
+            by_area: dict[str, list[dict]] = {}
+            for area, entry in entries:
+                by_area.setdefault(str(area or "الطلبات"), []).append(entry)
+            columns: list[ft.Control] = []
+            for area, area_entries in by_area.items():
+                cards = []
+                for e in area_entries:
+                    card = _order_card(e) if e["order"] is not None else _free_card(e)
+                    table = table_by_name.get(e["name"])
+                    if table is not None:
+                        card = _drag(table, card)
+                    cards.append(card)
+                columns.append(ft.Container(
+                    ft.Column(
+                        [ft.Text(area, size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                         ft.Row(cards, spacing=10, run_spacing=10, wrap=True)],
+                        spacing=8, tight=True,
+                    ),
+                    padding=10, bgcolor=Colors.BACKGROUND_ALT, border_radius=Radius.MD,
+                ))
+            if not columns:
+                columns.append(ft.Text("لا توجد نتائج.", size=12, color=Colors.TEXT_SECONDARY))
+            areas_row.controls = columns
+            body.content = ft.Column([areas_row], scroll=ft.ScrollMode.AUTO)
+
+        # Toolbar (filters + view toggle) rebuilt each render for active styles.
+        view_grid_active = state["view"] == "grid"
+        toolbar.controls = [
+            _chip("all", "الكل"),
+            _chip("open", "مفتوحة"),
+            _chip("sent", "أُرسلت"),
+            _chip("ready", "جاهزة"),
+            _chip("late", "متأخرة"),
+            *([_chip("free", "متاحة")] if use_tables else []),
+            ft.Container(expand=True),
+            ft.IconButton(
+                icon=ft.Icons.GRID_VIEW, tooltip="شبكة",
+                icon_color=Colors.PRIMARY if view_grid_active else Colors.TEXT_SECONDARY,
+                on_click=lambda _=None: _set_view("grid"), icon_size=18,
+            ),
+            ft.IconButton(
+                icon=ft.Icons.VIEW_LIST, tooltip="قائمة",
+                icon_color=Colors.TEXT_SECONDARY if view_grid_active else Colors.PRIMARY,
+                on_click=lambda _=None: _set_view("list"), icon_size=18,
+            ),
+        ]
         try:
-            areas_row.update()
+            toolbar.update()
+        except Exception:
+            pass
+        try:
+            body.update()
         except Exception:
             pass
 
     control = ft.Container(
-        ft.Column([areas_row], scroll=ft.ScrollMode.AUTO, expand=True),
+        ft.Column([toolbar, body], spacing=8, expand=True),
         expand=True, padding=4,
     )
     return control, render
@@ -379,7 +524,7 @@ def _sheet_board(page, ctx, notify, *, title: str, subtitle: str, icon, build) -
     _start_auto_refresh(page, render, stop)
 
 
-def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_table=None) -> None:
+def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_table=None, on_pay_order=None) -> None:
     use_tables = True
     try:
         from nano_offline.core import restaurant_settings
@@ -390,7 +535,8 @@ def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_tabl
     def build():
         return tables_workspace(
             ctx, notify, money,
-            on_open_order=on_open_order, on_free_table=on_free_table, use_tables=use_tables,
+            on_open_order=on_open_order, on_free_table=on_free_table,
+            on_pay_order=on_pay_order, use_tables=use_tables,
         )
 
     _sheet_board(

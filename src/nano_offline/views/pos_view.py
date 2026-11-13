@@ -2321,6 +2321,7 @@ class POSCenter:
                     self.ctx, self.notify, self.money,
                     on_open_order=lambda i: _load_order(i) if i is not None else None,
                     on_free_table=_set_pending_table,
+                    on_pay_order=lambda i: (_load_order(i), open_payment_sheet()),
                     use_tables=self._use_tables,
                 )
                 kitchen_ctrl, kitchen_render = kitchen_workspace(self.ctx, self.notify)
