@@ -691,3 +691,16 @@ def test_mark_single_line_ready(tmp_path):
     lines = ctx.invoices.get_invoice(inv)["lines"]
     ready = [ln for ln in lines if ln.get("kitchen_ready_at")]
     assert len(ready) == 1
+
+
+def test_restaurant_pos_flags(tmp_path):
+    ctx = _ctx(tmp_path)
+    # Defaults: partial/tip off, cancel/void on.
+    assert restaurant_settings.allow_partial(ctx.settings) is False
+    assert restaurant_settings.allow_tip(ctx.settings) is False
+    assert restaurant_settings.allow_cancel(ctx.settings) is True
+    assert restaurant_settings.cancel_print_void(ctx.settings) is True
+    restaurant_settings.set_flag(ctx.settings, restaurant_settings.ALLOW_PARTIAL_KEY, True)
+    assert restaurant_settings.allow_partial(ctx.settings) is True
+    restaurant_settings.set_flag(ctx.settings, restaurant_settings.ALLOW_PARTIAL_KEY, False)
+    assert restaurant_settings.allow_partial(ctx.settings) is False

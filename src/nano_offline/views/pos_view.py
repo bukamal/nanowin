@@ -641,6 +641,13 @@ class POSCenter:
             """
             return self._receive_settings_obj()
 
+        def _partial_allowed() -> bool:
+            # Partial payment is a restaurant POS option (Admin > المطعم).
+            return (
+                restaurant_settings.enabled(self.ctx.settings)
+                and restaurant_settings.allow_partial(self.ctx.settings)
+            )
+
         def received_amount() -> float:
             # The cashier enters the cash handed over in the currency shown
             # in the payment sheet (display currency by default); convert it to the
@@ -676,6 +683,11 @@ class POSCenter:
                 # a receivable on that customer (see _require_party_for_credit
                 # in invoice_service.py). This is not an error state.
                 change_text.value = f"دفعة جزئية — سيُسجَّل {self._money_receive(-change)} على حساب العميل"
+                change_text.color = Colors.WARNING_DARK
+            elif _partial_allowed():
+                # Restaurant partial payment: the order stays open with the
+                # remaining amount (settled later through another payment).
+                change_text.value = f"دفع جزئي — يبقى الطلب مفتوحًا بمتبقٍ {self._money_receive(-change)}"
                 change_text.color = Colors.WARNING_DARK
             else:
                 # No customer means InvoiceService forces paid=total
@@ -1021,7 +1033,10 @@ class POSCenter:
                 ]
                 total = total_amount()
                 received = received_amount()
-                paid = min(received, total) if self.customer_id else total
+                if _partial_allowed():
+                    paid = min(received, total)
+                else:
+                    paid = min(received, total) if self.customer_id else total
                 discount_lines = [
                     f"{r['item']['name']} {self._qty(r.get('discount_pct') or 0)}%"
                     for r in rows_list if float(r.get("discount_pct") or 0) > 0
@@ -1040,7 +1055,10 @@ class POSCenter:
                     invoice_id = int(self._editing_order_id)
                     already_paid = float(existing.get("paid_amount") or 0)
                     prepaid = already_paid
-                    target_paid = min(total, already_paid + received)
+                    if _partial_allowed():
+                        target_paid = min(total, already_paid + received)
+                    else:
+                        target_paid = total
                     self.ctx.invoices.update_invoice(
                         invoice_id,
                         invoice_type="sale",
@@ -1330,6 +1348,45 @@ class POSCenter:
             auto_print_switch.on_change = sync_confirm_label
             sync_confirm_label()
 
+            def _key_digit(ch: str) -> None:
+                self.received_digits = (self.received_digits or "") + ch
+                _sync_received_display()
+                self.page.update()
+
+            def _key_back(_=None) -> None:
+                self.received_digits = (self.received_digits or "")[:-1]
+                _sync_received_display()
+                self.page.update()
+
+            def _key_clear(_=None) -> None:
+                self.received_digits = ""
+                _sync_received_display()
+                self.page.update()
+
+            def _key_btn(label: str, handler) -> ft.Control:
+                return ft.Container(
+                    ft.Text(label, size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                    width=58, height=46, alignment=ft.alignment.center,
+                    bgcolor=Colors.BACKGROUND_ALT,
+                    border=ft.border.all(1, Colors.BORDER),
+                    border_radius=Radius.SM, ink=True,
+                    on_click=lambda _e: handler(),
+                )
+
+            keypad = ft.Column(
+                [
+                    ft.Row([_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (7, 8, 9)],
+                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (4, 5, 6)],
+                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (1, 2, 3)],
+                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([_key_btn("C", _key_clear), _key_btn("0", lambda: _key_digit("0")), _key_btn("⌫", _key_back)],
+                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+                ],
+                spacing=8, tight=True,
+            )
+
             body.controls = [
                 ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                 ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
@@ -1338,6 +1395,7 @@ class POSCenter:
                 received_display,
                 change_text,
                 quick_cash_row,
+                keypad,
                 ft.Divider(height=1, color=Colors.BORDER),
                 ft.Text("العميل (اختياري)", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
                 ft.Text("اتركه فارغًا للبيع النقدي السريع", size=11, color=Colors.TEXT_FAINT),

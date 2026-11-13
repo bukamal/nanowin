@@ -78,6 +78,35 @@ class AdminCenter:
         except Exception as exc:
             self._notify_error(str(exc))
 
+    def _set_restaurant_flag(self, key: str, value: bool) -> None:
+        try:
+            restaurant_settings.set_flag(self.ctx.settings, key, bool(value))
+            self._notify("تم الحفظ", kind="success")
+        except Exception as exc:
+            self._notify_error(str(exc))
+
+    def _restaurant_flag_row(self, label: str, key: str, subtitle: str = "") -> ft.Control:
+        lines: list[ft.Control] = [ft.Text(label, size=13, weight=ft.FontWeight.W_600)]
+        if subtitle:
+            lines.append(ft.Text(subtitle, size=10, color=Colors.TEXT_SECONDARY))
+        return ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.TUNE_ROUNDED, size=18, color=Colors.TEXT_SECONDARY),
+                    ft.Column(lines, spacing=1, expand=True, tight=True),
+                    ft.Switch(
+                        value=restaurant_settings.flag(self.ctx.settings, key),
+                        on_change=lambda e, k=key: self._set_restaurant_flag(k, e.control.value),
+                    ),
+                ],
+                spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.all(10),
+            bgcolor=Colors.WHITE,
+            border=ft.border.all(1, Colors.BORDER_ALT),
+            border_radius=Radius.MD,
+        )
+
     def _notify_error(self, text: str):
         # A SnackBar is easy to miss: it auto-dismisses on its own timer and
         # can be visually subtle. Restore/validation failures are exactly
@@ -2814,6 +2843,30 @@ class AdminCenter:
                         padding=ft.padding.all(10),
                         bgcolor=Colors.BACKGROUND_ALT,
                         border_radius=Radius.MD,
+                    ),
+                    ft.Container(
+                        ft.Column(
+                            [
+                                ft.Text("إعدادات نقطة بيع المطعم", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                                self._restaurant_flag_row(
+                                    "السماح بالدفع الجزئي", restaurant_settings.ALLOW_PARTIAL_KEY,
+                                    "إدخال مبلغ أقل من المتبقي وإبقاء الطلب مفتوحًا",
+                                ),
+                                self._restaurant_flag_row(
+                                    "السماح بالإكرامية", restaurant_settings.ALLOW_TIP_KEY,
+                                    "إظهار حقل الإكرامية في شيت الدفع",
+                                ),
+                                self._restaurant_flag_row(
+                                    "السماح بإلغاء الطلب", restaurant_settings.ALLOW_CANCEL_KEY,
+                                    "إتاحة إلغاء طلب مفتوح (بصلاحية)",
+                                ),
+                                self._restaurant_flag_row(
+                                    "طباعة إلغاء للمطبخ عند الإلغاء", restaurant_settings.CANCEL_PRINT_VOID_KEY,
+                                    "إرسال تذكرة إلغاء لكل الأقسام",
+                                ),
+                            ],
+                            spacing=8, tight=True,
+                        ),
                     ),
                     ft.Row(
                         [
