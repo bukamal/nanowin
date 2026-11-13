@@ -345,7 +345,8 @@ def tables_workspace(
                          ft.Row(cards, spacing=10, run_spacing=10, wrap=True)],
                         spacing=8, tight=True,
                     ),
-                    padding=10, bgcolor=Colors.BACKGROUND_ALT, border_radius=Radius.MD,
+                    padding=10, bgcolor=Colors.WHITE,
+                    border=ft.border.all(1, Colors.BORDER_ALT), border_radius=Radius.MD,
                 ))
             if not columns:
                 columns.append(ft.Text("لا توجد نتائج.", size=12, color=Colors.TEXT_SECONDARY))

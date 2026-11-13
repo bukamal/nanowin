@@ -2313,6 +2313,7 @@ class POSCenter:
                 spacing=4, tight=True,
             ),
             padding=ft.padding.only(left=18, right=18, top=8, bottom=4),
+            bgcolor=Colors.WHITE,
             visible=restaurant_settings.enabled(self.ctx.settings),
         )
         refresh_tables()
@@ -2322,7 +2323,7 @@ class POSCenter:
         # without leaving POS (nothing stays a separate screen).
         _restaurant_on = restaurant_settings.enabled(self.ctx.settings)
         tab_state = {"key": "sale"}
-        body_holder = ft.Container(body, expand=True, opacity=1, animate_opacity=ft.Animation(160, ft.AnimationCurve.EASE_OUT))
+        body_holder = ft.Container(body, expand=True, opacity=1, bgcolor=Colors.WHITE, animate_opacity=ft.Animation(160, ft.AnimationCurve.EASE_OUT))
         workspace_controls = {"sale": body}
         workspace_renders: dict = {}
         tab_toggle = None
