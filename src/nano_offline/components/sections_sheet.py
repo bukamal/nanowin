@@ -296,7 +296,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
 
     def open_override(section: dict) -> None:
         sid = int(section["id"])
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
         field = SelectAllTextField(
             label="عنوان طابعة هذا الجهاز (IP أو IP:منفذ)",
             value=ctx.section_print.device_override(sid),
@@ -342,7 +342,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
 
     def open_form(section: dict | None = None) -> None:
         editing = section is not None
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
         name_f = SelectAllTextField(label="اسم القسم *", value=(section or {}).get("name") or "")
         printer_type_f = SearchSelect(
             label="نوع الطابعة",

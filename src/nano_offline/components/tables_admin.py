@@ -60,7 +60,7 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
         )
 
     def confirm_delete(table: dict) -> None:
-        dialog = ft.AlertDialog(modal=True, title=ft.Text("حذف طاولة"))
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("حذف طاولة"))
 
         def yes(_=None) -> None:
             try:
@@ -76,7 +76,7 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
 
     def open_form(table: dict | None = None) -> None:
         editing = table is not None
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
         name_f = SelectAllTextField(label="اسم/رقم الطاولة *", value=(table or {}).get("name") or "")
         area_f = SelectAllTextField(label="المنطقة (صالة/تراس/خارجي)", value=(table or {}).get("area") or "")
         order_f = SelectAllTextField(label="الترتيب", value=str((table or {}).get("sort_order") or 0), keyboard_type=ft.KeyboardType.NUMBER)
@@ -114,7 +114,7 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
     add_btn = primary_button("طاولة جديدة", icon=ft.Icons.ADD_ROUNDED, on_click=lambda _=None: open_form(), width=None, size="md")
 
     def open_bulk() -> None:
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
         area_f = SelectAllTextField(label="المنطقة (اختياري)")
         start_f = SelectAllTextField(label="تبدأ من الرقم", value="1", keyboard_type=ft.KeyboardType.NUMBER)
         count_f = SelectAllTextField(label="العدد", value="10", keyboard_type=ft.KeyboardType.NUMBER)

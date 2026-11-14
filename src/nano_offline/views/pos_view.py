@@ -291,7 +291,8 @@ class POSCenter:
         # bar, ...) instead of category, so the cashier thinks in stations.
         self._group_by_section = restaurant_settings.enabled(self.ctx.settings)
         self._use_tables = restaurant_settings.use_tables(self.ctx.settings)
-        self._pos_sizes = pos_sizes(appearance_settings.density(self.ctx.settings))
+        self._pos_density = appearance_settings.density(self.ctx.settings)
+        self._pos_sizes = pos_sizes(self._pos_density)
         if self._group_by_section:
             try:
                 groups = [{"id": int(s["id"]), "name": str(s["name"])} for s in self.ctx.sections.list(active_only=True)]
@@ -2626,13 +2627,20 @@ class POSCenter:
 
     def _item_tile(self, item: dict) -> ft.Container:
         is_service = item["item_type"] == "خدمة"
+        touch = getattr(self, "_pos_density", "comfortable") == "touch"
+        compact = getattr(self, "_pos_density", "comfortable") == "compact"
+        icon_size = 34 if touch else (20 if compact else 26)
+        icon_box = 58 if touch else (36 if compact else 44)
+        name_size = 15 if touch else (11 if compact else 12)
+        price_size = 16 if touch else (12 if compact else 13)
+        tile_padding = 14 if touch else (8 if compact else 10)
         qty_badge = None
         out_of_stock = False
         if not is_service:
             available = float(item.get("quantity") or 0)
             out_of_stock = available <= 0
             badge_color = Colors.DANGER_DARK if out_of_stock else Colors.TEXT_FAINT
-            qty_badge = ft.Text(f"م: {self._qty(item['quantity'])}", size=10, color=badge_color, weight=ft.FontWeight.BOLD if out_of_stock else None)
+            qty_badge = ft.Text(f"م: {self._qty(item['quantity'])}", size=10 if not touch else 12, color=badge_color, weight=ft.FontWeight.BOLD if out_of_stock else None)
         idx = 0
         # stable-ish color by category id for a touch of visual grouping
         if item.get("category_id"):
@@ -2642,16 +2650,18 @@ class POSCenter:
             ft.Column(
                 [
                     ft.Container(
-                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED if not is_service else ft.Icons.DESIGN_SERVICES_OUTLINED, color=color, size=26),
-                        width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND_ALT, border_radius=12,
+                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED if not is_service else ft.Icons.DESIGN_SERVICES_OUTLINED, color=color, size=icon_size),
+                        width=icon_box, height=icon_box, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND_ALT,
+                        border_radius=12 if not touch else 16,
                     ),
-                    ft.Text(item["name"], size=12, weight=ft.FontWeight.W_600, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER),
-                    ft.Text(self.money(item["selling_price"], field="price"), size=13, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                    ft.Text(item["name"], size=name_size, weight=ft.FontWeight.W_600, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER),
+                    ft.Text(self.money(item["selling_price"], field="price"), size=price_size, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                     qty_badge or ft.Container(height=1),
                 ],
-                spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=6 if touch else 4, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=10,
+            padding=tile_padding,
+            height=self._pos_sizes["tile_h"] if touch else None,
             bgcolor=Colors.WHITE,
             # Out-of-stock is a nudge, not a block -- the sale is still
             # allowed (e.g. a known backorder), just flagged visually via
