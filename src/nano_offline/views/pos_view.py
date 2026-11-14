@@ -26,6 +26,7 @@ from nano_offline.core import currency
 from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_margin
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
+from nano_offline.core import invoice_settings
 from nano_offline.core import restaurant_settings
 from nano_offline.components.restaurant_boards import (
     open_kitchen_board,
@@ -1389,6 +1390,9 @@ class POSCenter:
                 ],
                 spacing=8, tight=True,
             )
+            # Numeric keypad (partial-amount entry) is a restaurant-mode feature;
+            # normal quick-sale keeps its original quick-cash-only payment sheet.
+            keypad.visible = restaurant_settings.enabled(self.ctx.settings)
 
             body.controls = [
                 ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
@@ -2181,6 +2185,15 @@ class POSCenter:
                 on_click=lambda _, n=name or label: _set_pending_table(n),
             )
 
+        def _order_label(order: dict) -> str:
+            ref = str(order.get("reference") or "").strip()
+            if ref:
+                return ref
+            try:
+                return f"طلب #{invoice_settings.format_invoice_number(int(order['id']), self.ctx.settings)}"
+            except Exception:
+                return f"طلب #{order.get('id')}"
+
         def refresh_tables() -> None:
             try:
                 orders = self.ctx.invoices.open_sale_orders(limit=80)
@@ -2189,10 +2202,7 @@ class POSCenter:
             if not self._use_tables:
                 # No tables: just list the open (auto-numbered) orders.
                 cards: list[ft.Control] = [
-                    _table_chip(
-                        str(order.get("reference") or "").strip() or f"طلب #{order['id']}",
-                        order=order, name=None,
-                    )
+                    _table_chip(_order_label(order), order=order, name=None)
                     for order in orders
                 ]
                 if not cards:
@@ -2224,7 +2234,7 @@ class POSCenter:
                 name = str(table.get("name"))
                 cards.append(_table_chip(name, order=by_ref.get(name), name=name))
             for order in loose:
-                label = str(order.get("reference") or "").strip() or f"طلب #{order['id']}"
+                label = _order_label(order)
                 cards.append(_table_chip(label, order=order, name=None))
             if not cards:
                 cards.append(ft.Text(

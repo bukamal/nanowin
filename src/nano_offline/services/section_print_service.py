@@ -66,6 +66,20 @@ class SectionPrintService:
     def set_html_builder(self, builder) -> None:
         self._html_builder = builder
 
+    def _display_number(self, invoice: dict) -> str:
+        """The invoice's display number (prefix/padding) for station tickets."""
+        try:
+            from nano_offline.core import invoice_settings
+
+            with self.db.connect() as conn:
+                settings = {
+                    str(r["key"]): str(r["value"])
+                    for r in conn.execute("SELECT key,value FROM settings").fetchall()
+                }
+            return invoice_settings.format_invoice_number(int(invoice["id"]), settings)
+        except Exception:
+            return str(invoice.get("id") or "")
+
     def device_override(self, section_id: int | None) -> str:
         if self.prefs is None or section_id is None:
             return ""
@@ -124,7 +138,9 @@ class SectionPrintService:
             if not host:
                 continue
             try:
-                payload = escpos.build_station_ticket(section, invoice, lines)
+                payload = escpos.build_station_ticket(
+                    section, invoice, lines, display_number=self._display_number(invoice)
+                )
             except Exception:
                 _LOG.exception("failed to build station ticket for section %s", section_id)
                 continue
@@ -288,7 +304,9 @@ class SectionPrintService:
                     _LOG.exception("failed to build system void ticket for section %s", section_id)
                 continue
             try:
-                tickets.append((section_id, section, "network", escpos.build_void_ticket(section, invoice, lines)))
+                tickets.append((section_id, section, "network",
+                                escpos.build_void_ticket(section, invoice, lines,
+                                                         display_number=self._display_number(invoice))))
             except Exception:
                 _LOG.exception("failed to build void ticket for section %s", section_id)
         return tickets

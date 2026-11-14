@@ -820,3 +820,29 @@ def test_system_section_prints_via_ui_printer(tmp_path):
         customer_id=customer2, paid_amount=0, reference="2",
     )
     assert calls and "void" in calls[0][0]
+
+
+def test_kitchen_ticket_number_matches_invoice_display_number(tmp_path, monkeypatch):
+    from nano_offline.core import invoice_settings
+
+    sent: list[bytes] = []
+    monkeypatch.setattr("nano_offline.core.escpos.send_bytes", lambda h, p, d, **k: sent.append(d))
+
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    ctx.settings.set(invoice_settings.NUMBER_PREFIX_KEY, "INV-")
+    ctx.settings.set(invoice_settings.NUMBER_PADDING_KEY, "5")
+    ctx.settings.set(invoice_settings.SHOW_NUMBER_KEY, "1")
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "")
+    display = invoice_settings.format_invoice_number(inv, ctx.settings)
+    assert display.startswith("INV-") and display.endswith(str(inv).zfill(5))
+
+    ctx.section_print.dispatch_pending()
+    assert sent, "expected a station ticket to be sent"
+    payload = bytes(sent[0]).decode("cp1256", errors="replace")
+    assert f"#{display}" in payload
+    # The customer invoice shows the exact same number.
+    assert f"#{display}" in ctx.documents.invoice_html(inv)

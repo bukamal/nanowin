@@ -132,8 +132,14 @@ def build_station_ticket(
     lines: list[dict],
     *,
     copies: int | None = None,
+    display_number: str | int | None = None,
 ) -> bytes:
-    """Render one section's station ticket (no prices) to ESC/POS bytes."""
+    """Render one section's station ticket (no prices) to ESC/POS bytes.
+
+    ``display_number`` is the invoice's *display* number (prefix/padding) so a
+    kitchen ticket shows the same order number as the customer's print; when
+    omitted the raw id is used.
+    """
     b = _Builder(
         encoding=str(section.get("encoding") or "cp1256"),
         width_mm=int(section.get("paper_width_mm") or 80),
@@ -149,7 +155,7 @@ def build_station_ticket(
     b.divider("=")
 
     ref = str(invoice.get("reference") or "").strip()
-    invoice_no = invoice.get("id")
+    invoice_no = display_number if display_number not in (None, "") else invoice.get("id")
     b.line(f"فاتورة: #{invoice_no}" + (f"  ({ref})" if ref else ""))
     date_text = str(invoice.get("invoice_date") or "").strip()
     if date_text:
@@ -184,7 +190,14 @@ def build_station_ticket(
     return payload * repeat
 
 
-def build_void_ticket(section: dict, invoice: dict, lines: list[dict], *, copies: int | None = None) -> bytes:
+def build_void_ticket(
+    section: dict,
+    invoice: dict,
+    lines: list[dict],
+    *,
+    copies: int | None = None,
+    display_number: str | int | None = None,
+) -> bytes:
     """Render a kitchen cancellation ticket for the given voided lines."""
     b = _Builder(
         encoding=str(section.get("encoding") or "cp1256"),
@@ -201,7 +214,8 @@ def build_void_ticket(section: dict, invoice: dict, lines: list[dict], *, copies
     b.align(0)
     b.divider("=")
     ref = str(invoice.get("reference") or "").strip()
-    b.line(f"فاتورة: #{invoice.get('id')}" + (f"  ({ref})" if ref else ""))
+    invoice_no = display_number if display_number not in (None, "") else invoice.get("id")
+    b.line(f"فاتورة: #{invoice_no}" + (f"  ({ref})" if ref else ""))
     b.divider("-")
     for line in lines:
         name = str(line.get("name") or line.get("description") or "").strip()

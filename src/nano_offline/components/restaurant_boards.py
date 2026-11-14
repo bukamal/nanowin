@@ -78,6 +78,20 @@ def _section_names(ctx) -> dict[int, str]:
         return {}
 
 
+def _order_label(ctx, order: dict) -> str:
+    """Table/reference if set, else the invoice's unified display number."""
+    ref = str(order.get("reference") or "").strip()
+    if ref:
+        return ref
+    try:
+        from nano_offline.core import invoice_settings
+
+        settings = ctx.settings.get_all() if hasattr(ctx.settings, "get_all") else (ctx.settings or {})
+        return f"طلب #{invoice_settings.format_invoice_number(int(order['id']), settings)}"
+    except Exception:
+        return f"طلب #{order.get('id')}"
+
+
 def _start_auto_refresh(page: ft.Page, render, stop: dict) -> None:
     async def _loop() -> None:
         while not stop.get("flag"):
@@ -322,7 +336,7 @@ def tables_workspace(
                 for name in names:
                     entries.append((area, _entry(name, by_ref.get(name))))
         for order in loose:
-            name = str(order.get("reference") or "").strip() or f"طلب #{order['id']}"
+            name = _order_label(ctx, order)
             entries.append((None, _entry(name, order)))
 
         fkey = state["filter"]
@@ -421,7 +435,7 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                 invoice = {}
             elapsed = _order_elapsed(invoice.get("lines") or [])
             ready = _order_ready(invoice.get("lines") or [])
-            label = str(order.get("reference") or "").strip() or f"#{order['id']}"
+            label = _order_label(ctx, order)
             sent_lines = [ln for ln in (invoice.get("lines") or []) if ln.get("printed_at")]
             ready_lines = [
                 ln for ln in sent_lines

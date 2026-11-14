@@ -797,11 +797,15 @@ table th, table td {{ text-align:center; }}
 
     def section_ticket_html(self, section: dict, invoice: dict, lines: list[dict], *, void: bool = False) -> str:
         """Printable station ticket for a real invoice (system printers)."""
+        try:
+            number = invoice_settings.format_invoice_number(int(invoice.get("id")), self._settings())
+        except Exception:
+            number = invoice.get("id", "—")
         return self.section_ticket_preview_html(
             section,
             [{"name": line.get("name"), "quantity": line.get("quantity")} for line in lines],
             reference=str(invoice.get("reference") or "").strip(),
-            invoice_no=invoice.get("id", "—"),
+            invoice_no=number,
             void=void,
         )
 
