@@ -3081,7 +3081,7 @@ class InvoiceCenter:
         if not restaurant_settings.allow_cancel(self.ctx.settings):
             self.notify("إلغاء الطلب غير مسموح من الإعدادات", kind="warning")
             return
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
         reason = SelectAllTextField(label="سبب الإلغاء (اختياري)")
 
         def do_cancel(_=None) -> None:

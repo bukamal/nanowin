@@ -1625,7 +1625,7 @@ class POSCenter:
             self.notify(f"طاولة {name}: أضف الأصناف ثم «حفظ كطلب»")
 
         def _quick_add_tables(_=None) -> None:
-            dialog = ft.AlertDialog(modal=True)
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
             area_f = SelectAllTextField(label="المنطقة (اختياري)")
             start_f = SelectAllTextField(label="تبدأ من الرقم", value="1", keyboard_type=ft.KeyboardType.NUMBER)
             count_f = SelectAllTextField(label="العدد", value="10", keyboard_type=ft.KeyboardType.NUMBER)
@@ -1675,7 +1675,7 @@ class POSCenter:
             if not self._use_tables:
                 _commit_order(None)
                 return
-            dialog = ft.AlertDialog(modal=True)
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
             try:
                 table_options = [
                     (str(t["name"]), f"{t['name']}" + (f" — {t['area']}" if t.get("area") else ""))

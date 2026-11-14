@@ -86,3 +86,14 @@ def test_ui_kit_has_no_raw_hex_colours():
         if re.search(r"#[0-9a-fA-F]{6}\b", text):
             offenders.append(path.name)
     assert not offenders, f"raw hex colours found in UI kit: {offenders}"
+
+def test_pos_density_sizes_scale():
+    from nano_offline.core.design.tokens import pos_sizes
+
+    touch = pos_sizes("touch")
+    comfortable = pos_sizes("comfortable")
+    compact = pos_sizes("compact")
+    assert touch["rail"] > comfortable["rail"] > compact["rail"]
+    assert touch["cart"] > comfortable["cart"] > compact["cart"]
+    assert touch["tile_h"] > compact["tile_h"]
+    assert pos_sizes("unknown") == comfortable
