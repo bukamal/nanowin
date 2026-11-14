@@ -104,7 +104,13 @@ def tables_workspace(
     toolbar = ft.Row(spacing=6, run_spacing=6, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     areas_row = ft.Row(spacing=14, run_spacing=14, wrap=True)
     list_col = ft.Column(spacing=8, tight=True)
-    body = ft.Container(areas_row, expand=True, bgcolor=Colors.WHITE)
+    # Stable holders created once. Re-parenting areas_row/list_col into a new
+    # Column on every render (the previous code) left dangling parents and a
+    # blank/grey area; swapping body.content between these fixed holders does
+    # not re-parent anything.
+    grid_holder = ft.Column([areas_row], scroll=ft.ScrollMode.AUTO, expand=True)
+    list_holder = ft.Column([list_col], scroll=ft.ScrollMode.AUTO, expand=True)
+    body = ft.Container(grid_holder, expand=True, bgcolor=Colors.WHITE)
 
     def _entry(name: str, order: dict | None) -> dict:
         if order is None:
@@ -325,7 +331,7 @@ def tables_workspace(
                 list_col.controls = [_list_row(area, entry) for area, entry in entries]
             else:
                 list_col.controls = [ft.Text("لا توجد نتائج.", size=12, color=Colors.TEXT_SECONDARY)]
-            body.content = ft.Column([list_col], scroll=ft.ScrollMode.AUTO)
+            body.content = list_holder
         else:
             by_area: dict[str, list[dict]] = {}
             for area, entry in entries:
@@ -351,7 +357,7 @@ def tables_workspace(
             if not columns:
                 columns.append(ft.Text("لا توجد نتائج.", size=12, color=Colors.TEXT_SECONDARY))
             areas_row.controls = columns
-            body.content = ft.Column([areas_row], scroll=ft.ScrollMode.AUTO)
+            body.content = grid_holder
 
         # Toolbar (filters + view toggle) rebuilt each render for active styles.
         view_grid_active = state["view"] == "grid"
@@ -490,7 +496,7 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
 
     control = ft.Container(
         ft.Column([board], scroll=ft.ScrollMode.AUTO, expand=True),
-        expand=True, padding=4,
+        expand=True, padding=4, bgcolor=Colors.WHITE,
     )
     return control, render
 

@@ -762,3 +762,19 @@ def test_tables_delete_all(tmp_path):
     ctx.tables.create_many(area="صالة", start=1, count=5)
     assert ctx.tables.delete_all() == 5
     assert ctx.tables.list() == []
+
+
+def test_tables_workspace_renders_repeatedly(tmp_path):
+    from nano_offline.components.restaurant_boards import tables_workspace
+
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    ctx.tables.create(name="1", area="صالة")
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "1")
+
+    control, render = tables_workspace(ctx, lambda *a, **k: None, lambda v: str(v), use_tables=True)
+    render()
+    render()  # re-render must not re-parent controls / raise
+    assert control is not None
