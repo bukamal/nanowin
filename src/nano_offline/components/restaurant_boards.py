@@ -101,7 +101,10 @@ def tables_workspace(
     """Tables / open-orders workspace (grid or list) with status colours,
     filters and quick actions. Returns ``(control, render)``."""
     state = {"view": "grid", "filter": "all"}
-    toolbar = ft.Row(spacing=6, run_spacing=6, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+    # NOTE: NOT wrap=True -- the toolbar ends with an expand spacer, and
+    # Flutter's Wrap cannot host an Expanded child (it renders a blank grey
+    # box that covers the whole board). A plain Row is correct here.
+    toolbar = ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     areas_row = ft.Row(spacing=14, run_spacing=14, wrap=True)
     list_col = ft.Column(spacing=8, tight=True)
     # Stable holders created once. Re-parenting areas_row/list_col into a new
