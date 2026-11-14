@@ -35,6 +35,7 @@ from nano_offline.core import api_settings
 from nano_offline.core import remote_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import restaurant_settings
+from nano_offline.core import appearance_settings
 from nano_offline.core import backup_settings
 from nano_offline.core import reporting_settings
 from nano_offline.core import sound_settings
@@ -82,6 +83,14 @@ class AdminCenter:
         try:
             restaurant_settings.set_flag(self.ctx.settings, key, bool(value))
             self._notify("تم الحفظ", kind="success")
+        except Exception as exc:
+            self._notify_error(str(exc))
+
+    def _save_appearance(self, setter, value) -> None:
+        try:
+            setter(self.ctx.settings, value)
+            self.on_theme_changed()
+            self._notify("تم حفظ إعدادات المظهر", kind="success")
         except Exception as exc:
             self._notify_error(str(exc))
 
@@ -2927,6 +2936,52 @@ class AdminCenter:
                     font_family_field,
                     ft.Text("الحجم الأساسي (للطباعة)", size=11, color=Colors.TEXT_SECONDARY),
                     font_size_field,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("الشكل والكثافة والحركة", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "تتحكم في انحناء الحواف، تباعد العناصر، وسلاسة الانتقالات في كل الشاشات.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(
+                                SearchSelect(
+                                    label="الشكل",
+                                    choices=appearance_settings.SHAPES,
+                                    value=appearance_settings.shape(self.ctx.settings),
+                                    allow_clear=False,
+                                    on_change=lambda e: self._save_appearance(appearance_settings.set_shape, e.control.value),
+                                ),
+                                col={"xs": 12, "md": 4},
+                            ),
+                            ft.Container(
+                                SearchSelect(
+                                    label="الكثافة",
+                                    choices=appearance_settings.DENSITIES,
+                                    value=appearance_settings.density(self.ctx.settings),
+                                    allow_clear=False,
+                                    on_change=lambda e: self._save_appearance(appearance_settings.set_density, e.control.value),
+                                ),
+                                col={"xs": 12, "md": 4},
+                            ),
+                            ft.Container(
+                                SearchSelect(
+                                    label="التباين",
+                                    choices=appearance_settings.CONTRASTS,
+                                    value=appearance_settings.contrast(self.ctx.settings),
+                                    allow_clear=False,
+                                    on_change=lambda e: self._save_appearance(appearance_settings.set_contrast, e.control.value),
+                                ),
+                                col={"xs": 12, "md": 4},
+                            ),
+                        ],
+                        spacing=7, run_spacing=7,
+                    ),
+                    ft.Switch(
+                        label="الحركة والانتقالات",
+                        value=appearance_settings.motion_enabled(self.ctx.settings),
+                        on_change=lambda e: self._save_appearance(appearance_settings.set_motion, e.control.value),
+                    ),
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("الجداول", size=12, weight=ft.FontWeight.W_600),
                     fit_width_switch,

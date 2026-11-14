@@ -36,6 +36,7 @@ from nano_offline.core import theme
 from nano_offline.core import theme_settings
 from nano_offline.core import font_settings
 from nano_offline.core import ui_scale
+from nano_offline.core.design import theme_builder
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
@@ -94,9 +95,8 @@ def _apply_theme(page: ft.Page, ctx: AppContext) -> None:
     # just the printed documents.
     ui_scale.set_scale(font_settings.ui_scale_factor(ctx.settings))
     ui_scale.install()
-    page.theme = ft.Theme(color_scheme_seed=Colors.PRIMARY, font_family=family)
+    page.theme, page.theme_mode = theme_builder.build_page_theme(ctx.settings, family=family)
     page.dark_theme = page.theme
-    page.theme_mode = ft.ThemeMode.DARK if theme.is_dark() else ft.ThemeMode.LIGHT
 
 
 def _apply_rtl_to_sheets(page: ft.Page) -> None:

@@ -27,6 +27,7 @@ from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_marg
 from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import invoice_settings
+from nano_offline.core import appearance_settings
 from nano_offline.core import restaurant_settings
 from nano_offline.components.restaurant_boards import (
     open_kitchen_board,
@@ -2367,6 +2368,19 @@ class POSCenter:
                 key = tab_toggle.value or "sale"
                 tab_state["key"] = key
                 body_holder.content = workspace_controls.get(key, body)
+                if not appearance_settings.motion_enabled(self.ctx.settings):
+                    body_holder.opacity = 1
+                    try:
+                        body_holder.update()
+                    except Exception:
+                        pass
+                    render = workspace_renders.get(key)
+                    if render is not None:
+                        try:
+                            render()
+                        except Exception:
+                            pass
+                    return
                 body_holder.opacity = 0
                 try:
                     body_holder.update()
