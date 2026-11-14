@@ -86,6 +86,10 @@ class AppContext:
         sections_repo = SectionRepository(db)
         section_print_svc = SectionPrintService(db, sections_repo)
         invoices.section_print = section_print_svc
+        documents_svc = DocumentService(db, invoices, StatementService(db))
+        # System (Windows) printers print the station ticket as a document, so
+        # the service needs an HTML builder for it.
+        section_print_svc.set_html_builder(documents_svc.section_ticket_html)
         auth = AuthService(db)
         backup = BackupService(db)
         items_repo = ItemRepository(db)
@@ -151,7 +155,7 @@ class AppContext:
             reports=reports_svc,
             forecast=ForecastService(db),
             dashboard=dashboard_svc,
-            documents=DocumentService(db, invoices, StatementService(db)),
+            documents=documents_svc,
             settings=settings_repo,
             sections=sections_repo,
             section_print=section_print_svc,

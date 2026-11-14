@@ -130,31 +130,55 @@ class NativeFiles(Control):
         paper_layout: str = "sheet",
         roll_width_mm: int = 80,
         direct: bool = True,
+        printer_name: str | None = None,
     ) -> bool:
         """Print an HTML document through the native bridge.
 
         ``direct=True`` bypasses the print dialog on Windows: the document is
-        rendered to PDF with headless Edge/Chrome and sent to the default
-        printer. This is the default so every "print" action (invoice/report/
-        voucher/label/statement dialogs' continue button, the printer test,
-        POS F12) prints silently; ``create_pdf``/preview keep their own path.
-        Other platforms keep their normal print UI.
+        rendered to PDF with headless Edge/Chrome and sent to the printer
+        (``printer_name`` when given, else the default). This is the default so
+        every "print" action (invoice/report/voucher/label/statement dialogs'
+        continue button, the printer test, POS F12) prints silently;
+        ``create_pdf``/preview keep their own path. Other platforms keep their
+        normal print UI.
         """
+        payload = {
+            "html": html,
+            "name": name,
+            "paper_layout": paper_layout,
+            "roll_width_mm": int(roll_width_mm),
+            "direct": "1" if direct else "0",
+        }
+        if printer_name:
+            payload["printer_name"] = str(printer_name)
         raw = await self.invoke_method_async(
             "print_html",
-            {
-                "html": html,
-                "name": name,
-                "paper_layout": paper_layout,
-                "roll_width_mm": int(roll_width_mm),
-                "direct": "1" if direct else "0",
-            },
+            payload,
             wait_for_result=True,
             wait_timeout=_INTERACTIVE_TIMEOUT,
         )
         if str(raw).startswith("error:"):
             raise RuntimeError(str(raw)[6:])
         return raw == "ok"
+
+    async def list_printers(self) -> list[str]:
+        """Names of printers available to this platform (Windows/macOS/Linux)."""
+        import json
+
+        raw = await self.invoke_method_async(
+            "list_printers",
+            {},
+            wait_for_result=True,
+            wait_timeout=_INTERACTIVE_TIMEOUT,
+        )
+        text = str(raw or "")
+        if text.startswith("error:"):
+            raise RuntimeError(text[6:])
+        try:
+            names = json.loads(text) if text else []
+        except Exception:
+            names = []
+        return [str(n) for n in names if str(n).strip()]
 
     async def create_pdf(
         self,

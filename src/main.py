@@ -1833,6 +1833,27 @@ def main(page: ft.Page):
     native_files = PlatformNativeFiles()
     page.overlay.append(native_files)
 
+    # System (Windows) station printers: route section tickets through the OS
+    # print pipeline on the app thread (the socket path handles network ones).
+    async def _ui_station_print(html: str, printer_name: str) -> None:
+        try:
+            await native_files.print_html(
+                html, name="nano-station-ticket", direct=True, printer_name=printer_name
+            )
+        except Exception:
+            _log.warning("system station print failed", exc_info=True)
+
+    def _schedule_ui_print(html: str, printer_name: str) -> None:
+        try:
+            page.run_task(_ui_station_print, html, printer_name)
+        except Exception:
+            pass
+
+    try:
+        ctx.section_print.set_ui_printer(_schedule_ui_print)
+    except Exception:
+        pass
+
     # Built-in LAN price-check server for customer screens: started here so
     # it shares the app's data/settings. Best-effort and a no-op unless the
     # admin enabled it in the "شاشة الأسعار" tab; never blocks app startup.

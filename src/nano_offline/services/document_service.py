@@ -758,21 +758,24 @@ table th, table td {{ text-align:center; }}
         *,
         reference: str = "(معاينة)",
         invoice_no: int | str = "—",
+        void: bool = False,
     ) -> str:
         """A thermal-style HTML preview of a section's station ticket.
 
-        Purely for on-screen preview before printing -- the real ticket is
-        ESC/POS bytes (see core/escpos). Prices are intentionally omitted,
-        matching what the kitchen actually receives.
+        Also used as the printable document for sections whose printer is a
+        system (Windows) printer. Prices are intentionally omitted, matching
+        what the kitchen actually receives.
         """
         name = self._e(section.get("name") or "قسم")
         rows = "".join(
             f'<div class="ln">إلغاء {self._e(line.get("quantity"))} × {self._e(line.get("name"))}</div>'
-            if line.get("void")
+            if (void or line.get("void"))
             else f'<div class="ln">{self._e(line.get("quantity"))} × {self._e(line.get("name"))}</div>'
             for line in lines
         )
-        subject = str(section.get("name") or "قسم")
+        heading = "إلغاء" if void else name
+        sub = "إلغاء — بلا أسعار" if void else "تذكرة تحضير — بلا أسعار"
+        foot = "إلغاء" if void else "تحضير"
         return f"""<!doctype html><html dir="rtl"><head><meta charset="utf-8">
 <style>
   body {{ font-family: monospace, "Courier New"; padding: 8px; color:#000; background:#fff; }}
@@ -782,15 +785,25 @@ table th, table td {{ text-align:center; }}
   .div {{ border-top: 1px dashed #000; margin: 6px 0; }}
   .foot {{ text-align: center; font-weight: bold; margin-top: 6px; }}
 </style></head><body>
-<div class="h">{name}</div>
-<div class="sub">تذكرة تحضير — بلا أسعار</div>
+<div class="h">{heading}</div>
+<div class="sub">{sub}</div>
 <div class="div"></div>
 <div class="ln">فاتورة: #{self._e(invoice_no)}  {self._e(reference)}</div>
 <div class="div"></div>
 {rows or '<div class="ln">—</div>'}
 <div class="div"></div>
-<div class="foot">تحضير — {self._e(subject)}</div>
+<div class="foot">{foot} — {self._e(name)}</div>
 </body></html>"""
+
+    def section_ticket_html(self, section: dict, invoice: dict, lines: list[dict], *, void: bool = False) -> str:
+        """Printable station ticket for a real invoice (system printers)."""
+        return self.section_ticket_preview_html(
+            section,
+            [{"name": line.get("name"), "quantity": line.get("quantity")} for line in lines],
+            reference=str(invoice.get("reference") or "").strip(),
+            invoice_no=invoice.get("id", "—"),
+            void=void,
+        )
 
     def barcode_labels_html(
         self,

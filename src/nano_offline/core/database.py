@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 24  # system parties flag (restaurant open-orders account)
+SCHEMA_VERSION = 25  # sections: system-printer type + name
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS sections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     kind TEXT NOT NULL DEFAULT 'kitchen' CHECK(kind IN ('kitchen','receipt')),
+    -- 'network' = raw ESC/POS over TCP (printer_host/port); 'system' = an
+    -- OS-installed printer printed by name (printer_name), e.g. a network
+    -- printer the user added in Windows (schema 25).
+    printer_type TEXT NOT NULL DEFAULT 'network' CHECK(printer_type IN ('network','system')),
+    printer_name TEXT,
     printer_host TEXT,
     printer_port INTEGER NOT NULL DEFAULT 9100,
     paper_width_mm INTEGER NOT NULL DEFAULT 80 CHECK(paper_width_mm IN (58,80)),
@@ -841,6 +846,12 @@ class Database:
         # Schema 24: system party flag (hidden from customer lists/pickers).
         if self._table_exists(conn, "customers") and not self._has_column(conn, "customers", "is_system"):
             conn.execute("ALTER TABLE customers ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
+
+        # Schema 25: per-section system-printer support.
+        if self._table_exists(conn, "sections") and not self._has_column(conn, "sections", "printer_type"):
+            conn.execute("ALTER TABLE sections ADD COLUMN printer_type TEXT NOT NULL DEFAULT 'network'")
+        if self._table_exists(conn, "sections") and not self._has_column(conn, "sections", "printer_name"):
+            conn.execute("ALTER TABLE sections ADD COLUMN printer_name TEXT")
 
         added_opening_qty = False
         added_opening_cost = False

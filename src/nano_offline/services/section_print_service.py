@@ -55,6 +55,16 @@ class SectionPrintService:
         # background; production leaves it on.
         self.auto_dispatch = True
         self._dispatch_lock = threading.Lock()
+        # System-printer support: the host (main.py) injects a UI-thread printer
+        # and the AppContext injects an HTML builder for station tickets.
+        self.ui_print = None            # callable(html: str, printer_name: str)
+        self._html_builder = None       # callable(section, invoice, lines) -> str
+
+    def set_ui_printer(self, printer) -> None:
+        self.ui_print = printer
+
+    def set_html_builder(self, builder) -> None:
+        self._html_builder = builder
 
     def device_override(self, section_id: int | None) -> str:
         if self.prefs is None or section_id is None:
@@ -95,6 +105,21 @@ class SectionPrintService:
             section = self.sections.get(int(section_id))
             if section is None or not int(section.get("active") or 0):
                 continue
+            line_ids = [int(line["line_id"]) for line in lines]
+            ptype = str(section.get("printer_type") or "network").lower()
+            if ptype == "system":
+                # OS-installed printer: render the ticket and hand it to the
+                # host's UI printer (scheduled on the app thread).
+                name = str(section.get("printer_name") or "").strip()
+                if not (name and callable(self.ui_print) and self._html_builder is not None):
+                    continue
+                try:
+                    self.ui_print(self._html_builder(section, invoice, lines), name)
+                except Exception:
+                    _LOG.exception("system station ticket failed for section %s", section_id)
+                    continue
+                printed_line_ids.extend(line_ids)
+                continue
             host = str(section.get("printer_host") or "").strip()
             if not host:
                 continue
@@ -103,7 +128,6 @@ class SectionPrintService:
             except Exception:
                 _LOG.exception("failed to build station ticket for section %s", section_id)
                 continue
-            line_ids = [int(line["line_id"]) for line in lines]
             batch = "-".join(str(i) for i in sorted(line_ids))
             if self.sections.enqueue_job(
                 invoice_id=int(invoice_id),
@@ -149,7 +173,15 @@ class SectionPrintService:
             return 0
         enqueued = 0
         stamp = int(time.time() * 1000)
-        for section_id, section, payload in tickets:
+        for section_id, section, kind, payload in tickets:
+            if kind == "system":
+                name = str(section.get("printer_name") or "").strip()
+                if callable(self.ui_print) and payload and name:
+                    try:
+                        self.ui_print(payload, name)
+                    except Exception:
+                        _LOG.exception("system void print failed for section %s", section_id)
+                continue
             if self.sections.enqueue_job(
                 invoice_id=int(invoice_id),
                 section_id=int(section_id),
@@ -175,7 +207,16 @@ class SectionPrintService:
             return 0
         send = sender or escpos.send_bytes
         sent = 0
-        for section_id, section, payload in self._void_tickets(invoice, before_lines, after_lines or []):
+        for section_id, section, kind, payload in self._void_tickets(invoice, before_lines, after_lines or []):
+            if kind == "system":
+                name = str(section.get("printer_name") or "").strip()
+                if callable(self.ui_print) and payload and name:
+                    try:
+                        self.ui_print(payload, name)
+                        sent += 1
+                    except Exception:
+                        _LOG.exception("system void send failed for section %s", section_id)
+                continue
             try:
                 send(str(section.get("printer_host")), int(section.get("printer_port") or 9100), payload)
                 sent += 1
@@ -210,6 +251,7 @@ class SectionPrintService:
                 item_id, description = meta.get(item_key, (None, ""))
                 voids.append((item_id, description, delta))
         grouped: dict[int, list[dict]] = {}
+        section_types: dict[int, str] = {}
         for item_id, description, qty in voids:
             section_id = self.sections.section_for_item(item_id) if item_id is not None else None
             if section_id is None:
@@ -217,8 +259,13 @@ class SectionPrintService:
             section = self.sections.get(section_id)
             if section is None or not int(section.get("active") or 0):
                 continue
-            if not str(section.get("printer_host") or "").strip():
+            ptype = str(section.get("printer_type") or "network").lower()
+            if ptype == "system":
+                if not str(section.get("printer_name") or "").strip():
+                    continue
+            elif not str(section.get("printer_host") or "").strip():
                 continue
+            section_types[section_id] = ptype
             grouped.setdefault(section_id, []).append({"name": description, "quantity": qty})
 
         tickets: list[tuple] = []
@@ -226,8 +273,22 @@ class SectionPrintService:
             section = self.sections.get(section_id)
             if section is None:
                 continue
+            if section_types.get(section_id) == "system":
+                if self._html_builder is None:
+                    continue
+                try:
+                    tickets.append((section_id, section, "system", self._html_builder(section, invoice, lines, void=True)))
+                except TypeError:
+                    # Builder without the keyword: fall back to positional.
+                    try:
+                        tickets.append((section_id, section, "system", self._html_builder(section, invoice, lines)))
+                    except Exception:
+                        _LOG.exception("failed to build system void ticket for section %s", section_id)
+                except Exception:
+                    _LOG.exception("failed to build system void ticket for section %s", section_id)
+                continue
             try:
-                tickets.append((section_id, section, escpos.build_void_ticket(section, invoice, lines)))
+                tickets.append((section_id, section, "network", escpos.build_void_ticket(section, invoice, lines)))
             except Exception:
                 _LOG.exception("failed to build void ticket for section %s", section_id)
         return tickets
@@ -308,6 +369,17 @@ class SectionPrintService:
         section = self.sections.get(int(section_id))
         if section is None:
             raise ValueError("القسم غير موجود")
+        if str(section.get("printer_type") or "network") == "system":
+            name = str(section.get("printer_name") or "").strip()
+            if not name:
+                raise ValueError("لم يتم تحديد طابعة القسم")
+            if not callable(self.ui_print) or self._html_builder is None:
+                raise ValueError("طباعة طابعة النظام غير مهيأة في هذا البناء")
+            html = self._html_builder(
+                section, {"id": 0, "reference": "TEST"}, [{"name": "مادة تجريبية", "quantity": 1}]
+            )
+            self.ui_print(html, name)
+            return
         host, port = self._resolve_target(
             int(section_id),
             str(section.get("printer_host") or ""),

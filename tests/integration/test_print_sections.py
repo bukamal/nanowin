@@ -778,3 +778,45 @@ def test_tables_workspace_renders_repeatedly(tmp_path):
     render()
     render()  # re-render must not re-parent controls / raise
     assert control is not None
+
+
+def test_section_printer_type_validation(tmp_path):
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ValueError):
+        ctx.sections.create(name="شبكة بلا عنوان")
+    with pytest.raises(ValueError):
+        ctx.sections.create(name="نظام بلا اسم", printer_type="system")
+    sid = ctx.sections.create(name="مطبخ", printer_type="system", printer_name="HP-Laser")
+    row = ctx.sections.get(sid)
+    assert row["printer_type"] == "system" and row["printer_name"] == "HP-Laser"
+
+
+def test_system_section_prints_via_ui_printer(tmp_path):
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="مطبخ", printer_type="system", printer_name="HP-Laser")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+
+    calls: list[tuple] = []
+    ctx.section_print.set_html_builder(
+        lambda section, invoice, lines, void=False: f"<html>{section['name']}:{len(lines)}:{'void' if void else 'ticket'}</html>"
+    )
+    ctx.section_print.set_ui_printer(lambda html, name: calls.append((html, name)))
+
+    inv = _open_order(ctx, [(item, "بيتزا", 1, 10)], "1")
+    assert calls and calls[0][1] == "HP-Laser"
+    assert "ticket" in calls[0][0]
+    assert ctx.sections.counts()["pending"] == 0  # system printers are not queued
+    assert all(line.get("printed_at") for line in ctx.invoices.get_invoice(inv)["lines"])
+
+    # Removing a line sends a system void through the same UI printer.
+    salad = ctx.items.create(name="سلطة", item_type="مخزون", quantity=100, selling_price=5, section_id=sid)
+    inv2 = _open_order(ctx, [(item, "بيتزا", 1, 10), (salad, "سلطة", 1, 5)], "2")
+    customer2 = ctx.invoices.get_invoice(inv2)["customer_id"]
+    calls.clear()
+    ctx.invoices.update_invoice(
+        inv2, invoice_type="sale",
+        lines=[InvoiceLineInput(description="سلطة", item_id=salad, quantity=1, unit_price=5)],
+        customer_id=customer2, paid_amount=0, reference="2",
+    )
+    assert calls and "void" in calls[0][0]

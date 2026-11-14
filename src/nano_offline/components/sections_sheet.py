@@ -252,8 +252,11 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
         page.run_task(_run)
 
     def _section_card(section: dict) -> ft.Control:
-        host = str(section.get("printer_host") or "").strip()
-        target = f"{host}:{section.get('printer_port') or 9100}" if host else "بلا طابعة"
+        if str(section.get("printer_type") or "network") == "system":
+            target = f"طابعة ويندوز: {section.get('printer_name') or '—'}"
+        else:
+            host = str(section.get("printer_host") or "").strip()
+            target = f"{host}:{section.get('printer_port') or 9100}" if host else "بلا طابعة"
         kind_label = "مطبخ" if str(section.get("kind") or "kitchen") != "receipt" else "فاتورة"
         override = ctx.section_print.device_override(int(section["id"]))
         subtitle = f"{kind_label} • {target} • {section.get('paper_width_mm')}مم ×{section.get('copies')}"
@@ -341,8 +344,64 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
         editing = section is not None
         dialog = ft.AlertDialog(modal=True)
         name_f = SelectAllTextField(label="اسم القسم *", value=(section or {}).get("name") or "")
+        printer_type_f = SearchSelect(
+            label="نوع الطابعة",
+            choices=[("network", "شبكة (IP:منفذ)"), ("system", "طابعة ويندوز")],
+            value=str((section or {}).get("printer_type") or "network"),
+            allow_clear=False,
+        )
         host_f = SelectAllTextField(label="عنوان الطابعة (IP)", value=(section or {}).get("printer_host") or "")
         port_f = SelectAllTextField(label="المنفذ", value=str((section or {}).get("printer_port") or 9100), keyboard_type=ft.KeyboardType.NUMBER)
+        _existing_printer = str((section or {}).get("printer_name") or "")
+        printer_f = SearchSelect(
+            label="طابعة ويندوز",
+            choices=[(_existing_printer, _existing_printer)] if _existing_printer else [],
+            value=_existing_printer or None,
+        )
+
+        def load_system_printers(_=None) -> None:
+            async def _run() -> None:
+                if native_files is None:
+                    notify("جلب الطابعات غير مهيأ في هذا البناء", kind="error")
+                    return
+                try:
+                    names = await native_files.list_printers()
+                except Exception as exc:
+                    notify(f"تعذر جلب طابعات النظام: {exc}", kind="error")
+                    return
+                printer_f.set_choices([(n, n) for n in names])
+                if _existing_printer and not printer_f.value:
+                    printer_f.value = _existing_printer
+                try:
+                    printer_f.update()
+                except Exception:
+                    pass
+                if not names:
+                    notify("لم يتم العثور على طابعات مثبتة في النظام", kind="warning")
+            page.run_task(_run)
+
+        printer_refresh_btn = ft.IconButton(icon=ft.Icons.REFRESH, tooltip="تحديث الطابعات", on_click=load_system_printers)
+        net_row = ft.ResponsiveRow([
+            ft.Container(host_f, col={"xs": 12, "md": 8}),
+            ft.Container(port_f, col={"xs": 6, "md": 4}),
+        ], spacing=7, run_spacing=7)
+        sys_row = ft.Row([
+            ft.Container(printer_f, expand=True),
+            printer_refresh_btn,
+        ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def _sync_type(do_update: bool = True) -> None:
+            is_system = (printer_type_f.value or "network") == "system"
+            net_row.visible = not is_system
+            sys_row.visible = is_system
+            if do_update:
+                for ctrl in (net_row, sys_row):
+                    try:
+                        ctrl.update()
+                    except Exception:
+                        pass
+
+        printer_type_f.on_change = lambda _=None: _sync_type()
         copies_f = SelectAllTextField(label="عدد النسخ", value=str((section or {}).get("copies") or 1), keyboard_type=ft.KeyboardType.NUMBER)
         kind_f = SearchSelect(
             label="النوع",
@@ -376,10 +435,15 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
 
         def save(_=None) -> None:
             try:
+                ptype = printer_type_f.value or "network"
+                host_value = (host_f.value or "").strip() or None
+                name_value = str(printer_f.value or "").strip() or None
                 payload = dict(
                     name=name_f.value or "",
                     kind=kind_f.value or "kitchen",
-                    printer_host=(host_f.value or "").strip() or None,
+                    printer_type=ptype,
+                    printer_name=name_value if ptype == "system" else None,
+                    printer_host=host_value if ptype == "network" else None,
                     printer_port=int(port_f.value or 9100),
                     paper_width_mm=int(width_f.value or 80),
                     copies=int(copies_f.value or 1),
@@ -404,10 +468,9 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
         dialog.content = ft.Column(
             [
                 name_f,
-                ft.ResponsiveRow([
-                    ft.Container(host_f, col={"xs": 12, "md": 8}),
-                    ft.Container(port_f, col={"xs": 6, "md": 4}),
-                ], spacing=7, run_spacing=7),
+                printer_type_f,
+                net_row,
+                sys_row,
                 ft.ResponsiveRow([
                     ft.Container(kind_f, col={"xs": 6}),
                     ft.Container(width_f, col={"xs": 6}),
@@ -426,7 +489,10 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
             ft.TextButton("إلغاء", on_click=lambda _=None: page.close(dialog)),
             ft.FilledButton("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
         ]
+        _sync_type(do_update=False)
         page.open(dialog)
+        if (printer_type_f.value or "network") == "system":
+            load_system_printers()
 
     add_btn = primary_button("قسم جديد", icon=ft.Icons.ADD_ROUNDED, on_click=lambda _=None: open_form(), width=None, size="md")
     sheet.content = sheets.sheet_frame(

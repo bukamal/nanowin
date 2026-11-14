@@ -34,6 +34,8 @@ class SectionRepository:
         *,
         name: str,
         kind: str = "kitchen",
+        printer_type: str = "network",
+        printer_name: str | None = None,
         printer_host: str | None = None,
         printer_port: int = 9100,
         paper_width_mm: int = 80,
@@ -44,18 +46,20 @@ class SectionRepository:
         fallback_section_id: int | None = None,
     ) -> int:
         values = self._validate(
-            name=name, kind=kind, printer_host=printer_host, printer_port=printer_port,
+            name=name, kind=kind, printer_type=printer_type, printer_name=printer_name,
+            printer_host=printer_host, printer_port=printer_port,
             paper_width_mm=paper_width_mm, copies=copies, encoding=encoding, active=active,
             sort_order=sort_order, fallback_section_id=fallback_section_id,
         )
         with self.db.transaction() as conn:
             cur = conn.execute(
                 """INSERT INTO sections(
-                       name,kind,printer_host,printer_port,paper_width_mm,copies,encoding,active,sort_order,
-                       fallback_section_id
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                       name,kind,printer_type,printer_name,printer_host,printer_port,
+                       paper_width_mm,copies,encoding,active,sort_order,fallback_section_id
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    values["name"], values["kind"], values["printer_host"], values["printer_port"],
+                    values["name"], values["kind"], values["printer_type"], values["printer_name"],
+                    values["printer_host"], values["printer_port"],
                     values["paper_width_mm"], values["copies"], values["encoding"],
                     1 if values["active"] else 0, values["sort_order"], values["fallback_section_id"],
                 ),
@@ -73,6 +77,8 @@ class SectionRepository:
         *,
         name: str,
         kind: str = "kitchen",
+        printer_type: str = "network",
+        printer_name: str | None = None,
         printer_host: str | None = None,
         printer_port: int = 9100,
         paper_width_mm: int = 80,
@@ -83,7 +89,8 @@ class SectionRepository:
         fallback_section_id: int | None = None,
     ) -> None:
         values = self._validate(
-            name=name, kind=kind, printer_host=printer_host, printer_port=printer_port,
+            name=name, kind=kind, printer_type=printer_type, printer_name=printer_name,
+            printer_host=printer_host, printer_port=printer_port,
             paper_width_mm=paper_width_mm, copies=copies, encoding=encoding, active=active,
             sort_order=sort_order, fallback_section_id=fallback_section_id,
         )
@@ -93,11 +100,12 @@ class SectionRepository:
             if values["fallback_section_id"] == int(section_id):
                 raise ValueError("لا يمكن أن يكون القسم بديلًا لنفسه")
             conn.execute(
-                """UPDATE sections SET name=?,kind=?,printer_host=?,printer_port=?,paper_width_mm=?,
-                       copies=?,encoding=?,active=?,sort_order=?,fallback_section_id=?,
+                """UPDATE sections SET name=?,kind=?,printer_type=?,printer_name=?,printer_host=?,printer_port=?,
+                       paper_width_mm=?,copies=?,encoding=?,active=?,sort_order=?,fallback_section_id=?,
                        updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 (
-                    values["name"], values["kind"], values["printer_host"], values["printer_port"],
+                    values["name"], values["kind"], values["printer_type"], values["printer_name"],
+                    values["printer_host"], values["printer_port"],
                     values["paper_width_mm"], values["copies"], values["encoding"],
                     1 if values["active"] else 0, values["sort_order"], values["fallback_section_id"],
                     int(section_id),
@@ -369,6 +377,8 @@ class SectionRepository:
         *,
         name: str,
         kind: str,
+        printer_type: str = "network",
+        printer_name: str | None = None,
         printer_host: str | None,
         printer_port: int,
         paper_width_mm: int,
@@ -384,6 +394,15 @@ class SectionRepository:
         kind = (kind or "kitchen").strip().lower()
         if kind not in _KINDS:
             raise ValueError("نوع القسم غير صحيح")
+        printer_type = (printer_type or "network").strip().lower()
+        if printer_type not in {"network", "system"}:
+            raise ValueError("نوع الطابعة غير صحيح")
+        host = (printer_host or "").strip() or None
+        pname = (printer_name or "").strip() or None
+        if printer_type == "system" and not pname:
+            raise ValueError("اختر طابعة النظام للقسم")
+        if printer_type == "network" and not host:
+            raise ValueError("حدّد عنوان طابعة القسم (IP)")
         width = int(paper_width_mm or 80)
         if width not in (58, 80):
             raise ValueError("عرض الورق يجب أن يكون 58 أو 80 مم")
@@ -400,7 +419,9 @@ class SectionRepository:
         return {
             "name": name,
             "kind": kind,
-            "printer_host": (printer_host or "").strip() or None,
+            "printer_type": printer_type,
+            "printer_name": pname,
+            "printer_host": host,
             "printer_port": port,
             "paper_width_mm": width,
             "copies": count,

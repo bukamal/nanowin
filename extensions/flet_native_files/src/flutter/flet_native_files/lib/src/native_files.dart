@@ -696,16 +696,29 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
     throw Exception('تعذر إنشاء ملف الطباعة عبر المتصفح');
   }
 
-  Future<void> _printHtmlDirect(File html, String docName, PdfPageFormat format) async {
+  Future<void> _printHtmlDirect(File html, String docName, PdfPageFormat format, {String? printerName}) async {
     final pdf = await _renderPdfWithBrowser(html, docName);
     try {
       final bytes = await pdf.readAsBytes();
       final printers = await Printing.listPrinters();
       Printer? printer;
-      for (final item in printers) {
-        if (item.isDefault && item.isAvailable) {
-          printer = item;
-          break;
+      // A requested printer name wins (case-insensitive exact match), so a
+      // section can target its own installed Windows printer.
+      final wanted = (printerName ?? '').trim().toLowerCase();
+      if (wanted.isNotEmpty) {
+        for (final item in printers) {
+          if (item.isAvailable && item.name.toLowerCase() == wanted) {
+            printer = item;
+            break;
+          }
+        }
+      }
+      if (printer == null) {
+        for (final item in printers) {
+          if (item.isDefault && item.isAvailable) {
+            printer = item;
+            break;
+          }
         }
       }
       if (printer == null) {
@@ -813,11 +826,12 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
           if (html.isEmpty) return 'error:محتوى التقرير فارغ';
           final docName = (args['name'] ?? 'nano-report').isEmpty ? 'nano-report' : args['name']!;
           final direct = args['direct'] == '1';
+          final printerName = args['printer_name'];
           if (!nativeHtmlToPdfSupported) {
             if (direct && Platform.isWindows) {
               final htmlFile = await _writeHtmlTempFile(html, docName);
               try {
-                await _printHtmlDirect(htmlFile, docName, _printPageFormat(args));
+                await _printHtmlDirect(htmlFile, docName, _printPageFormat(args), printerName: printerName);
               } finally {
                 try {
                   await htmlFile.delete();
@@ -836,6 +850,19 @@ class _FletNativeFilesControlState extends State<FletNativeFilesControl> {
             onLayout: (PdfPageFormat format) => Printing.convertHtml(format: format, html: html),
           );
           return 'ok';
+
+        case 'list_printers':
+          try {
+            final printers = await Printing.listPrinters();
+            final names = printers
+                .where((p) => p.isAvailable)
+                .map((p) => p.name)
+                .where((n) => n.trim().isNotEmpty)
+                .toList();
+            return jsonEncode(names);
+          } catch (e) {
+            return 'error:$e';
+          }
 
         case 'create_pdf':
           final pdfHtml = args['html'] ?? '';
