@@ -28,6 +28,7 @@ from nano_offline.core import barcode_settings
 from nano_offline.core import pos_settings
 from nano_offline.core import invoice_settings
 from nano_offline.core import appearance_settings
+from nano_offline.core.design.tokens import pos_sizes, SIZES
 from nano_offline.core import restaurant_settings
 from nano_offline.components.restaurant_boards import (
     open_kitchen_board,
@@ -290,6 +291,7 @@ class POSCenter:
         # bar, ...) instead of category, so the cashier thinks in stations.
         self._group_by_section = restaurant_settings.enabled(self.ctx.settings)
         self._use_tables = restaurant_settings.use_tables(self.ctx.settings)
+        self._pos_sizes = pos_sizes(appearance_settings.density(self.ctx.settings))
         if self._group_by_section:
             try:
                 groups = [{"id": int(s["id"]), "name": str(s["name"])} for s in self.ctx.sections.list(active_only=True)]
@@ -1339,7 +1341,9 @@ class POSCenter:
             self._render_payment_customer_insight = render_customer_insight
 
             confirm_btn = hero_button("إتمام وطباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=confirm_payment)
-            confirm_btn.expand = True
+            confirm_btn.expand = False
+            confirm_btn.height = SIZES["cta"]
+            confirm_btn.width = 260
 
             def sync_confirm_label(_=None):
                 printing = bool(auto_print_switch.value)
@@ -1427,10 +1431,11 @@ class POSCenter:
                 print_layout_block,
                 ft.Row(
                     [
-                        ft.OutlinedButton("إلغاء", on_click=lambda _: self.page.close(payment_sheet), expand=True),
+                        ft.OutlinedButton("إلغاء", on_click=lambda _: self.page.close(payment_sheet), height=SIZES["cta"]),
                         confirm_btn,
                     ],
                     spacing=10,
+                    alignment=ft.MainAxisAlignment.CENTER,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
             ]
@@ -1968,7 +1973,7 @@ class POSCenter:
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
             ),
-            width=210,
+            width=self._pos_sizes["rail"],
             padding=ft.padding.symmetric(horizontal=10, vertical=12),
             bgcolor=Colors.WHITE,
             border=ft.border.all(1, Colors.BORDER),
@@ -2106,7 +2111,7 @@ class POSCenter:
             # Rail sizing: no fixed height and no collapse-on-search (there
             # is no on-screen keyboard to dodge on desktop); the rail just
             # fills whatever height the body row gives it.
-            cart_wrap.width = CART_RAIL_WIDTH
+            cart_wrap.width = self._pos_sizes["cart"]
             cart_wrap.padding = ft.padding.only(left=16, right=16, bottom=16)
             cart_pane.expand = True
             cart_pane.content.expand = True

@@ -11,7 +11,7 @@ from __future__ import annotations
 from nano_offline.core.theme import Colors
 
 __all__ = [
-    "SPACING", "RADIUS", "MOTION", "SIZES", "ACTION_TOKENS",
+    "SPACING", "RADIUS", "MOTION", "SIZES", "ACTION_TOKENS", "POS_DENSITY",
     "action_color", "radius_for", "set_shape",
 ]
 
@@ -45,6 +45,17 @@ SIZES = {
     "cart_w": 400,
     "cart_row": 64,
 }
+
+# POS layout sizes by density: bigger targets for large touch screens.
+POS_DENSITY = {
+    "compact": {"rail": 180, "cart": 340, "tile_h": 96, "row": 46},
+    "comfortable": {"rail": 210, "cart": 420, "tile_h": 124, "row": 54},
+    "touch": {"rail": 290, "cart": 470, "tile_h": 164, "row": 66},
+}
+
+
+def pos_sizes(density: str) -> dict:
+    return POS_DENSITY.get(str(density or "comfortable"), POS_DENSITY["comfortable"])
 
 # Function -> theme color token (mode aware). Use these for button variants so
 # colors are semantic, not arbitrary.
