@@ -2889,64 +2889,44 @@ class ItemsCenter:
                     notify(str(exc), kind="error")
 
             def _open_recipe_dialog(index: int) -> None:
-                """Define/replace the recipe (materials) of one bulk row."""
+                """Define/replace the recipe (materials) of one bulk row.
+
+                Uses the same editable DataGrid as every other table in the
+                app, and keeps the add-item sheet open behind the dialog.
+                """
                 row = bulk_grid.rows[index]
-                choices = [
-                    (str(i["id"]), str(i["name"]))
-                    for i in ctx.items.list()
-                    if i.get("item_type") == "مخزون"
-                ]
-                rows_state: list[dict] = []
-                rows_col = ft.Column(spacing=6, tight=True)
+                inventory = [i for i in ctx.items.list() if i.get("item_type") == "مخزون"]
+                dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("مواد الوصفة (مادة تجميعية)"),
+                    actions_alignment=ft.MainAxisAlignment.CENTER,
+                )
                 status = ft.Text("", size=11, color=Colors.DANGER)
 
-                def remove_row(state: dict) -> None:
-                    if state in rows_state:
-                        rows_state.remove(state)
-                        rows_col.controls.remove(state["card"])
-                        rows_col.update()
-
-                def add_row(component_id=None, quantity=1.0) -> dict:
-                    comp_sel = SearchSelect(
-                        label="المادة الأولية",
-                        choices=choices,
-                        value=str(component_id) if component_id else None,
-                    )
-                    comp_qty = SelectAllTextField(
-                        label="الكمية لكل وحدة",
-                        value=(f"{float(quantity):g}" if quantity not in (None, "") else "1"),
-                        keyboard_type=ft.KeyboardType.NUMBER,
-                    )
-                    state: dict = {"component": comp_sel, "quantity": comp_qty}
-                    card = ft.Container(
-                        ft.Row(
-                            [
-                                ft.Container(comp_sel, expand=True),
-                                ft.Container(comp_qty, width=130),
-                                inline_icon_button(
-                                    ft.Icons.DELETE_OUTLINE,
-                                    lambda _, s=state: remove_row(s),
-                                    color=Colors.DANGER,
-                                ),
-                            ],
-                            spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=ft.padding.all(8),
-                        border=ft.border.all(1, Colors.BORDER_ALT),
-                        border_radius=Radius.MD,
-                        bgcolor=Colors.WHITE,
-                    )
-                    state["card"] = card
-                    rows_state.append(state)
-                    rows_col.controls.append(card)
-                    return state
-
+                recipe_grid = DataGrid(
+                    columns=[
+                        GridColumn("component", "المادة الأولية", editable=True, kind="picker"),
+                        GridColumn("quantity", "الكمية لكل وحدة", editable=True, kind="number", width=150, align="end"),
+                    ],
+                    rows=[], page=page, row_height=42, center_cells=True,
+                    picker_options=lambda col, _row: (
+                        [(int(i["id"]), str(i["name"])) for i in inventory] if col.key == "component" else []
+                    ),
+                    parser=lambda col, text: (
+                        float((text or "0").replace(",", ".")) if col.key == "quantity" else text
+                    ),
+                    empty_text="اضغط «سطر جديد» لإضافة مادة",
+                )
                 for comp in row.get("components") or []:
-                    add_row(int(comp.get("component_item_id") or 0) or None, float(comp.get("quantity") or 1))
-                if not rows_state:
-                    add_row()
+                    recipe_grid.add_row({
+                        "component": int(comp["component_item_id"]) if comp.get("component_item_id") else None,
+                        "quantity": float(comp.get("quantity") or 1),
+                    })
+                if not recipe_grid.rows:
+                    recipe_grid.add_row({"component": None, "quantity": 1})
 
-                dialog = ft.AlertDialog(modal=True, title=ft.Text("مواد الوصفة (مادة تجميعية)"))
+                def add_recipe_row(_=None) -> None:
+                    recipe_grid.add_row({"component": None, "quantity": 1})
 
                 def close(_=None) -> None:
                     page.close(dialog)
@@ -2954,8 +2934,8 @@ class ItemsCenter:
                 def save_recipe(_=None) -> None:
                     components: list[dict] = []
                     seen: set[int] = set()
-                    for st in rows_state:
-                        cid = st["component"].value
+                    for r in recipe_grid.rows:
+                        cid = r.get("component")
                         if not cid:
                             continue
                         cid_int = int(cid)
@@ -2964,7 +2944,7 @@ class ItemsCenter:
                             status.update()
                             return
                         try:
-                            qty = float(st["quantity"].value or 1)
+                            qty = float(r.get("quantity") or 0)
                         except (TypeError, ValueError):
                             qty = 0
                         if qty <= 0:
@@ -2984,10 +2964,6 @@ class ItemsCenter:
                     refresh_bulk_footer()
                     close()
 
-                add_btn = ft.OutlinedButton(
-                    "إضافة مادة", icon=ft.Icons.ADD_CIRCLE_OUTLINE,
-                    on_click=lambda _=None: (add_row(), rows_col.update()),
-                )
                 dialog.content = ft.Container(
                     ft.Column(
                         [
@@ -2996,19 +2972,26 @@ class ItemsCenter:
                                 "تُستهلك هذه المواد تلقائيًا من المخزون.",
                                 size=11, color=Colors.TEXT_SECONDARY,
                             ),
-                            rows_col,
-                            add_btn,
+                            ft.Container(recipe_grid, height=280),
+                            ft.OutlinedButton("إضافة مادة", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=add_recipe_row),
                             status,
                         ],
-                        spacing=8, tight=True, scroll=ft.ScrollMode.AUTO,
+                        spacing=8, tight=True,
                     ),
-                    width=460, height=400,
+                    width=560, height=440,
                 )
                 dialog.actions = [
                     ft.TextButton("إلغاء", on_click=close),
                     ft.FilledButton("حفظ الوصفة", icon=ft.Icons.SAVE_OUTLINED, on_click=save_recipe),
                 ]
                 page.open(dialog)
+                # Keep the add-item sheet open behind the recipe dialog instead
+                # of letting the dialog take over the screen.
+                try:
+                    sheet.open = True
+                    sheet.update()
+                except Exception:
+                    pass
 
             def bulk_choices(key: str) -> list[tuple]:
                 if key == "category_id":
