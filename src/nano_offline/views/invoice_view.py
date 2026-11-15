@@ -1885,13 +1885,21 @@ class InvoiceCenter:
                 close()
                 self.notify(f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}", sound_kind="save")
                 self.show_center()
-                # Surface the print-settings/preview window right after saving
-                # so the invoice can be printed/previewed without hunting for it
-                # in the list.
+
+                async def open_print_after_close() -> None:
+                    # Let the sheet's dismiss animation finish before opening
+                    # the print-settings window; opening a dialog in the same
+                    # tick races Flutter's pop route and it never renders.
+                    await asyncio.sleep(0.15)
+                    try:
+                        print_handler = self._print_handler(saved_id)
+                        if print_handler is not None:
+                            print_handler(None)
+                    except Exception:
+                        pass
+
                 try:
-                    print_handler = self._print_handler(saved_id)
-                    if print_handler is not None:
-                        print_handler(None)
+                    self.page.run_task(open_print_after_close)
                 except Exception:
                     pass
                 if is_sale:

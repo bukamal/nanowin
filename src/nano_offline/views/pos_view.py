@@ -1386,9 +1386,9 @@ class POSCenter:
                     on_click=lambda _e: handler(),
                 )
 
-            # A wide, low two-row keypad: it spans the sheet instead of
-            # stacking four tall rows, so the payment sheet stays compact on
-            # both phones and desktops. Always visible (quick sale + restaurant).
+            # A wide, low two-row keypad that spans the sheet instead of
+            # stacking four tall rows. Hidden by default; a button inside the
+            # sheet reveals it, so the payment sheet stays compact.
             keypad = ft.Column(
                 [
                     ft.Row(
@@ -1403,14 +1403,34 @@ class POSCenter:
                 ],
                 spacing=6, tight=True,
             )
-            keypad.visible = True
+            keypad.visible = False
+
+            def toggle_keypad(_=None):
+                keypad.visible = not keypad.visible
+                keypad_toggle.icon = ft.Icons.KEYBOARD_HIDE_OUTLINED if keypad.visible else ft.Icons.DIALPAD
+                try:
+                    keypad.update()
+                    keypad_toggle.update()
+                except Exception:
+                    self.page.update()
+
+            keypad_toggle = ft.IconButton(
+                icon=ft.Icons.DIALPAD,
+                tooltip="إظهار/إخفاء لوحة الأرقام",
+                icon_color=Colors.PRIMARY,
+                on_click=toggle_keypad,
+            )
 
             body.controls = [
                 ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                 ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
                 ft.Container(height=4),
                 currency_toggle_row,
-                received_display,
+                ft.Row(
+                    [ft.Container(received_display, expand=True), keypad_toggle],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 change_text,
                 quick_cash_row,
                 keypad,
