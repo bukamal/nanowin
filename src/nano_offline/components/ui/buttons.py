@@ -26,11 +26,16 @@ __all__ = [
 
 
 def _content(text: str, icon: str | None) -> ft.Row:
-    items: list[ft.Control] = []
-    if icon:
-        items.append(ft.Icon(icon, size=20, color=Colors.WHITE))
-    items.append(ft.Text(text, size=15, weight=ft.FontWeight.W_600, color=Colors.WHITE))
-    return ft.Row(items, spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER)
+    ring = ft.ProgressRing(width=18, height=18, stroke_width=2, color=Colors.WHITE, visible=False)
+    icon_control = ft.Icon(icon, size=20, color=Colors.WHITE) if icon else None
+    label = ft.Text(text, size=15, weight=ft.FontWeight.W_600, color=Colors.WHITE)
+    children: list[ft.Control] = [ring]
+    if icon_control is not None:
+        children.append(icon_control)
+    children.append(label)
+    row = ft.Row(children, spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER)
+    row.data = {"ring": ring, "icon": icon_control, "label": label}
+    return row
 
 
 def filled_action_button(
