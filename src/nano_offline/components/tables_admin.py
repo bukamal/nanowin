@@ -160,7 +160,7 @@ def open_tables_admin(page: ft.Page, ctx, notify) -> None:
     bulk_btn = secondary_button("إنشاء بالعدد", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=lambda _=None: open_bulk(), width=None, size="md")
 
     def confirm_delete_all() -> None:
-        dialog = ft.AlertDialog(modal=True, title=ft.Text("حذف كل الطاولات"))
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("حذف كل الطاولات"))
 
         def yes(_=None) -> None:
             try:

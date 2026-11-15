@@ -238,14 +238,13 @@ class FinanceCenter:
         commitments = self.ctx.reports.cash_commitments(as_of=today)
         anomalies = self.ctx.reports.expense_anomalies(as_of=today)
         last_close = self.ctx.cash_day_close.last_close()
-        buckets = commitments["buckets"]
 
         def sort_overview_grid(grid, rows: list[dict], key: str | None, direction: str | None) -> None:
             ordered = list(rows)
             if key:
                 numeric = {
                     "invoice_id", "days_overdue", "days_until_due", "remaining_amount",
-                    "days_until_due", "current_month_to_date",
+                    "current_month_to_date",
                     "expected_to_date", "difference", "increase_percent",
                 }
                 ordered.sort(
@@ -402,7 +401,7 @@ class FinanceCenter:
             post_adjustment = ft.Switch(label="ترحيل تسوية للفرق", value=True)
             print_after = ft.Switch(label="طباعة تقرير الإغلاق بعد الحفظ", value=True)
             preview = ft.Text("", color=Colors.TEXT_SECONDARY)
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("مطابقة وإغلاق الصندوق"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("مطابقة وإغلاق الصندوق"))
 
             def update_preview(_=None):
                 try:
@@ -714,7 +713,7 @@ class FinanceCenter:
             chosen = list(selected_state["rows"])
             if not chosen:
                 return
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف السندات"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("تأكيد حذف السندات"))
 
             def yes(_ev=None) -> None:
                 self.page.close(dialog)
@@ -1284,7 +1283,7 @@ class FinanceCenter:
         refresh_manual()
 
     def confirm_delete_voucher(self, voucher_id: int) -> None:
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
         def close(_=None):
             self.page.close(dialog)
@@ -1434,7 +1433,7 @@ class FinanceCenter:
             chosen = list(selected_state["rows"])
             if not chosen:
                 return
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف المصروفات"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("تأكيد حذف المصروفات"))
 
             def yes(_ev=None) -> None:
                 self.page.close(dialog)
@@ -1817,7 +1816,7 @@ class FinanceCenter:
         self.page.open(dialog)
 
     def confirm_delete_expense(self, expense_id: int) -> None:
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
         def close(_=None):
             self.page.close(dialog)

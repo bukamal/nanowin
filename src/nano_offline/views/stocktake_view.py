@@ -87,7 +87,7 @@ class StocktakeCenter:
         page = self.page
         started = (session.get("started_at") or "").split(".")[0]
         line_count = int(session.get("line_count") or 0)
-        dialog = ft.AlertDialog(modal=True, title=ft.Text("جلسة جرد مفتوحة"))
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("جلسة جرد مفتوحة"))
 
         def resume(_=None):
             page.close(dialog)
@@ -269,7 +269,7 @@ class StocktakeCenter:
             )
             error_text = ft.Text("", size=11, color=Colors.DANGER)
 
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("مادة جديدة"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("مادة جديدة"))
 
             def resume_if_needed() -> None:
                 if was_scanning:
@@ -416,7 +416,7 @@ class StocktakeCenter:
             self._render_review_screen()
 
         def confirm_discard(_=None):
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("تجاهل الجرد؟"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("تجاهل الجرد؟"))
 
             def yes(_=None):
                 page.close(dialog)
@@ -529,7 +529,7 @@ class StocktakeCenter:
     def _open_manual_edit(self, item_id: int, name: str, current_qty: float) -> None:
         page = self.page
         field = SelectAllTextField(label="الكمية المعدودة", value=self._qty(current_qty), keyboard_type=ft.KeyboardType.NUMBER)
-        dialog = ft.AlertDialog(modal=True, title=ft.Text(name))
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text(name))
 
         def save(_=None):
             try:
@@ -613,7 +613,7 @@ class StocktakeCenter:
             self._render_scan_screen()
 
         def do_discard(_=None):
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("تجاهل الجرد؟"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("تجاهل الجرد؟"))
 
             def yes(_=None):
                 page.close(dialog)
@@ -629,7 +629,7 @@ class StocktakeCenter:
             page.open(dialog)
 
         def do_commit(_=None):
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("اعتماد الجرد"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("اعتماد الجرد"))
 
             def yes(_=None):
                 page.close(dialog)

@@ -23,7 +23,7 @@ __all__ = ["open_sections_sheet"]
 
 
 def _confirm(page: ft.Page, *, title: str, message: str, on_confirm) -> None:
-    dialog = ft.AlertDialog(modal=True, title=ft.Text(title))
+    dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text(title))
 
     def yes(_=None) -> None:
         page.close(dialog)

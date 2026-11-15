@@ -137,7 +137,7 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
         exit_btn = ft.OutlinedButton("خروج بدون نسخة", icon=ft.Icons.LOGOUT)
         cancel_btn = ft.TextButton("إلغاء")
 
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
         def _set_busy(busy: bool, text: str = "") -> None:
             state["busy"] = busy

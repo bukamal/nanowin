@@ -69,7 +69,7 @@ def _confirm_similar(page: ft.Page, *, title: str, message: str, on_confirm) -> 
     of the same product, two branches with a near-identical name, etc).
     Shared by the barcode-similarity and name-similarity checks below.
     """
-    dialog = ft.AlertDialog(modal=True, title=ft.Text(title))
+    dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text(title))
 
     def yes(_=None) -> None:
         page.close(dialog)
@@ -511,7 +511,7 @@ class ItemsCenter:
             rows = list(selected_state["rows"])
             if not rows:
                 return
-            dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف المواد"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("تأكيد حذف المواد"))
 
             def yes(_ev=None) -> None:
                 page.close(dialog)
@@ -684,7 +684,7 @@ class ItemsCenter:
         def open_rename_definition(entry: dict, is_category: bool) -> None:
             name_field = SelectAllTextField(label="الاسم", value=entry["name"])
             abbr_field = SelectAllTextField(label="الاختصار", value=entry.get("abbreviation") or "") if not is_category else None
-            dialog = ft.AlertDialog(modal=True)
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
             def close(_=None):
                 page.close(dialog)
@@ -714,7 +714,7 @@ class ItemsCenter:
             # re-checked here too and any failure just restores the row via
             # render_definitions_sheet(), so a race is never destructive.
             label = "التصنيف" if is_category else "الوحدة"
-            confirm = ft.AlertDialog(modal=True)
+            confirm = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
             def close(_=None):
                 page.close(confirm)
@@ -1593,7 +1593,7 @@ class ItemsCenter:
             total = sum(n for _, n in usable)
             is_roll = layout == "roll"
             roll_width_mm = roll_width_mm or barcode_settings.label_roll_width_mm(ctx.settings)
-            dialog = ft.AlertDialog(modal=True)
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
             price_qr_toggle = ft.Checkbox(
                 label="إضافة رمز QR للسعر (يمسحه الزبون بكاميرا هاتفه)",
                 value=barcode_settings.label_price_qr_default(ctx.settings),
@@ -3592,7 +3592,7 @@ class ItemsCenter:
         def confirm_delete_item(item: dict) -> None:
             # The repository rechecks invoice, stocktake, and balance guards,
             # so a stale detail sheet cannot delete newly-used history.
-            confirm = ft.AlertDialog(modal=True)
+            confirm = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
             def close(_=None):
                 page.close(confirm)
@@ -3618,7 +3618,7 @@ class ItemsCenter:
             page.open(confirm)
 
         def confirm_clear_opening(item: dict) -> None:
-            confirm = ft.AlertDialog(modal=True)
+            confirm = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
             def close(_=None):
                 page.close(confirm)
@@ -3879,7 +3879,7 @@ class ItemsCenter:
         # with the composite recipe editor). Used for both add and edit.
         def _choose_item_form(*, edit_item: dict | None = None) -> None:
             editing = edit_item is not None
-            dialog = ft.AlertDialog(modal=True)
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
             dialog.title = ft.Text("تعديل مادة" if editing else "إضافة مادة")
 
             def _go_table(_=None) -> None:

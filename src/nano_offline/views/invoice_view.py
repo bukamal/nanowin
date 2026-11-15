@@ -922,7 +922,7 @@ class InvoiceCenter:
                         if not others:
                             self.notify("لا يوجد طلب مفتوح آخر للدمج", kind="warning")
                             return
-                        dialog = ft.AlertDialog(modal=True)
+                        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
                         pick = SearchSelect(
                             label="الطلب المفتوح الذي سيُدمج في هذا الطلب",
                             choices=[
@@ -958,7 +958,7 @@ class InvoiceCenter:
                         if len(order_lines) < 2:
                             self.notify("يحتاج الطلب بندين على الأقل للتقسيم", kind="warning")
                             return
-                        dialog = ft.AlertDialog(modal=True)
+                        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
                         boxes: list[tuple[int, ft.Checkbox]] = []
                         for index, line in enumerate(order_lines):
                             boxes.append((index, ft.Checkbox(
@@ -1027,7 +1027,7 @@ class InvoiceCenter:
                 rows = list(selected_state["rows"])
                 if not rows:
                     return
-                dialog = ft.AlertDialog(modal=True, title=ft.Text("تأكيد حذف الفواتير"))
+                dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("تأكيد حذف الفواتير"))
 
                 def yes(_ev=None) -> None:
                     self.page.close(dialog)
@@ -1384,7 +1384,7 @@ class InvoiceCenter:
             self.notify("الفاتورة غير موجودة")
             return
 
-        dialog = ft.AlertDialog(modal=True)
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
         def close(_=None):
             self.page.close(dialog)

@@ -34,7 +34,7 @@ class CommandPalette:
         results = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=320)
         rows: list[ft.Container] = []
         field = SelectAllTextField(label="ابحث عن قسم…", autofocus=True)
-        dialog = ft.AlertDialog(modal=True, title=ft.Text("بحث سريع"))
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("بحث سريع"))
 
         def render_results(query: str = "") -> None:
             q = (query or "").strip().casefold()

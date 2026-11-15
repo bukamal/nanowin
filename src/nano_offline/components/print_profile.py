@@ -224,7 +224,7 @@ def open_print_profile_dialog(
     width.on_change = lambda _: refresh()
     refresh(update=False)
 
-    dialog = ft.AlertDialog(modal=True)
+    dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
     async def confirm(_=None) -> None:
         selected_layout, width_key, roll_width_mm = selection()

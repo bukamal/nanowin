@@ -1000,7 +1000,7 @@ class POSCenter:
                 margin_issues = cart_margin_warnings(margin_rows, self.ctx.settings)
                 if margin_issues and not getattr(self, "_margin_override", False):
                     names = "، ".join(str(w.get("name") or "") for w in margin_issues[:3])
-                    dialog = ft.AlertDialog(modal=True)
+                    dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
                     def proceed(_=None):
                         self.page.close(dialog)
@@ -2013,7 +2013,7 @@ class POSCenter:
                 ("Esc مرتين", "تفريغ السلة"),
                 ("Ctrl+Enter", "إتمام الدفع"),
             ]
-            dialog = ft.AlertDialog(modal=True)
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
             dialog.title = ft.Row(
                 [
                     ft.Icon(ft.Icons.KEYBOARD_ALT_OUTLINED, color=Colors.PRIMARY),
@@ -3598,7 +3598,7 @@ class POSCenter:
             self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
             return
         sound_engine.play(self.page, "barcode_error")
-        dialog = ft.AlertDialog(modal=True, title=ft.Text("لا توجد مادة بهذا الباركود"))
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("لا توجد مادة بهذا الباركود"))
         dialog.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
 
         def create(_=None) -> None:

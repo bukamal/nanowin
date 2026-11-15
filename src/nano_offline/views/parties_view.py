@@ -252,7 +252,7 @@ class PartyCenter:
             # through the ⋮ row menu and the bulk bar into this same guarded
             # dialog, which re-reads from `repo` after cancelling or
             # deleting so the list always reflects actual data.
-            confirm = ft.AlertDialog(modal=True)
+            confirm = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
             def close(_=None):
                 page.close(confirm)
@@ -556,7 +556,7 @@ class PartyCenter:
             chosen = list(selected_state["rows"])
             if not chosen:
                 return
-            dialog = ft.AlertDialog(modal=True, title=ft.Text(f"تأكيد حذف {title}"))
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text(f"تأكيد حذف {title}"))
 
             def yes(_ev=None) -> None:
                 page.close(dialog)

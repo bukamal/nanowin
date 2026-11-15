@@ -1814,7 +1814,7 @@ class AdminCenter:
                 label="كلمة مرور المدير", password=True, can_reveal_password=True, autofocus=True
             )
             status_line = ft.Text("", size=11, color=Colors.DANGER_DARKER)
-            confirm = ft.AlertDialog(modal=True)
+            confirm = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
             def do_confirm(_ev=None):
                 try:
