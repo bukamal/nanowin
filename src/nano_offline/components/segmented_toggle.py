@@ -6,6 +6,7 @@ from typing import Callable, Iterable
 import flet as ft
 
 from nano_offline.core.theme import Colors
+from nano_offline.core.design.tokens import radius_for
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +75,7 @@ class SegmentedToggle(ft.Row):
             padding=ft.padding.symmetric(horizontal=16, vertical=11),
             bgcolor=Colors.PRIMARY if active else Colors.WHITE,
             border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
-            border_radius=14,
+            border_radius=radius_for("lg"),
             ink=True,
             expand=True,
             animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),

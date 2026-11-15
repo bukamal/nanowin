@@ -21,7 +21,8 @@ from typing import Callable
 import flet as ft
 
 from nano_offline.core import branding
-from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.design.tokens import radius_for
 
 
 @dataclass
@@ -254,7 +255,7 @@ class CommandBar(ft.Container):
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             padding=ft.padding.symmetric(horizontal=12, vertical=9),
-            border_radius=Radius.SM,
+            border_radius=radius_for("sm"),
             ink=True,
         )
         items: list[ft.Control] = []
@@ -323,7 +324,7 @@ class CommandBar(ft.Container):
                 width=18,
                 height=18,
                 alignment=ft.alignment.center,
-                border_radius=Radius.SM,
+                border_radius=radius_for("sm"),
                 on_click=lambda _, k=key: self.close_tab(k),
                 ink=True,
             )
@@ -426,7 +427,7 @@ class CommandBar(ft.Container):
         box = ft.Container(
             inner,
             padding=ft.padding.symmetric(horizontal=12, vertical=7),
-            border_radius=Radius.SM,
+            border_radius=radius_for("sm"),
             border=ft.border.all(1, Colors.PRIMARY if action.accent else Colors.BORDER),
             bgcolor=Colors.PRIMARY if action.accent else Colors.WHITE,
             ink=True,
@@ -453,7 +454,7 @@ class CommandBar(ft.Container):
             height=38,
             alignment=ft.alignment.center,
             border=ft.border.all(1, Colors.BORDER),
-            border_radius=Radius.SM,
+            border_radius=radius_for("sm"),
             ink=True,
             tooltip="بحث سريع (Ctrl+K)",
             on_click=lambda _: self.on_search and self.on_search(),
