@@ -2891,31 +2891,65 @@ class ItemsCenter:
             def _open_recipe_dialog(index: int) -> None:
                 """Define/replace the recipe (materials) of one bulk row.
 
-                Uses the same editable DataGrid as every other table in the
-                app, and keeps the add-item sheet open behind the dialog.
+                Rendered as an in-page overlay (a centred window over a dimmed
+                backdrop) rather than a routed dialog/bottom-sheet: the add-item
+                sheet therefore stays open behind it, the keyboard/picker keep
+                working exactly like the other editable tables, and no route
+                push can dismiss the sheet.
                 """
                 row = bulk_grid.rows[index]
                 inventory = [i for i in ctx.items.list() if i.get("item_type") == "مخزون"]
-                dialog = ft.AlertDialog(
-                    modal=True,
-                    title=ft.Text("مواد الوصفة (مادة تجميعية)"),
-                    actions_alignment=ft.MainAxisAlignment.CENTER,
-                )
+                by_id = {int(i["id"]): i for i in inventory}
+
+                def _material_name(value) -> str:
+                    if value in (None, ""):
+                        return ""
+                    item = by_id.get(int(value))
+                    return str(item.get("name")) if item else ""
+
+                def _material_unit(value) -> str:
+                    if value in (None, ""):
+                        return ""
+                    item = by_id.get(int(value))
+                    if not item:
+                        return ""
+                    return str(item.get("unit_name") or item.get("base_unit") or "")
+
+                def _recipe_formatter(col, value, row_values):
+                    if col.key == "component":
+                        return _material_name(value)
+                    if col.key == "unit":
+                        return _material_unit(row_values.get("component"))
+                    if col.key == "quantity":
+                        try:
+                            return f"{float(value):g}" if value not in (None, "") else ""
+                        except (TypeError, ValueError):
+                            return ""
+                    return None
+
+                def _recipe_edit_formatter(col, value, row_values):
+                    if col.key == "component":
+                        return _material_name(value)
+                    return None
+
                 status = ft.Text("", size=11, color=Colors.DANGER)
 
                 recipe_grid = DataGrid(
                     columns=[
                         GridColumn("component", "المادة الأولية", editable=True, kind="picker"),
-                        GridColumn("quantity", "الكمية لكل وحدة", editable=True, kind="number", width=150, align="end"),
+                        GridColumn("quantity", "الكمية لكل وحدة", editable=True, kind="number", width=140, align="end"),
+                        GridColumn("unit", "الوحدة", editable=False, width=110, align="center"),
                     ],
                     rows=[], page=page, row_height=42, center_cells=True,
+                    formatter=_recipe_formatter,
+                    edit_formatter=_recipe_edit_formatter,
                     picker_options=lambda col, _row: (
                         [(int(i["id"]), str(i["name"])) for i in inventory] if col.key == "component" else []
                     ),
                     parser=lambda col, text: (
                         float((text or "0").replace(",", ".")) if col.key == "quantity" else text
                     ),
-                    empty_text="اضغط «سطر جديد» لإضافة مادة",
+                    empty_text="اضغط «إضافة مادة» أو سطر جديد",
                 )
                 for comp in row.get("components") or []:
                     recipe_grid.add_row({
@@ -2929,7 +2963,27 @@ class ItemsCenter:
                     recipe_grid.add_row({"component": None, "quantity": 1})
 
                 def close(_=None) -> None:
-                    page.close(dialog)
+                    # Leaving a composite row with an empty recipe would make the
+                    # bulk save reject it; drop the flag instead so the user can
+                    # just retry by picking «نعم».
+                    try:
+                        if int(row.get("is_composite") or 0) and not (row.get("components") or []):
+                            bulk_grid.set_cell(index, "is_composite", 0, notify=False)
+                            refresh_bulk_footer()
+                    except Exception:
+                        pass
+                    try:
+                        if overlay in page.overlay.controls:
+                            page.overlay.remove(overlay)
+                        page.update()
+                    except Exception:
+                        pass
+                    # The recipe grid took over the page keyboard handler; hand
+                    # it back to the bulk grid on the way out.
+                    try:
+                        bulk_grid.attach()
+                    except Exception:
+                        pass
 
                 def save_recipe(_=None) -> None:
                     components: list[dict] = []
@@ -2960,38 +3014,60 @@ class ItemsCenter:
                         status.update()
                         return
                     bulk_grid.set_cell(index, "components", components, notify=False)
-                    bulk_grid.set_cell(index, "is_composite", 1)
+                    bulk_grid.set_cell(index, "is_composite", 1, notify=False)
                     refresh_bulk_footer()
                     close()
 
-                dialog.content = ft.Container(
+                panel = ft.Container(
                     ft.Column(
                         [
+                            ft.Row(
+                                [
+                                    ft.Text("مواد الوصفة (مادة تجميعية)", size=16, weight=ft.FontWeight.BOLD, expand=True),
+                                    inline_icon_button(ft.Icons.CLOSE, lambda _=None: close()),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
                             ft.Text(
                                 "حدّد المواد الأولية الداخلة في وحدة واحدة. عند بيع هذه المادة "
                                 "تُستهلك هذه المواد تلقائيًا من المخزون.",
                                 size=11, color=Colors.TEXT_SECONDARY,
                             ),
-                            ft.Container(recipe_grid, height=280),
-                            ft.OutlinedButton("إضافة مادة", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=add_recipe_row),
+                            ft.Container(recipe_grid, expand=True),
+                            ft.Row(
+                                [ft.OutlinedButton("إضافة مادة", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=add_recipe_row)],
+                                alignment=ft.MainAxisAlignment.START,
+                            ),
                             status,
+                            ft.Row(
+                                [
+                                    ft.TextButton("إلغاء", on_click=close),
+                                    ft.FilledButton("حفظ الوصفة", icon=ft.Icons.SAVE_OUTLINED, on_click=save_recipe),
+                                ],
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                spacing=10,
+                            ),
                         ],
-                        spacing=8, tight=True,
+                        spacing=10, tight=True, expand=True,
                     ),
-                    width=560, height=440,
+                    width=580, height=470,
+                    padding=16,
+                    bgcolor=Colors.WHITE,
+                    border_radius=Radius.LG,
+                    shadow=Shadow.LG,
                 )
-                dialog.actions = [
-                    ft.TextButton("إلغاء", on_click=close),
-                    ft.FilledButton("حفظ الوصفة", icon=ft.Icons.SAVE_OUTLINED, on_click=save_recipe),
-                ]
-                page.open(dialog)
-                # Keep the add-item sheet open behind the recipe dialog instead
-                # of letting the dialog take over the screen.
-                try:
-                    sheet.open = True
-                    sheet.update()
-                except Exception:
-                    pass
+                overlay = ft.Container(
+                    width=int(page.width or 1280), height=int(page.height or 800),
+                    bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
+                    alignment=ft.alignment.center,
+                    on_click=lambda _=None: None,
+                    content=panel,
+                )
+                page.overlay.append(overlay)
+                # Force a sync so the overlay exists client-side before it is
+                # shown (same caveat as the date picker: append() alone is not
+                # enough for the first paint).
+                page.update()
 
             def bulk_choices(key: str) -> list[tuple]:
                 if key == "category_id":
