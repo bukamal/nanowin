@@ -30,6 +30,7 @@ from nano_offline.components import (
 )
 
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, danger_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
@@ -66,6 +67,16 @@ STATUS_AR = {
     "partial": "مدفوعة جزئيًا",
     "unpaid": "غير مدفوعة",
 }
+
+
+def _is_opening_invoice(inv: dict) -> bool:
+    """Opening-stock 'أول المدة' invoices carry a notes marker; the list shows
+    them as their own type instead of as an ordinary purchase invoice."""
+    try:
+        return OPENING_BALANCE_MARKER in str(inv.get("notes") or "")
+    except Exception:
+        return False
+
 
 # Invoice list grid columns -- same table language as the materials screen.
 # Every cell is display-only on purpose: an invoice is a financial record, so
@@ -682,8 +693,16 @@ class InvoiceCenter:
 
             def matches(inv: dict) -> bool:
                 query = (search.value or "").strip().lower()
-                if filters["type"] != "all" and inv.get("type") != filters["type"]:
-                    return False
+                ftype = filters["type"]
+                if ftype == "opening":
+                    if not _is_opening_invoice(inv):
+                        return False
+                elif ftype != "all":
+                    if inv.get("type") != ftype:
+                        return False
+                    # Opening stock is its own type, not a purchase.
+                    if ftype == "purchase" and _is_opening_invoice(inv):
+                        return False
                 if filters["status"] == "outstanding":
                     if inv.get("payment_status") not in {"unpaid", "partial"}:
                         return False
@@ -706,6 +725,8 @@ class InvoiceCenter:
                 if col.key == "id":
                     return f"#{self._display_invoice_number(int(row.get('id') or 0))}"
                 if col.key == "type":
+                    if _is_opening_invoice(row):
+                        return ("أول مدة", Colors.PRIMARY_DARK, Colors.PRIMARY_BG)
                     if row.get("type") == "sale":
                         return ("بيع", Colors.SUCCESS_DARKER, Colors.SUCCESS_BG)
                     return ("شراء", Colors.PURPLE, Colors.PURPLE_BG)
@@ -1189,7 +1210,12 @@ class InvoiceCenter:
                 )
 
             def render_filters() -> None:
-                type_row.controls = [chip("الكل", "type", "all", type_row), chip("مبيعات", "type", "sale", type_row), chip("مشتريات", "type", "purchase", type_row)]
+                type_row.controls = [
+                    chip("الكل", "type", "all", type_row),
+                    chip("مبيعات", "type", "sale", type_row),
+                    chip("مشتريات", "type", "purchase", type_row),
+                    chip("أول مدة", "type", "opening", type_row),
+                ]
                 status_row.controls = [
                     chip("كل الحالات", "status", "all", status_row),
                     chip("المستحق", "status", "outstanding", status_row),

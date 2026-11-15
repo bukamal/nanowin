@@ -890,7 +890,12 @@ class ItemsCenter:
                 label=currency.amount_field_label("سعر البيع", self.ctx.settings),
                 value=currency.to_input_text((item or {}).get("selling_price", 0), self.ctx.settings),
             )
-            qty = SelectAllTextField(label="الرصيد الافتتاحي", value="0", keyboard_type=ft.KeyboardType.NUMBER, visible=item is None)
+            qty = SelectAllTextField(
+                label="الرصيد الافتتاحي" if item is None else "الكمية (تسوية المخزون)",
+                value=("0" if item is None else f"{float((item or {}).get('quantity') or 0):g}"),
+                keyboard_type=ft.KeyboardType.NUMBER,
+                visible=item is None or str((item or {}).get("item_type") or "مخزون") == "مخزون",
+            )
             # Live profit-margin readout: purely a display computed from
             # the two price fields above, nothing stored -- recalculated
             # on every keystroke in either field so staff can see the
@@ -1415,9 +1420,22 @@ class ItemsCenter:
                         section_id=int(section_sel.value) if section_sel.value else None,
                     )
                     if item:
-                        ctx.items.update(int(item["id"]), **kwargs)
+                        _update_kwargs = dict(kwargs)
+                        if not _is_composite and (kind.value or "مخزون") == "مخزون":
+                            try:
+                                _update_kwargs["quantity"] = float(qty.value or 0)
+                            except (TypeError, ValueError):
+                                pass
+                        ctx.items.update(int(item["id"]), **_update_kwargs)
                         item_id = int(item["id"])
                         msg = "تم تحديث المادة"
+                        # A balance set on an item that has no documents yet is
+                        # treated as opening stock -> create/refresh its "أول المدة"
+                        # invoice (no-op when the item already has real invoices).
+                        try:
+                            ctx.invoices.convert_opening_balances(item_ids=[item_id], reference="أول المدة")
+                        except Exception:
+                            pass
                     else:
                         item_id = ctx.items.create(
                             quantity=0 if _is_composite else float(qty.value or 0), **kwargs
@@ -3344,6 +3362,7 @@ class ItemsCenter:
                 type_default = type_sel.value or "مخزون"
                 created_indices: list[int] = []
                 created_ids: list[int] = []
+                updated_ids: list[int] = []
                 updated_count = 0
                 errors: list[str] = []
                 warnings: list[str] = []
@@ -3422,6 +3441,7 @@ class ItemsCenter:
                                 fields["quantity"] = float(row.get("quantity") or 0)
                             ctx.items.update(int(row_id), **fields)
                             updated_count += 1
+                            updated_ids.append(int(row_id))
                             item_id = int(row_id)
                         else:
                             item_id = ctx.items.create(
@@ -3473,6 +3493,14 @@ class ItemsCenter:
                     # purchase invoice (no cash/payable impact).
                     try:
                         ctx.invoices.convert_opening_balances(item_ids=created_ids, reference="أول المدة")
+                    except Exception as exc:
+                        warnings.append(f"أول المدة: {exc}")
+                if updated_ids:
+                    # A balance set while editing an item that has no documents
+                    # yet is opening stock too -> create/refresh its "أول المدة"
+                    # invoice (no-op for items that already have real invoices).
+                    try:
+                        ctx.invoices.convert_opening_balances(item_ids=updated_ids, reference="أول المدة")
                     except Exception as exc:
                         warnings.append(f"أول المدة: {exc}")
                 if not created_indices and not updated_count and not errors:

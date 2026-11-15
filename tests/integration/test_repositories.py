@@ -9,6 +9,7 @@ import pytest
 from nano_offline.app_context import AppContext
 from nano_offline.core.audit_chain import verify_audit_chain
 from nano_offline.services.invoice_service import InvoiceLineInput
+from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 
 
 @pytest.fixture()
@@ -38,7 +39,7 @@ def test_item_repository_async_bridge(ctx, seeded):
     assert any(r["id"] == seeded["item_id"] for r in rows)
     # bridge exposes only @blocking methods
     with pytest.raises(AttributeError, match="not tagged @blocking"):
-        ctx.items.aio._check_barcode_free
+        ctx.items.aio._check_barcode_free  # noqa: B018
 
 
 def test_party_repository_async(ctx, seeded):
@@ -368,3 +369,19 @@ def test_zero_stock_item_with_adjustment_only_history_can_be_deleted(ctx):
             "SELECT COUNT(*) FROM inventory_movements WHERE item_id=?",
             (item_id,),
         ).fetchone()[0] == 0
+
+
+def test_editing_zero_stock_item_creates_opening_invoice(ctx):
+    # A brand-new item saved with zero stock, then edited to give it an opening
+    # balance, must surface that balance as an "أول المدة" opening invoice.
+    item_id = ctx.items.create(name="مادة صفر", purchase_price=4, quantity=0)
+    assert ctx.invoices.convert_opening_balances(item_ids=[item_id]) is None
+
+    ctx.items.update(item_id, name="مادة صفر", purchase_price=4, selling_price=8, quantity=12)
+    opening_id = ctx.invoices.convert_opening_balances(item_ids=[item_id], reference="أول المدة")
+    assert opening_id is not None
+
+    invoice = ctx.invoices.get_invoice(opening_id)
+    assert invoice["type"] == "purchase"
+    assert OPENING_BALANCE_MARKER in (invoice["notes"] or "")
+    assert float(ctx.items.get(item_id)["quantity"]) == 12
