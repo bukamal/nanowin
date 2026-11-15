@@ -1378,30 +1378,32 @@ class POSCenter:
 
             def _key_btn(label: str, handler) -> ft.Control:
                 return ft.Container(
-                    ft.Text(label, size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
-                    width=58, height=46, alignment=ft.alignment.center,
+                    ft.Text(label, size=18, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                    height=46, expand=True, alignment=ft.alignment.center,
                     bgcolor=Colors.BACKGROUND_ALT,
                     border=ft.border.all(1, Colors.BORDER),
                     border_radius=Radius.SM, ink=True,
                     on_click=lambda _e: handler(),
                 )
 
+            # A wide, low two-row keypad: it spans the sheet instead of
+            # stacking four tall rows, so the payment sheet stays compact on
+            # both phones and desktops. Always visible (quick sale + restaurant).
             keypad = ft.Column(
                 [
-                    ft.Row([_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (7, 8, 9)],
-                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Row([_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (4, 5, 6)],
-                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Row([_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (1, 2, 3)],
-                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Row([_key_btn("C", _key_clear), _key_btn("0", lambda: _key_digit("0")), _key_btn("⌫", _key_back)],
-                           spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row(
+                        [_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (1, 2, 3, 4, 5, 6)],
+                        spacing=6,
+                    ),
+                    ft.Row(
+                        [_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (7, 8, 9, 0)]
+                        + [_key_btn("C", _key_clear), _key_btn("⌫", _key_back)],
+                        spacing=6,
+                    ),
                 ],
-                spacing=8, tight=True,
+                spacing=6, tight=True,
             )
-            # Numeric keypad (partial-amount entry) is a restaurant-mode feature;
-            # normal quick-sale keeps its original quick-cash-only payment sheet.
-            keypad.visible = restaurant_settings.enabled(self.ctx.settings)
+            keypad.visible = True
 
             body.controls = [
                 ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
