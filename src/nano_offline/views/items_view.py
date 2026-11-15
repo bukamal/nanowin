@@ -2902,7 +2902,8 @@ class ItemsCenter:
                 working exactly like the other editable tables, and no route
                 push can dismiss the sheet.
                 """
-                row = bulk_grid.rows[index]
+                row = bulk_grid.row_at(index) or bulk_grid.rows[index]
+                saved = {"done": False}
                 inventory = [i for i in ctx.items.list() if i.get("item_type") == "مخزون"]
                 by_id = {int(i["id"]): i for i in inventory}
 
@@ -2972,7 +2973,8 @@ class ItemsCenter:
                     # bulk save reject it; drop the flag instead so the user can
                     # just retry by picking «نعم».
                     try:
-                        if int(row.get("is_composite") or 0) and not (row.get("components") or []):
+                        live = bulk_grid.row_at(index) or row
+                        if not saved["done"] and int(live.get("is_composite") or 0) and not (live.get("components") or []):
                             bulk_grid.set_cell(index, "is_composite", 0, notify=False)
                             refresh_bulk_footer()
                     except Exception:
@@ -3020,6 +3022,7 @@ class ItemsCenter:
                         return
                     bulk_grid.set_cell(index, "components", components, notify=False)
                     bulk_grid.set_cell(index, "is_composite", 1, notify=False)
+                    saved["done"] = True
                     refresh_bulk_footer()
                     close()
 

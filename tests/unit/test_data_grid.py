@@ -47,6 +47,16 @@ def test_cell_boxes_cover_all_rows_and_columns():
     assert g.row_at(9) is None
 
 
+def test_row_at_is_live_while_rows_are_snapshots():
+    g = make_grid()
+    live = g.row_at(0)
+    live["name"] = "مباشر"
+    assert g.row_at(0)["name"] == "مباشر"
+    snapshot = g.rows[0]
+    snapshot["name"] = "نسخة"
+    assert g.row_at(0)["name"] == "مباشر"
+
+
 def test_first_cell_is_highlighted_on_build():
     g = make_grid()
     assert g._cell_boxes[(0, 0)].bgcolor == Colors.PRIMARY_BG
