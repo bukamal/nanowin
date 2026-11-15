@@ -2623,6 +2623,7 @@ class ItemsCenter:
                 GridColumn("category_id", "التصنيف", width=140, editable=True, kind="picker", tooltip="نقرة على الخلية ثم Enter للاختيار"),
                 GridColumn("item_type", "النوع", width=100, align="center", editable=True, kind="picker", tooltip="مخزون يُتابع بالمخزون، وخدمة لا"),
                 GridColumn("is_composite", "تجميعية", width=90, align="center", editable=True, kind="picker", tooltip="مادة تُصنع من مواد أولية — اختر «نعم» لتحديد الوصفة"),
+                GridColumn("has_extra_units", "وحدات إضافية", width=120, align="center", editable=True, kind="picker", tooltip="وحدات بيع/شراء إضافية بمعامل وسعر بيع/شراء وباركود لكل وحدة"),
                 GridColumn("section_id", "القسم", width=110, editable=True, kind="picker", tooltip="محطة الطباعة (مطبخ/بار/...) — اختياري"),
                 GridColumn("base_unit_id", "الوحدة", width=110, editable=True, kind="picker", tooltip="الوحدة الأساسية للبيع والشراء"),
                 GridColumn("quantity", "الكمية", width=90, align="end", kind="number", editable=True, tooltip="الكمية الافتتاحية (للمخزون فقط)"),
@@ -2666,6 +2667,11 @@ class ItemsCenter:
                         return "لا"
                     count = len(row.get("components") or [])
                     return f"نعم ({count})" if count else "نعم — بلا وصفة"
+                if col.key == "has_extra_units":
+                    units = row.get("extra_units") or []
+                    if not units:
+                        return "لا"
+                    return f"نعم ({len(units)})"
                 if col.key == "_status":
                     if str(row.get("name") or "").strip():
                         return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
@@ -2697,8 +2703,15 @@ class ItemsCenter:
                     became_composite = key == "is_composite" and bool(int(value or 0))
                 except (TypeError, ValueError):
                     became_composite = False
+                # Same idea for extra units: picking «نعم» opens the unit editor.
+                try:
+                    wants_extra_units = key == "has_extra_units" and bool(int(value or 0))
+                except (TypeError, ValueError):
+                    wants_extra_units = False
                 if became_composite:
                     _open_recipe_dialog(index)
+                elif wants_extra_units:
+                    _open_extra_units_window(index)
                 refresh_bulk_footer()
 
             # The sheet pins its header and action footer; the grid takes
@@ -2759,6 +2772,8 @@ class ItemsCenter:
                     "category_id": default_id(cat_sel) or "",
                     "base_unit_id": default_id(unit_sel) or "",
                     "is_composite": 0,
+                    "has_extra_units": 0,
+                    "extra_units": [],
                     "components": [],
                     "section_id": "",
                     "alternate_unit_id": "",
@@ -3130,6 +3145,174 @@ class ItemsCenter:
                 except Exception:
                     pass
 
+            def _open_extra_units_window(index: int) -> None:
+                """Editor for a row's additional (alternate) units.
+
+                Same in-sheet overlay window as the recipe editor: a table where
+                each row is one alternate unit with its conversion factor,
+                selling/purchase price and barcode.
+                """
+                row = bulk_grid.row_at(index) or bulk_grid.rows[index]
+                saved = {"done": False}
+                status = ft.Text("", size=11, color=Colors.DANGER)
+
+                def _extra_formatter(col, value, row_values):
+                    if col.key == "unit_id":
+                        return unit_map.get(str(value)) if value not in (None, "") else ""
+                    if col.key in ("purchase_price", "selling_price"):
+                        return money(value, field="price") if value not in (None, "") else ""
+                    if col.key == "conversion_factor":
+                        try:
+                            return f"{float(value):g}" if value not in (None, "") else ""
+                        except (TypeError, ValueError):
+                            return ""
+                    return None
+
+                def _extra_edit_formatter(col, value, row_values):
+                    if col.key in ("purchase_price", "selling_price"):
+                        return _edit_item_cell_text(col, value, row_values, ctx.settings)
+                    return None
+
+                def _extra_parser(col, text):
+                    if col.key == "conversion_factor":
+                        cleaned = (text or "").replace(",", "")
+                        return float(cleaned) if cleaned else 0.0
+                    return _parse_item_cell(col, text, ctx.settings)
+
+                units_grid = DataGrid(
+                    columns=[
+                        GridColumn("unit_id", "الوحدة", editable=True, kind="picker", width=130),
+                        GridColumn("conversion_factor", "معامل التحويل", editable=True, kind="number", width=120, align="end"),
+                        GridColumn("purchase_price", "سعر الشراء", editable=True, kind="money", width=130, align="end"),
+                        GridColumn("selling_price", "سعر البيع", editable=True, kind="money", width=130, align="end"),
+                        GridColumn("barcode", "الباركود", editable=True, width=170),
+                    ],
+                    rows=[], page=page, row_height=42, center_cells=True,
+                    formatter=_extra_formatter,
+                    edit_formatter=_extra_edit_formatter,
+                    parser=_extra_parser,
+                    picker_options=lambda col, _row: (
+                        [(int(u["id"]), u["name"]) for u in units] if col.key == "unit_id" else []
+                    ),
+                    empty_text="اضغط «إضافة وحدة» أو سطر جديد",
+                )
+                for u in row.get("extra_units") or []:
+                    units_grid.add_row({
+                        "unit_id": int(u["unit_id"]) if u.get("unit_id") not in (None, "") else None,
+                        "conversion_factor": float(u.get("conversion_factor") or 1),
+                        "purchase_price": u.get("purchase_price") if u.get("purchase_price") is not None else "",
+                        "selling_price": u.get("selling_price") if u.get("selling_price") is not None else "",
+                        "barcode": u.get("barcode") or "",
+                    })
+                if not units_grid.rows:
+                    units_grid.add_row({"unit_id": None, "conversion_factor": 1, "purchase_price": "", "selling_price": "", "barcode": ""})
+
+                def add_unit_row(_=None) -> None:
+                    units_grid.add_row({"unit_id": None, "conversion_factor": 1, "purchase_price": "", "selling_price": "", "barcode": ""})
+
+                def close(_=None) -> None:
+                    try:
+                        live = bulk_grid.row_at(index) or row
+                        if not saved["done"] and not (live.get("extra_units") or []):
+                            bulk_grid.set_cell(index, "has_extra_units", 0, notify=False)
+                            refresh_bulk_footer()
+                    except Exception:
+                        pass
+                    try:
+                        if recipe_overlay_ref:
+                            recipe_overlay_ref[0].visible = False
+                            recipe_overlay_ref[0].update()
+                    except Exception:
+                        pass
+                    try:
+                        bulk_grid.attach()
+                    except Exception:
+                        pass
+
+                def save_units(_=None) -> None:
+                    extra: list[dict] = []
+                    seen: set[int] = set()
+                    for r in units_grid.rows:
+                        uid = r.get("unit_id")
+                        if uid in (None, ""):
+                            continue
+                        uid_int = int(uid)
+                        if uid_int in seen:
+                            status.value = "لا يمكن تكرار الوحدة نفسها"
+                            status.update()
+                            return
+                        try:
+                            factor = float(r.get("conversion_factor") or 0)
+                        except (TypeError, ValueError):
+                            factor = 0
+                        if factor <= 0:
+                            status.value = "معامل تحويل الوحدة يجب أن يكون أكبر من صفر"
+                            status.update()
+                            return
+                        seen.add(uid_int)
+                        extra.append({
+                            "unit_id": uid_int,
+                            "conversion_factor": factor,
+                            "purchase_price": r.get("purchase_price") if r.get("purchase_price") not in (None, "") else None,
+                            "selling_price": r.get("selling_price") if r.get("selling_price") not in (None, "") else None,
+                            "barcode": str(r.get("barcode") or "").strip(),
+                        })
+                    bulk_grid.set_cell(index, "extra_units", extra, notify=False)
+                    bulk_grid.set_cell(index, "has_extra_units", 1 if extra else 0, notify=False)
+                    saved["done"] = True
+                    refresh_bulk_footer()
+                    close()
+
+                panel = ft.Container(
+                    ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Text("وحدات إضافية", size=16, weight=ft.FontWeight.BOLD, expand=True),
+                                    inline_icon_button(ft.Icons.CLOSE, lambda _=None: close()),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Text(
+                                "أضف وحدات بيع/شراء إضافية (مثل كرتون أو علبة) لكل وحدة معامل تحويل "
+                                "وسعر بيع/شراء وباركود اختياري.",
+                                size=11, color=Colors.TEXT_SECONDARY,
+                            ),
+                            ft.Container(units_grid, expand=True),
+                            ft.Row(
+                                [ft.OutlinedButton("إضافة وحدة", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=add_unit_row)],
+                                alignment=ft.MainAxisAlignment.START,
+                            ),
+                            status,
+                            ft.Row(
+                                [
+                                    ft.TextButton("إلغاء", on_click=close),
+                                    ft.FilledButton("حفظ الوحدات", icon=ft.Icons.SAVE_OUTLINED, on_click=save_units),
+                                ],
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                spacing=10,
+                            ),
+                        ],
+                        spacing=10, tight=True, expand=True,
+                    ),
+                    width=min(660, sheet_w - 32), height=min(470, sheet_h - 32),
+                    padding=16,
+                    bgcolor=Colors.WHITE,
+                    border_radius=Radius.LG,
+                    shadow=Shadow.LG,
+                    rtl=True,
+                )
+                if not recipe_overlay_ref:
+                    return
+                overlay = recipe_overlay_ref[0]
+                overlay.content = panel
+                overlay.visible = True
+                overlay.update()
+                try:
+                    units_grid.attach()
+                except Exception:
+                    pass
+
             def bulk_choices(key: str) -> list[tuple]:
                 if key == "category_id":
                     return [(None, "بلا تصنيف")] + [(int(c["id"]), c["name"]) for c in categories]
@@ -3140,6 +3323,8 @@ class ItemsCenter:
                 if key == "item_type":
                     return [("مخزون", "مخزون"), ("خدمة", "خدمة")]
                 if key == "is_composite":
+                    return [(0, "لا"), (1, "نعم")]
+                if key == "has_extra_units":
                     return [(0, "لا"), (1, "نعم")]
                 if key == "section_id":
                     return [(None, "بلا قسم")] + [(int(s["id"]), s["name"]) for s in sections_for_bulk]
@@ -3188,14 +3373,35 @@ class ItemsCenter:
                         if is_composite and not components:
                             raise ValueError("أضف مواد الوصفة للمادة التجميعية")
                         alternate_unit_id = int(row["alternate_unit_id"]) if row.get("alternate_unit_id") else None
+                        # Additional units edited in the «وحدات إضافية» window take
+                        # precedence; otherwise fall back to the single alternate
+                        # unit columns (kept for backward compatibility).
+                        extra_units = row.get("extra_units") or []
                         alternate_units = []
-                        if alternate_unit_id is not None:
+                        unit_barcodes: list[tuple[int, str]] = []
+                        if extra_units:
+                            for u in extra_units:
+                                if u.get("unit_id") in (None, ""):
+                                    continue
+                                alternate_units.append({
+                                    "unit_id": int(u["unit_id"]),
+                                    "conversion_factor": float(u.get("conversion_factor") or 1),
+                                    "purchase_price": u.get("purchase_price") or None,
+                                    "selling_price": u.get("selling_price") or None,
+                                })
+                                code = str(u.get("barcode") or "").strip()
+                                if code:
+                                    unit_barcodes.append((int(u["unit_id"]), code))
+                        elif alternate_unit_id is not None:
                             alternate_units.append({
                                 "unit_id": alternate_unit_id,
                                 "conversion_factor": float(row.get("alternate_conversion_factor") or 1),
                                 "purchase_price": row.get("alternate_purchase_price") or None,
                                 "selling_price": row.get("alternate_selling_price") or None,
                             })
+                            alt_code = str(row.get("alternate_barcode") or "").strip()
+                            if alt_code:
+                                unit_barcodes.append((alternate_unit_id, alt_code))
                         fields = dict(
                             name=name,
                             category_id=int(row["category_id"]) if row.get("category_id") else None,
@@ -3222,32 +3428,33 @@ class ItemsCenter:
                             )
                             created_indices.append(index)
                             created_ids.append(int(item_id))
-                        alternate_barcode = str(row.get("alternate_barcode") or "").strip()
-                        if alternate_unit_id is not None:
-                            # Keep the secondary unit's barcode in sync without
-                            # re-inserting an unchanged one (which would warn
-                            # "already registered" on every re-save).
+                        # Keep each selected unit's secondary barcode in sync.
+                        # Primary already handled via fields['barcode']; the
+                        # extra-unit windows can clear a code, so blank codes
+                        # drop the unit's old entry rather than persisting it.
+                        target_units = {uid for uid, _ in unit_barcodes}
+                        for uid in {u["unit_id"] for u in alternate_units} | target_units:
+                            code = next((c for u, c in unit_barcodes if u == uid), "")
                             try:
                                 existing_codes = [
                                     b for b in ctx.items.list_barcodes(item_id)
-                                    if b.get("unit_id") == alternate_unit_id
+                                    if b.get("unit_id") == uid
                                 ]
                             except Exception:
                                 existing_codes = []
                             have = {str(b.get("barcode") or "") for b in existing_codes}
-                            if alternate_barcode:
-                                if alternate_barcode not in have:
+                            if code:
+                                if code not in have:
                                     for b in existing_codes:
                                         try:
                                             ctx.items.remove_barcode(int(b["id"]))
                                         except Exception:
                                             pass
                                     try:
-                                        ctx.items.add_barcode(item_id, alternate_barcode, unit_id=alternate_unit_id)
+                                        ctx.items.add_barcode(item_id, code, unit_id=uid)
                                     except Exception as exc:
-                                        warnings.append(f"{name} — باركود فرعي: {exc}")
+                                        warnings.append(f"{name} — باركود الوحدة: {exc}")
                             else:
-                                # Cleared in the editor -> drop the unit's old code.
                                 for b in existing_codes:
                                     try:
                                         ctx.items.remove_barcode(int(b["id"]))
@@ -3329,6 +3536,20 @@ class ItemsCenter:
                     "selling_price": edit_item.get("selling_price") or 0,
                     "is_composite": 1 if int(edit_item.get("is_composite") or 0) else 0,
                     "section_id": edit_item.get("section_id") or "",
+                    "extra_units": [
+                        {
+                            "unit_id": u.get("id"),
+                            "conversion_factor": u.get("conversion_factor") or 1,
+                            "purchase_price": u.get("purchase_price") if u.get("purchase_price") is not None else "",
+                            "selling_price": u.get("selling_price") if u.get("selling_price") is not None else "",
+                            "barcode": next(
+                                (b.get("barcode") for b in _barcodes if b.get("unit_id") == u.get("id")),
+                                "",
+                            ),
+                        }
+                        for u in _alt_units if not u.get("is_base")
+                    ],
+                    "has_extra_units": 1 if any(not u.get("is_base") for u in _alt_units) else 0,
                     "components": [
                         {
                             "component_item_id": int(c["component_item_id"]),

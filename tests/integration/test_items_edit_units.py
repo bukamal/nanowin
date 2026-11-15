@@ -50,3 +50,32 @@ def test_secondary_unit_and_barcode_survive_edit():
         assert alt2 is not None and float(alt2["conversion_factor"]) == 50.0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_multiple_additional_units_with_prices_and_barcodes():
+    ctx, tmp = _ctx()
+    try:
+        base = ctx.definitions.create_unit("حبة", "ح")
+        pack = ctx.definitions.create_unit("علبة", "ع")
+        carton = ctx.definitions.create_unit("كرتون", "ك")
+        item = ctx.items.create(
+            name="ماء", purchase_price=1.0, selling_price=2.0, base_unit_id=base,
+            item_units=[
+                {"unit_id": pack, "conversion_factor": 12, "purchase_price": 10.0, "selling_price": 18.0},
+                {"unit_id": carton, "conversion_factor": 144, "purchase_price": 110.0, "selling_price": 200.0},
+            ],
+        )
+        ctx.items.add_barcode(item, "PACK-1", unit_id=pack)
+        ctx.items.add_barcode(item, "CARTON-1", unit_id=carton)
+
+        units = {int(u["id"]): u for u in ctx.items.units(item) if not u.get("is_base")}
+        assert float(units[pack]["conversion_factor"]) == 12.0
+        assert float(units[pack]["selling_price"]) == 18.0
+        assert float(units[carton]["conversion_factor"]) == 144.0
+        assert float(units[carton]["purchase_price"]) == 110.0
+
+        codes = {int(b["unit_id"]): b["barcode"] for b in ctx.items.list_barcodes(item)}
+        assert codes[pack] == "PACK-1"
+        assert codes[carton] == "CARTON-1"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
