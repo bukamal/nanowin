@@ -219,7 +219,7 @@ class ItemsCenter:
     Extracted from ``main.py`` (previously the inline ``items_view`` closure).
     """
 
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_stocktake=None, on_context_actions=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, *, native_files=None, on_title_change=None, on_open_stocktake=None, on_context_actions=None, on_verify_invoice=None):
         self.page = page
         self.ctx = ctx
         self.content = content
@@ -227,6 +227,7 @@ class ItemsCenter:
         self.on_title_change = on_title_change
         self.on_open_stocktake = on_open_stocktake
         self.on_context_actions = on_context_actions
+        self.on_verify_invoice = on_verify_invoice
 
     def _set_header(self, title: str, subtitle: str = "") -> None:
         if self.on_title_change:
@@ -3651,19 +3652,28 @@ class ItemsCenter:
                         # Pinned action footer: always visible under the
                         # scrolling rows, with the same layout in every state.
                         ft.Container(
-                            ft.Row(
+                            ft.Column(
                                 [
-                                    ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=Colors.TEXT_SECONDARY),
-                                    ft.Text(
-                                        "الحفظ يتجاهل الصفوف بلا اسم — أضف سطرًا أو كرر الأخير",
-                                        size=10,
-                                        color=Colors.TEXT_SECONDARY,
-                                        expand=True,
+                                    ft.Row(
+                                        [
+                                            ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=Colors.TEXT_SECONDARY),
+                                            ft.Text(
+                                                "الحفظ يتجاهل الصفوف بلا اسم — أضف سطرًا أو كرر الأخير",
+                                                size=10,
+                                                color=Colors.TEXT_SECONDARY,
+                                                expand=True,
+                                            ),
+                                        ],
+                                        spacing=8,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     ),
-                                    primary_button("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all, width=None),
+                                    ft.Row(
+                                        [primary_button("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all, width=260)],
+                                        alignment=ft.MainAxisAlignment.CENTER,
+                                    ),
                                 ],
                                 spacing=8,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                tight=True,
                             ),
                             padding=ft.padding.only(top=10),
                             border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
@@ -4133,18 +4143,6 @@ class ItemsCenter:
             ],
             spacing=0, expand=True,
         )
-        def _convert_opening_balances(_=None):
-            try:
-                invoice_id = ctx.invoices.convert_opening_balances(reference="أول المدة")
-            except Exception as exc:
-                notify(str(exc), kind="error")
-                return
-            if invoice_id:
-                notify("تمت مزامنة فاتورة «أول المدة» مع الأرصدة الافتتاحية", sound_kind="success")
-                refresh()
-            else:
-                notify("لا توجد أرصدة افتتاحية قابلة للتحويل", kind="warning")
-
         refresh()
 
         # One entry point that lets the user pick the surface: the fast bulk
@@ -4211,7 +4209,11 @@ class ItemsCenter:
                 RibbonAction("definitions", "تصنيفات ووحدات", ft.Icons.TUNE_ROUNDED, on_click=lambda _=None: open_definitions_sheet()),
                 RibbonAction("bulk_barcode", "طباعة الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_bulk_barcode_sheet()),
                 RibbonAction("bulk_edit", "تعديل جماعي", ft.Icons.EDIT_NOTE_OUTLINED, on_click=lambda _=None: open_bulk_edit_sheet()),
-                RibbonAction("opening_invoices", "أول المدة", ft.Icons.INVENTORY_2_OUTLINED, on_click=_convert_opening_balances),
+                *(
+                    [RibbonAction("verify_invoice", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: self.on_verify_invoice and self.on_verify_invoice())]
+                    if self.on_verify_invoice is not None
+                    else []
+                ),
                 *(
                     [RibbonAction("import_card", "استيراد بطاقة", ft.Icons.QR_CODE_SCANNER, on_click=lambda _=None: open_import_card_sheet())]
                     if supports("barcode_camera_scan")

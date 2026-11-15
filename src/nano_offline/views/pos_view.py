@@ -649,9 +649,12 @@ class POSCenter:
             return self._receive_settings_obj()
 
         def _partial_allowed() -> bool:
-            # Partial payment is a restaurant POS option (Admin > المطعم).
+            # Partial payment is a restaurant POS option (Admin > المطعم) and is
+            # only possible for a named customer: an anonymous (cash) sale must
+            # be paid in full, so the order can never be left partly open.
             return (
-                restaurant_settings.enabled(self.ctx.settings)
+                bool(self.customer_id)
+                and restaurant_settings.enabled(self.ctx.settings)
                 and restaurant_settings.allow_partial(self.ctx.settings)
             )
 

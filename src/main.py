@@ -303,6 +303,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_open_stocktake=lambda: navigate("stocktake"),
         on_context_actions=set_context_actions,
+        on_verify_invoice=lambda: open_verify_invoice(),
     )
     stocktake_center = StocktakeCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
@@ -1086,11 +1087,10 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         renders (the items screen does, to expose its own editor). These are
         the shell-level fallbacks for every other section.
         """
-        invoice_actions = [
-            RibbonAction("sale", "فاتورة بيع", ft.Icons.SHOPPING_CART_CHECKOUT, on_click=lambda _=None: open_table_invoice("sale")),
-            RibbonAction("purchase", "فاتورة شراء", ft.Icons.ADD_SHOPPING_CART, on_click=lambda _=None: open_table_invoice("purchase")),
-            RibbonAction("verify", "تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, on_click=lambda _=None: open_verify_invoice()),
-        ]
+        # New invoices are created from the sales/purchases menus and the
+        # sidebar; the invoices ribbon no longer offers the buy/sell buttons or
+        # the invoice-verify button (verify moved to the materials screen).
+        invoice_actions: list[RibbonAction] = []
         if key == "dashboard":
             # POS is a dashboard-first surface: keep its ribbon entry only
             # here, not on the invoices screen where it duplicated the
@@ -1098,8 +1098,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             return [
                 RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
             ] + invoice_actions
-        # "فاتورة بيع/شراء" already open the single-table sheet, so there is no
-        # separate "شاملة (جدول)" entry (it was a duplicate of فاتورة بيع).
         if key in ("invoices", "sale", "purchase", "pos"):
             return invoice_actions
         if key == "finance":
@@ -1162,7 +1160,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 "المبيعات",
                 ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
                 ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_table_invoice("sale")),
-                ("تحقق من فاتورة", ft.Icons.QR_CODE_SCANNER_OUTLINED, lambda: open_verify_invoice()),
                 "التحصيل",
                 ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
             ]))

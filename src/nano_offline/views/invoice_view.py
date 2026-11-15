@@ -1624,11 +1624,10 @@ class InvoiceCenter:
             lines_summary_text.value = f"{count} بند" if count else "لا بنود بعد"
             # Anonymous invoices are cash by definition (same rule the page
             # editor and the accounting service enforce): with no party the
-            # paid field auto-fills with the total and locks. In restaurant
-            # mode a sale may be left unpaid (an open preparation order), so
-            # the field stays editable and keeps the cashier's value.
-            restaurant_open = (type_dd.value or "sale") == "sale" and restaurant_settings.enabled(settings)
-            cash_without_party = (not bool(party_dd.value)) and not restaurant_open
+            # paid field auto-fills with the total and locks. A named party
+            # (customer/supplier) unlocks it so a partial/first payment can be
+            # recorded.
+            cash_without_party = not bool(party_dd.value)
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
             if cash_without_party:
@@ -1886,6 +1885,15 @@ class InvoiceCenter:
                 close()
                 self.notify(f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}", sound_kind="save")
                 self.show_center()
+                # Surface the print-settings/preview window right after saving
+                # so the invoice can be printed/previewed without hunting for it
+                # in the list.
+                try:
+                    print_handler = self._print_handler(saved_id)
+                    if print_handler is not None:
+                        print_handler(None)
+                except Exception:
+                    pass
                 if is_sale:
                     # Same PHASE10 refresh the page editor triggers: a sale
                     # moves the numbers on the home screen widget.
@@ -2013,7 +2021,7 @@ class InvoiceCenter:
             else:
                 footer_holder.controls = [
                     secondary_button("رجوع", icon=ft.Icons.ARROW_FORWARD_ROUNDED, on_click=lambda _: go(-1), size="md"),
-                    primary_button("حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED, on_click=save, width=None, size="md"),
+                    primary_button("حفظ وطباعة", icon=ft.Icons.SAVE_OUTLINED, on_click=save, width=None, size="md"),
                 ]
 
         def go(delta: int) -> None:
