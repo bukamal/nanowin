@@ -2913,19 +2913,20 @@ class ItemsCenter:
                     item = by_id.get(int(value))
                     return str(item.get("name")) if item else ""
 
-                def _material_unit(value) -> str:
+                def _material_default_unit(value):
                     if value in (None, ""):
-                        return ""
+                        return None
                     item = by_id.get(int(value))
                     if not item:
-                        return ""
-                    return str(item.get("unit_name") or item.get("base_unit") or "")
+                        return None
+                    base_unit_id = item.get("base_unit_id")
+                    return str(base_unit_id) if base_unit_id not in (None, "") else None
 
                 def _recipe_formatter(col, value, row_values):
                     if col.key == "component":
                         return _material_name(value)
-                    if col.key == "unit":
-                        return _material_unit(row_values.get("component"))
+                    if col.key == "unit_id":
+                        return unit_map.get(str(value)) if value not in (None, "") else ""
                     if col.key == "quantity":
                         try:
                             return f"{float(value):g}" if value not in (None, "") else ""
@@ -2938,20 +2939,61 @@ class ItemsCenter:
                         return _material_name(value)
                     return None
 
+                def _component_units(component_id) -> list[tuple[str, str]]:
+                    """The units the chosen material can be consumed in (its own
+                    base + alternate units), else every defined unit."""
+                    if component_id in (None, ""):
+                        return list(unit_options)
+                    try:
+                        rows = ctx.items.units(int(component_id))
+                    except Exception:
+                        return list(unit_options)
+                    if not rows:
+                        return list(unit_options)
+                    return [
+                        (str(u["unit_id"]), unit_map.get(str(u["unit_id"]), str(u["unit_id"])))
+                        for u in rows
+                    ]
+
+                def _component_factor(component_id, unit_id) -> float:
+                    """Conversion factor of ``unit_id`` for the material (1 for its
+                    base unit or when unknown)."""
+                    if unit_id in (None, "") or component_id in (None, ""):
+                        return 1.0
+                    try:
+                        for u in ctx.items.units(int(component_id)):
+                            if str(u.get("unit_id")) == str(unit_id):
+                                return float(u.get("conversion_factor") or 1) or 1.0
+                    except Exception:
+                        pass
+                    return 1.0
+
+                def recipe_picker_options(col, row_values):
+                    if col.key == "component":
+                        return [(int(i["id"]), str(i["name"])) for i in inventory]
+                    if col.key == "unit_id":
+                        return _component_units(row_values.get("component"))
+                    return []
+
                 status = ft.Text("", size=11, color=Colors.DANGER)
+
+                def on_recipe_commit(r_index: int, key: str, value) -> None:
+                    # Choosing a material defaults its row's unit to that
+                    # material's base unit; the user can still change it after.
+                    if key == "component":
+                        recipe_grid.set_cell(r_index, "unit_id", _material_default_unit(value), notify=False)
 
                 recipe_grid = DataGrid(
                     columns=[
                         GridColumn("component", "المادة الأولية", editable=True, kind="picker"),
                         GridColumn("quantity", "الكمية لكل وحدة", editable=True, kind="number", width=140, align="end"),
-                        GridColumn("unit", "الوحدة", editable=False, width=110, align="center"),
+                        GridColumn("unit_id", "الوحدة", editable=True, kind="picker", width=120, align="center"),
                     ],
                     rows=[], page=page, row_height=42, center_cells=True,
                     formatter=_recipe_formatter,
                     edit_formatter=_recipe_edit_formatter,
-                    picker_options=lambda col, _row: (
-                        [(int(i["id"]), str(i["name"])) for i in inventory] if col.key == "component" else []
-                    ),
+                    on_cell_commit=on_recipe_commit,
+                    picker_options=recipe_picker_options,
                     parser=lambda col, text: (
                         float((text or "0").replace(",", ".")) if col.key == "quantity" else text
                     ),
@@ -2961,12 +3003,16 @@ class ItemsCenter:
                     recipe_grid.add_row({
                         "component": int(comp["component_item_id"]) if comp.get("component_item_id") else None,
                         "quantity": float(comp.get("quantity") or 1),
+                        "unit_id": (
+                            str(comp.get("unit_id")) if comp.get("unit_id") not in (None, "")
+                            else _material_default_unit(comp.get("component_item_id"))
+                        ),
                     })
                 if not recipe_grid.rows:
-                    recipe_grid.add_row({"component": None, "quantity": 1})
+                    recipe_grid.add_row({"component": None, "quantity": 1, "unit_id": None})
 
                 def add_recipe_row(_=None) -> None:
-                    recipe_grid.add_row({"component": None, "quantity": 1})
+                    recipe_grid.add_row({"component": None, "quantity": 1, "unit_id": None})
 
                 def close(_=None) -> None:
                     # Leaving a composite row with an empty recipe would make the
@@ -3013,8 +3059,14 @@ class ItemsCenter:
                             status.update()
                             return
                         seen.add(cid_int)
+                        unit_id = r.get("unit_id")
                         components.append(
-                            {"component_item_id": cid_int, "quantity": qty, "conversion_factor": 1}
+                            {
+                                "component_item_id": cid_int,
+                                "quantity": qty,
+                                "unit_id": int(unit_id) if unit_id not in (None, "") else None,
+                                "conversion_factor": _component_factor(cid_int, unit_id),
+                            }
                         )
                     if not components:
                         status.value = "أضف مادة أولية واحدة على الأقل"

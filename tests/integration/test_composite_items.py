@@ -183,3 +183,22 @@ def test_composite_rebuild_is_idempotent(tmp_path):
     assert _qty(ctx, bundle) == pytest.approx(before_bundle)
     invoice = ctx.invoices.get_invoice(invoice["id"])
     assert invoice["lines"][0]["cost_amount"] == pytest.approx(before_cost)
+
+def test_composite_component_keeps_its_chosen_unit(tmp_path):
+    ctx = _ctx(tmp_path)
+    leaf = _stock_item(ctx, "مكوّن", 100, 1)
+    unit_id = ctx.definitions.create_unit("علبة", "علبة")
+
+    bundle = ctx.items.create(
+        name="طقم",
+        item_type="مخزون",
+        selling_price=10,
+        is_composite=True,
+        components=[
+            {"component_item_id": leaf, "quantity": 3, "unit_id": unit_id, "conversion_factor": 1}
+        ],
+    )
+
+    stored = ctx.items.components(bundle)
+    assert stored[0]["component_item_id"] == leaf
+    assert stored[0]["unit_id"] == unit_id
