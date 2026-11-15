@@ -2592,6 +2592,11 @@ class ItemsCenter:
             Saving is one batch; on a partial failure the rows that did save
             are removed from the grid so a retry never re-creates them.
             """
+            # Holds the in-sheet overlay used by the composite-recipe editor.
+            # The recipe window is rendered INSIDE this sheet (not as a routed
+            # dialog/overlay) so it draws above the table and stays interactive
+            # while the add-item sheet remains open behind it.
+            recipe_overlay_ref: list = []
             cat_options = [(str(c["id"]), c["name"]) for c in categories]
             sections_for_bulk = ctx.sections.list()
             section_map = {str(s["id"]): s["name"] for s in sections_for_bulk}
@@ -2973,9 +2978,9 @@ class ItemsCenter:
                     except Exception:
                         pass
                     try:
-                        if overlay in page.overlay.controls:
-                            page.overlay.remove(overlay)
-                        page.update()
+                        if recipe_overlay_ref:
+                            recipe_overlay_ref[0].visible = False
+                            recipe_overlay_ref[0].update()
                     except Exception:
                         pass
                     # The recipe grid took over the page keyboard handler; hand
@@ -3050,24 +3055,25 @@ class ItemsCenter:
                         ],
                         spacing=10, tight=True, expand=True,
                     ),
-                    width=580, height=470,
+                    width=min(580, sheet_w - 32), height=min(470, sheet_h - 32),
                     padding=16,
                     bgcolor=Colors.WHITE,
                     border_radius=Radius.LG,
                     shadow=Shadow.LG,
+                    rtl=True,
                 )
-                overlay = ft.Container(
-                    width=int(page.width or 1280), height=int(page.height or 800),
-                    bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
-                    alignment=ft.alignment.center,
-                    on_click=lambda _=None: None,
-                    content=panel,
-                )
-                page.overlay.append(overlay)
-                # Force a sync so the overlay exists client-side before it is
-                # shown (same caveat as the date picker: append() alone is not
-                # enough for the first paint).
-                page.update()
+                if not recipe_overlay_ref:
+                    return
+                overlay = recipe_overlay_ref[0]
+                overlay.content = panel
+                overlay.visible = True
+                overlay.update()
+                # Make the recipe table the active grid for soft-keyboard
+                # navigation while it is open.
+                try:
+                    recipe_grid.attach()
+                except Exception:
+                    pass
 
             def bulk_choices(key: str) -> list[tuple]:
                 if key == "category_id":
@@ -3330,7 +3336,7 @@ class ItemsCenter:
                 tooltip="تصدير الصفوف الجاهزة CSV",
                 on_click=bulk_export_csv,
             )
-            sheet.content = ft.Container(
+            base = ft.Container(
                 ft.Column(
                     [
                         ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
@@ -3398,6 +3404,15 @@ class ItemsCenter:
                 shadow=Shadow.LG,
                 rtl=True,
             )
+            recipe_overlay = ft.Container(
+                visible=False,
+                width=sheet_w, height=sheet_h,
+                bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+                alignment=ft.alignment.center,
+                on_click=lambda _=None: None,
+            )
+            recipe_overlay_ref.append(recipe_overlay)
+            sheet.content = ft.Stack([base, recipe_overlay], width=sheet_w, height=sheet_h)
             page.open(sheet)
 
         def show_item_detail(item: dict):
