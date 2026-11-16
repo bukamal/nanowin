@@ -2335,6 +2335,7 @@ class POSCenter:
                                             self.page, self.ctx, self.notify, self.money,
                                             on_open_order=lambda i: _load_order(i) if i is not None else None,
                                             on_free_table=_set_pending_table,
+                                            sizes=self._pos_sizes,
                                         ),
                                         icon_size=18,
                                     ),
@@ -2344,7 +2345,7 @@ class POSCenter:
                             ),
                             ft.IconButton(
                                 icon=ft.Icons.RECEIPT_LONG_OUTLINED, tooltip="شاشة المطبخ",
-                                on_click=lambda _=None: open_kitchen_board(self.page, self.ctx, self.notify),
+                                on_click=lambda _=None: open_kitchen_board(self.page, self.ctx, self.notify, sizes=self._pos_sizes),
                                 icon_size=18,
                             ),
                         ],
@@ -2377,8 +2378,9 @@ class POSCenter:
                     on_free_table=_set_pending_table,
                     on_pay_order=lambda i: (_load_order(i), open_payment_sheet()),
                     use_tables=self._use_tables,
+                    sizes=self._pos_sizes,
                 )
-                kitchen_ctrl, kitchen_render = kitchen_workspace(self.ctx, self.notify)
+                kitchen_ctrl, kitchen_render = kitchen_workspace(self.ctx, self.notify, sizes=self._pos_sizes)
                 workspace_controls["orders"] = orders_ctrl
                 workspace_controls["kitchen"] = kitchen_ctrl
                 workspace_renders = {"orders": orders_render, "kitchen": kitchen_render}

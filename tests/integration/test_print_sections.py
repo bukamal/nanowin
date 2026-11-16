@@ -846,3 +846,43 @@ def test_kitchen_ticket_number_matches_invoice_display_number(tmp_path, monkeypa
     assert f"#{display}" in payload
     # The customer invoice shows the exact same number.
     assert f"#{display}" in ctx.documents.invoice_html(inv)
+
+
+def test_restaurant_boards_follow_density(tmp_path):
+    from nano_offline.components.restaurant_boards import tables_workspace, kitchen_workspace
+    from nano_offline.core.design.tokens import pos_sizes
+
+    ctx = _ctx(tmp_path)
+    restaurant_settings.set_enabled(ctx.settings, True)
+    sid = ctx.sections.create(name="المطبخ", printer_host="10.0.0.1")
+    item = ctx.items.create(name="بيتزا", item_type="مخزون", quantity=100, selling_price=10, section_id=sid)
+    ctx.tables.create(name="1", area="صالة")
+    _open_order(ctx, [(item, "بيتزا", 1, 10)], "1")
+
+    def widths(node, acc):
+        width = getattr(node, "width", None)
+        if width:
+            acc.add(int(width))
+        content = getattr(node, "content", None)
+        if content is not None:
+            if isinstance(content, (list, tuple)):
+                for child in content:
+                    widths(child, acc)
+            else:
+                widths(content, acc)
+        for child in getattr(node, "controls", None) or []:
+            widths(child, acc)
+
+    for density in ("compact", "comfortable", "touch"):
+        sz = pos_sizes(density)
+        tables_ctrl, render = tables_workspace(ctx, lambda *a, **k: None, lambda v: str(v), use_tables=True, sizes=sz)
+        render()
+        widths_seen: set[int] = set()
+        widths(tables_ctrl, widths_seen)
+        assert sz["board_card_w"] in widths_seen, density
+
+        kitchen_ctrl, render_kitchen = kitchen_workspace(ctx, lambda *a, **k: None, sizes=sz)
+        render_kitchen()
+        kitchen_widths: set[int] = set()
+        widths(kitchen_ctrl, kitchen_widths)
+        assert sz["kds_card_w"] in kitchen_widths, density

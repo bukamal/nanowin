@@ -108,7 +108,8 @@ def test_pos_item_tile_metrics_come_from_density():
     touch = pos_sizes("touch")
     comfortable = pos_sizes("comfortable")
     compact = pos_sizes("compact")
-    for key in ("tile_icon", "tile_icon_box", "tile_name", "tile_price", "tile_pad", "tile_strip", "tile_spacing"):
+    for key in ("tile_icon", "tile_icon_box", "tile_name", "tile_price", "tile_pad", "tile_strip", "tile_spacing",
+                "board_card_w", "kds_card_w", "board_card_pad", "board_title", "board_value", "board_meta"):
         assert key in compact and key in comfortable and key in touch, key
         assert compact[key] <= comfortable[key] <= touch[key], key
     # the icon must fit inside its box in every density

@@ -15,6 +15,7 @@ import flet as ft
 
 from nano_offline.components import sheets
 from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.design.tokens import pos_sizes
 
 __all__ = [
     "tables_workspace",
@@ -25,6 +26,23 @@ __all__ = [
 
 #: Sheets re-render themselves on this cadence while open.
 AUTO_REFRESH_SECONDS = 15
+
+
+def _resolve_sizes(ctx, sizes: dict | None) -> dict:
+    """Board metrics follow the POS density appearance setting.
+
+    Callers embedded in POS pass their already-resolved ``_pos_sizes``; the
+    standalone admin sheets resolve the current density from settings so both
+    surfaces stay in step with Admin > المظهر > الكثافة.
+    """
+    if sizes:
+        return sizes
+    try:
+        from nano_offline.core import appearance_settings
+
+        return pos_sizes(appearance_settings.density(ctx.settings))
+    except Exception:
+        return pos_sizes("comfortable")
 
 
 def _minutes_since(timestamp) -> float | None:
@@ -110,10 +128,17 @@ def _start_auto_refresh(page: ft.Page, render, stop: dict) -> None:
 
 
 def tables_workspace(
-    ctx, notify, money, *, on_open_order=None, on_free_table=None, on_pay_order=None, use_tables: bool = True
+    ctx, notify, money, *, on_open_order=None, on_free_table=None, on_pay_order=None, use_tables: bool = True, sizes: dict | None = None
 ) -> tuple[ft.Control, callable]:
     """Tables / open-orders workspace (grid or list) with status colours,
     filters and quick actions. Returns ``(control, render)``."""
+    sz = _resolve_sizes(ctx, sizes)
+    card_w = sz["board_card_w"]
+    card_pad = sz["board_card_pad"]
+    title_sz = sz["board_title"]
+    value_sz = sz["board_value"]
+    meta_sz = sz["board_meta"]
+    chip_sz = meta_sz + 1
     state = {"view": "grid", "filter": "all"}
     # NOTE: NOT wrap=True -- the toolbar ends with an expand spacer, and
     # Flutter's Wrap cannot host an Expanded child (it renders a blank grey
@@ -191,22 +216,22 @@ def tables_workspace(
                 [
                     ft.Row(
                         [
-                            ft.Text(entry["name"], size=14, weight=ft.FontWeight.BOLD, expand=True),
+                            ft.Text(entry["name"], size=title_sz, weight=ft.FontWeight.BOLD, expand=True),
                             ft.Container(
-                                ft.Text(entry["label"], size=9, color="#FFFFFF"),
+                                ft.Text(entry["label"], size=max(8, meta_sz - 1), color="#FFFFFF"),
                                 padding=ft.padding.symmetric(horizontal=7, vertical=2),
                                 bgcolor=color, border_radius=8,
                             ),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Text(money(entry["total"]), size=16, weight=ft.FontWeight.W_600),
+                    ft.Text(money(entry["total"]), size=value_sz, weight=ft.FontWeight.W_600),
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, size=13, color=Colors.TEXT_SECONDARY),
-                            ft.Text(f"{entry['count']} بند", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, size=meta_sz + 3, color=Colors.TEXT_SECONDARY),
+                            ft.Text(f"{entry['count']} بند", size=meta_sz, color=Colors.TEXT_SECONDARY),
                             ft.Container(expand=True),
-                            ft.Text(_age_label(entry["elapsed"]), size=10, color=color),
+                            ft.Text(_age_label(entry["elapsed"]), size=meta_sz, color=color),
                         ],
                         spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -220,7 +245,7 @@ def tables_workspace(
                 ],
                 spacing=4, tight=True,
             ),
-            width=185, padding=12, bgcolor=Colors.WHITE,
+            width=card_w, padding=card_pad, bgcolor=Colors.WHITE,
             border=ft.border.all(2, color), border_radius=Radius.LG, shadow=Shadow.SM,
         )
 
@@ -236,14 +261,14 @@ def tables_workspace(
         return ft.Container(
             ft.Column(
                 [
-                    ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
-                    ft.Text("متاحة", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Text(name, size=title_sz, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    ft.Text("متاحة", size=meta_sz + 1, color=Colors.TEXT_SECONDARY),
                     ft.Container(height=6),
                     ft.OutlinedButton("فتح طلب", icon=ft.Icons.ADD, on_click=_free),
                 ],
                 spacing=3, tight=True,
             ),
-            width=185, padding=12, bgcolor=Colors.BACKGROUND_ALT,
+            width=card_w, padding=card_pad, bgcolor=Colors.BACKGROUND_ALT,
             border=ft.border.all(1, Colors.BORDER), border_radius=Radius.LG,
         )
 
@@ -262,35 +287,42 @@ def tables_workspace(
             def _free(_=None, n=entry["name"]) -> None:
                 on_free_table(n) if callable(on_free_table) else notify("طاولة متاحة")
             actions = [ft.OutlinedButton("فتح طلب", icon=ft.Icons.ADD, on_click=_free)]
+        list_title_sz = max(11, title_sz - 1)
+        list_meta_sz = meta_sz + 1
+        list_total_sz = max(12, title_sz - 1)
+        list_col_w = int(card_w * 0.8)
+        list_label_w = max(60, int(card_w * 0.38))
+        strip_h = value_sz + 18
+        row_pad = max(6, card_pad - 4)
         return ft.Container(
             ft.Row(
                 [
-                    ft.Container(width=6, height=34, bgcolor=color, border_radius=3),
+                    ft.Container(width=6, height=strip_h, bgcolor=color, border_radius=3),
                     ft.Column(
                         [
-                            ft.Text(entry["name"], size=13, weight=ft.FontWeight.W_600),
-                            ft.Text(f"{area or ''}", size=10, color=Colors.TEXT_SECONDARY) if area else ft.Container(height=0),
+                            ft.Text(entry["name"], size=list_title_sz, weight=ft.FontWeight.W_600),
+                            ft.Text(f"{area or ''}", size=meta_sz, color=Colors.TEXT_SECONDARY) if area else ft.Container(height=0),
                         ],
-                        spacing=0, width=150, tight=True,
+                        spacing=0, width=list_col_w, tight=True,
                     ),
-                    ft.Text(entry["label"], size=11, color=color, width=70),
-                    ft.Text(f"{entry['count']} بند", size=11, color=Colors.TEXT_SECONDARY, width=70),
-                    ft.Text(_age_label(entry["elapsed"]), size=11, color=Colors.TEXT_SECONDARY, width=70),
+                    ft.Text(entry["label"], size=list_meta_sz, color=color, width=list_label_w),
+                    ft.Text(f"{entry['count']} بند", size=list_meta_sz, color=Colors.TEXT_SECONDARY, width=list_label_w),
+                    ft.Text(_age_label(entry["elapsed"]), size=list_meta_sz, color=Colors.TEXT_SECONDARY, width=list_label_w),
                     ft.Container(expand=True),
-                    ft.Text(money(entry["total"]) if entry["order"] else "—", size=13, weight=ft.FontWeight.W_600),
+                    ft.Text(money(entry["total"]) if entry["order"] else "—", size=list_total_sz, weight=ft.FontWeight.W_600),
                     *actions,
                 ],
                 spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=8, bgcolor=Colors.WHITE,
+            padding=row_pad, bgcolor=Colors.WHITE,
             border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD,
         )
 
     def _chip(key: str, label: str) -> ft.Control:
         active = state["filter"] == key
         return ft.Container(
-            ft.Text(label, size=11, weight=ft.FontWeight.W_600, color=Colors.WHITE if active else Colors.TEXT_MUTED),
-            padding=ft.padding.symmetric(horizontal=12, vertical=7),
+            ft.Text(label, size=chip_sz, weight=ft.FontWeight.W_600, color=Colors.WHITE if active else Colors.TEXT_MUTED),
+            padding=ft.padding.symmetric(horizontal=max(10, card_pad + 2), vertical=max(5, card_pad - 4)),
             bgcolor=Colors.PRIMARY if active else Colors.WHITE,
             border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
             border_radius=16, ink=True,
@@ -413,8 +445,14 @@ def tables_workspace(
     return control, render
 
 
-def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
+def kitchen_workspace(ctx, notify, *, sizes: dict | None = None) -> tuple[ft.Control, callable]:
     """Kitchen display (KDS) as a control + its render function."""
+    sz = _resolve_sizes(ctx, sizes)
+    card_w = sz["kds_card_w"]
+    card_pad = sz["board_card_pad"]
+    title_sz = sz["board_title"]
+    meta_sz = sz["board_meta"]
+    line_sz = meta_sz + 2
     board = ft.Row(spacing=10, run_spacing=10, wrap=True)
 
     def render() -> None:
@@ -447,10 +485,10 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
             body: list[ft.Control] = [
                 ft.Row(
                     [
-                        ft.Text(label, size=14, weight=ft.FontWeight.BOLD, expand=True),
+                        ft.Text(label, size=title_sz, weight=ft.FontWeight.BOLD, expand=True),
                         ft.Container(
-                            ft.Text(status_text, size=10, color="#FFFFFF"),
-                            padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                            ft.Text(status_text, size=max(9, meta_sz - 1), color="#FFFFFF"),
+                            padding=ft.padding.symmetric(horizontal=max(6, card_pad - 4), vertical=3),
                             bgcolor=Colors.SUCCESS_DARK if ready else _age_color(elapsed),
                             border_radius=10,
                         ),
@@ -460,10 +498,10 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                 ft.Divider(height=1),
             ]
             if not grouped:
-                body.append(ft.Text("لا بنود مُسندة لأقسام", size=11, color=Colors.TEXT_SECONDARY))
+                body.append(ft.Text("لا بنود مُسندة لأقسام", size=meta_sz + 1, color=Colors.TEXT_SECONDARY))
             for section_id, lines in grouped.items():
                 body.append(ft.Text(str(names.get(int(section_id)) or f"قسم {section_id}"),
-                                    size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK))
+                                    size=line_sz, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK))
                 for line in lines:
                     line_ready = (
                         line.get("printed_at") and line.get("kitchen_ready_at")
@@ -472,7 +510,7 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                     row_controls: list[ft.Control] = [
                         ft.Text(
                             f"{float(line.get('quantity') or 0):g} × {line.get('name')}",
-                            size=12, color=Colors.TEXT_PRIMARY, expand=True,
+                            size=line_sz, color=Colors.TEXT_PRIMARY, expand=True,
                         )
                     ]
                     if line.get("printed_at") and not line_ready:
@@ -484,10 +522,10 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                             render()
                         row_controls.append(ft.IconButton(
                             icon=ft.Icons.CHECK_CIRCLE_OUTLINE, tooltip="جاهز",
-                            on_click=_mark_line, icon_size=18, icon_color=Colors.SUCCESS_DARK,
+                            on_click=_mark_line, icon_size=max(16, title_sz + 4), icon_color=Colors.SUCCESS_DARK,
                         ))
                     elif line_ready:
-                        row_controls.append(ft.Icon(ft.Icons.CHECK_CIRCLE, size=16, color=Colors.SUCCESS_DARK))
+                        row_controls.append(ft.Icon(ft.Icons.CHECK_CIRCLE, size=max(14, title_sz + 2), color=Colors.SUCCESS_DARK))
                     body.append(ft.Row(row_controls, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
             if not ready:
                 def _mark_ready(_=None, i=int(order["id"])) -> None:
@@ -499,12 +537,12 @@ def kitchen_workspace(ctx, notify) -> tuple[ft.Control, callable]:
                 body.append(ft.ElevatedButton("تم كل التحضير", icon=ft.Icons.DONE_ALL, on_click=_mark_ready))
             cards.append(ft.Container(
                 ft.Column(body, spacing=4, tight=True),
-                width=240, padding=12, bgcolor=Colors.WHITE,
+                width=card_w, padding=card_pad, bgcolor=Colors.WHITE,
                 border=ft.border.all(2, Colors.SUCCESS_DARK if ready else _age_color(elapsed)),
                 border_radius=Radius.LG, shadow=Shadow.SM,
             ))
         if not cards:
-            cards.append(ft.Text("لا توجد طلبات قيد التحضير.", size=12, color=Colors.TEXT_SECONDARY))
+            cards.append(ft.Text("لا توجد طلبات قيد التحضير.", size=line_sz, color=Colors.TEXT_SECONDARY))
         board.controls = cards
         try:
             board.update()
@@ -548,7 +586,7 @@ def _sheet_board(page, ctx, notify, *, title: str, subtitle: str, icon, build) -
     _start_auto_refresh(page, render, stop)
 
 
-def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_table=None, on_pay_order=None) -> None:
+def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_table=None, on_pay_order=None, *, sizes=None) -> None:
     use_tables = True
     try:
         from nano_offline.core import restaurant_settings
@@ -560,7 +598,7 @@ def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_tabl
         return tables_workspace(
             ctx, notify, money,
             on_open_order=on_open_order, on_free_table=on_free_table,
-            on_pay_order=on_pay_order, use_tables=use_tables,
+            on_pay_order=on_pay_order, use_tables=use_tables, sizes=sizes,
         )
 
     _sheet_board(
@@ -572,9 +610,9 @@ def open_tables_board(page, ctx, notify, money, on_open_order=None, on_free_tabl
     )
 
 
-def open_kitchen_board(page, ctx, notify) -> None:
+def open_kitchen_board(page, ctx, notify, *, sizes=None) -> None:
     def build():
-        return kitchen_workspace(ctx, notify)
+        return kitchen_workspace(ctx, notify, sizes=sizes)
 
     _sheet_board(
         page, ctx, notify,
