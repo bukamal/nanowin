@@ -2156,6 +2156,9 @@ class InvoiceCenter:
             invoice_type = existing["type"]
         self.editing_id = invoice_id
         self.invoice_type = invoice_type
+        # Which invoice the sheet is currently editing (None = a new invoice).
+        # Mutable because the in-sheet tabs switch between drafts/invoices.
+        active = {"invoice_id": invoice_id}
         settings = self.ctx.settings
         rate = currency.get_effective_rate(settings)
         customers = self.ctx.customers.list()
@@ -2743,11 +2746,10 @@ class InvoiceCenter:
             else:
                 lines_grid.set_footer(None)
             # Anonymous invoices are cash by definition (same rule the wizard
-            # and the accounting service enforce): no party -> paid == total.
-            # Restaurant mode leaves the field editable so a sale can be saved
-            # as an unpaid open order.
-            restaurant_open = (type_dd.value or "sale") == "sale" and restaurant_settings.enabled(settings)
-            cash_without_party = (not bool(party_dd.value)) and not restaurant_open
+            # and the accounting service enforce): no party -> paid == total and
+            # the field is locked. A named customer/supplier unlocks it for a
+            # partial/first payment.
+            cash_without_party = not bool(party_dd.value)
             paid.disabled = cash_without_party
             paid.label = "مدفوع نقدًا (تلقائي)" if cash_without_party else currency.amount_field_label("الدفعة الأولى", settings)
             if cash_without_party:
@@ -2808,6 +2810,210 @@ class InvoiceCenter:
             bgcolor=Colors.SUCCESS_BG,
             visible=False,
         )
+
+        # -------------------------------------------------------- invoice tabs
+        # Several invoices in one sheet: each tab is an independent draft that
+        # survives closing the sheet (persisted in settings), so a cashier can
+        # hold a half-finished sale, jump to a purchase and come back without
+        # losing the lines.
+        tabs_key = "ui.invoice_tabs"
+        tabs_state = {"items": [], "active": 0}
+        tab_strip = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, wrap=False)
+
+        def _tab_title(tab: dict) -> str:
+            if tab.get("invoice_id"):
+                return f"تعديل #{self._display_invoice_number(int(tab['invoice_id']))}"
+            return "شراء" if (tab.get("type") or "sale") == "purchase" else "بيع"
+
+        def _serialize_lines() -> list[dict]:
+            out: list[dict] = []
+            for row in lines_grid.rows:
+                if not row.get("item") and not str(row.get("description") or "").strip():
+                    continue
+                out.append({
+                    "item": int(row["item"]) if row.get("item") else None,
+                    "description": str(row.get("description") or ""),
+                    "unit": int(row["unit"]) if row.get("unit") else None,
+                    "qty": row.get("qty") or 1,
+                    "price": row.get("price") or 0,
+                })
+            return out
+
+        def _blank_tab(inv_type: str, invoice_id_: int | None = None) -> dict:
+            return {
+                "invoice_id": invoice_id_,
+                "type": inv_type if inv_type in ("sale", "purchase") else "sale",
+                "party_id": None,
+                "date": date.today().isoformat(),
+                "reference": "",
+                "notes": "",
+                "paid": "0",
+                "lines": [],
+            }
+
+        def _snapshot_active() -> None:
+            items = tabs_state["items"]
+            if not items:
+                return
+            items[tabs_state["active"]].update({
+                "type": type_dd.value or "sale",
+                "party_id": party_dd.value,
+                "date": invoice_date.value or date.today().isoformat(),
+                "reference": reference.value or "",
+                "notes": notes.value or "",
+                "paid": paid.value or "0",
+                "lines": _serialize_lines(),
+            })
+
+        def _persist_tabs() -> None:
+            try:
+                settings.set(tabs_key, json.dumps(tabs_state, ensure_ascii=False))
+            except Exception:
+                pass
+
+        def render_tabs() -> None:
+            controls = [_tab_chip(i) for i in range(len(tabs_state["items"]))]
+            controls.append(
+                ft.Container(
+                    ft.Icon(ft.Icons.ADD, size=16, color=Colors.PRIMARY),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                    border=ft.border.all(1, Colors.PRIMARY), border_radius=14, ink=True,
+                    on_click=_add_tab, tooltip="فاتورة جديدة في تبويب جديد",
+                )
+            )
+            tab_strip.controls = controls
+            try:
+                tab_strip.update()
+            except Exception:
+                pass
+
+        def _tab_chip(index: int) -> ft.Control:
+            tab = tabs_state["items"][index]
+            is_active = index == tabs_state["active"]
+            label = _tab_title(tab)
+            if tab.get("lines"):
+                label = f"{label} •"
+            body = ft.Container(
+                ft.Text(label, size=11, color=Colors.WHITE if is_active else Colors.TEXT_MUTED,
+                        weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.W_500),
+                padding=ft.padding.only(left=12, right=6, top=7, bottom=7),
+                ink=True, on_click=lambda _e, i=index: _switch_to(i),
+            )
+            close_btn = ft.Container(
+                ft.Icon(ft.Icons.CLOSE, size=13, color=Colors.WHITE if is_active else Colors.TEXT_FAINT),
+                padding=ft.padding.only(left=2, right=8, top=7, bottom=7),
+                ink=True, on_click=lambda _e, i=index: _close_tab(i),
+            )
+            return ft.Container(
+                ft.Row([body, close_btn], spacing=0, tight=True),
+                bgcolor=Colors.PRIMARY if is_active else Colors.WHITE,
+                border=ft.border.all(1, Colors.PRIMARY if is_active else Colors.BORDER),
+                border_radius=14,
+            )
+
+        def _load_tab(index: int) -> None:
+            index = max(0, min(index, len(tabs_state["items"]) - 1))
+            tabs_state["active"] = index
+            tab = tabs_state["items"][index]
+            active["invoice_id"] = tab.get("invoice_id")
+            type_dd.value = tab.get("type") or "sale"
+            party_options()
+            party_dd.value = str(tab["party_id"]) if tab.get("party_id") else None
+            invoice_date.value = tab.get("date") or date.today().isoformat()
+            reference.value = tab.get("reference") or ""
+            notes.value = tab.get("notes") or ""
+            paid.value = tab.get("paid") or "0"
+            rows = tab.get("lines") or []
+            lines_grid.set_rows(rows or [{"qty": 1}])
+            header_title.value = _tab_title(tab)
+            header_subtitle.value = f"فاتورة {'شراء' if (tab.get('type') or 'sale') == 'purchase' else 'بيع'}"
+            _is_sale_tab = (tab.get("type") or "sale") == "sale"
+            icon_bubble.content = ft.Icon(
+                ft.Icons.TRENDING_UP if _is_sale_tab else ft.Icons.TRENDING_DOWN,
+                color=Colors.SUCCESS if _is_sale_tab else Colors.PURPLE, size=22,
+            )
+            icon_bubble.bgcolor = Colors.SUCCESS_BG if _is_sale_tab else Colors.PURPLE_BG
+            self.editing_id = tab.get("invoice_id")
+            self.invoice_type = tab.get("type") or "sale"
+            try:
+                _label = getattr(getattr(save_button, "content", None), "data", None)
+                if isinstance(_label, dict) and _label.get("label") is not None:
+                    _label["label"].value = "تحديث" if tab.get("invoice_id") else "حفظ وطباعة"
+            except Exception:
+                pass
+            refresh_summary()
+            render_tabs()
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        def _switch_to(index: int) -> None:
+            if index == tabs_state["active"]:
+                return
+            _snapshot_active()
+            _load_tab(index)
+            _persist_tabs()
+
+        def _close_tab(index: int, _e=None) -> None:
+            items = tabs_state["items"]
+            if not (0 <= index < len(items)):
+                return
+            items.pop(index)
+            if not items:
+                _persist_tabs()
+                close()
+                return
+            _load_tab(min(index, len(items) - 1))
+            _persist_tabs()
+
+        def _add_tab(_e=None) -> None:
+            _snapshot_active()
+            items = tabs_state["items"]
+            items.append(_blank_tab(type_dd.value or "sale"))
+            _persist_tabs()
+            _load_tab(len(items) - 1)
+
+        def _init_tabs(initial_tab: dict) -> None:
+            restored: list[dict] = []
+            raw = settings.get(tabs_key) or ""
+            if raw:
+                try:
+                    restored = [t for t in (json.loads(raw).get("items") or []) if isinstance(t, dict)]
+                except Exception:
+                    restored = []
+            # Drop persisted edit tabs whose invoice no longer exists.
+            pruned: list[dict] = []
+            for tab in restored:
+                iid = tab.get("invoice_id")
+                if iid and not self.ctx.invoices.get_invoice(int(iid)):
+                    continue
+                pruned.append(tab)
+            tabs_state["items"] = pruned
+            if active["invoice_id"]:
+                found = next((i for i, t in enumerate(tabs_state["items"]) if t.get("invoice_id") == active["invoice_id"]), None)
+                if found is None:
+                    tabs_state["items"].append(initial_tab)
+                    found = len(tabs_state["items"]) - 1
+                else:
+                    # Refresh from the DB so a reopened edit tab shows latest data.
+                    tabs_state["items"][found] = initial_tab
+                _load_tab(found)
+            else:
+                # Reuse the first untouched blank tab; otherwise add a new one.
+                blank = next(
+                    (
+                        i for i, t in enumerate(tabs_state["items"])
+                        if not t.get("invoice_id") and not t.get("lines") and not t.get("party_id")
+                        and not (t.get("reference") or "").strip() and not (t.get("notes") or "").strip()
+                    ),
+                    None,
+                )
+                if blank is None:
+                    tabs_state["items"].append(initial_tab)
+                    blank = len(tabs_state["items"]) - 1
+                _load_tab(blank)
+
 
         def build_inputs() -> list[InvoiceLineInput]:
             inputs: list[InvoiceLineInput] = []
@@ -2872,22 +3078,32 @@ class InvoiceCenter:
                     paid_amount=currency.parse_display_input(paid.value, settings),
                     allow_negative_stock=True if (is_sale and invoice_settings.allow_negative_stock(settings)) else None,
                 )
-                if invoice_id:
-                    self.ctx.invoices.update_invoice(invoice_id, **common)
-                    saved_id = invoice_id
+                cur_id = active["invoice_id"]
+                if cur_id:
+                    self.ctx.invoices.update_invoice(cur_id, **common)
+                    saved_id = cur_id
                     message = f"تم تعديل الفاتورة #{self._display_invoice_number(saved_id)} وإعادة احتساب المخزون والأرصدة"
                 else:
                     saved_id = self.ctx.invoices.create_invoice(**common)
                     message = f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}"
-                close()
+
+                # Close the saved tab. If more tabs remain, keep the sheet open
+                # on the next one (multi-invoice workflow); otherwise dismiss it.
+                tabs_state["items"].pop(tabs_state["active"])
+                sheet_closed = not tabs_state["items"]
+                if sheet_closed:
+                    close()
+                else:
+                    _load_tab(min(tabs_state["active"], len(tabs_state["items"]) - 1))
+                _persist_tabs()
                 self.notify(message, sound_kind="save")
                 self.show_center()
 
-                async def open_print_after_close() -> None:
-                    # Let the sheet's dismiss animation finish before opening
-                    # the print-settings window; opening a dialog in the same
-                    # tick races Flutter's pop route and it never renders.
-                    await asyncio.sleep(0.15)
+                async def open_print_after() -> None:
+                    # Let any dismiss animation finish before opening the
+                    # print-settings window; opening a dialog in the same tick
+                    # races Flutter's pop route and it never renders.
+                    await asyncio.sleep(0.15 if sheet_closed else 0.05)
                     try:
                         print_handler = self._print_handler(saved_id)
                         if print_handler is not None:
@@ -2896,7 +3112,7 @@ class InvoiceCenter:
                         pass
 
                 try:
-                    self.page.run_task(open_print_after_close)
+                    self.page.run_task(open_print_after)
                 except Exception:
                     pass
                 if is_sale:
@@ -2907,7 +3123,7 @@ class InvoiceCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
 
-        save_button = primary_button("تحديث" if invoice_id else "حفظ وطباعة", icon=ft.Icons.SAVE_OUTLINED)
+        save_button = primary_button("تحديث" if active["invoice_id"] else "حفظ وطباعة", icon=ft.Icons.SAVE_OUTLINED)
         save_button.on_click = wire_busy(save_button, save)
 
         def type_changed(_=None) -> None:
@@ -2951,6 +3167,14 @@ class InvoiceCenter:
             width=44, height=44, alignment=ft.alignment.center,
             bgcolor=Colors.SUCCESS_BG, border_radius=14,
         )
+        header_title = ft.Text(
+            f"تعديل فاتورة #{self._display_invoice_number(invoice_id)}" if invoice_id else ("فاتورة مبيعات" if invoice_type == "sale" else "فاتورة مشتريات"),
+            size=17, weight=ft.FontWeight.BOLD,
+        )
+        header_subtitle = ft.Text(
+            "عدّل بيانات الفاتورة وبنودها من الجدول ثم احفظ التغييرات" if invoice_id else "أدخل البنود في الجدول ثم احفظ مباشرة",
+            size=11, color=Colors.TEXT_SECONDARY,
+        )
 
         # A wide, tall sheet: the table is the point, so it gets the full
         # workbench width instead of the narrow default column.
@@ -2981,9 +3205,6 @@ class InvoiceCenter:
         if existing:
             is_sale = existing["type"] == "sale"
             party_id = existing.get("customer_id") if is_sale else existing.get("supplier_id")
-            if party_id:
-                party_dd.value = str(party_id)
-            party_options()
             initial_rows = []
             for line in existing.get("lines") or []:
                 item_id = int(line["item_id"]) if line.get("item_id") else None
@@ -3004,9 +3225,19 @@ class InvoiceCenter:
                     "qty": float(line.get("quantity") or 1),
                     "price": round(currency.to_display(float(line.get("unit_price") or 0), rate), currency.decimals_for(settings, "price")),
                 })
-            lines_grid.set_rows(initial_rows or [{"qty": 1}])
+            initial_tab = {
+                "invoice_id": int(existing["id"]),
+                "type": existing["type"],
+                "party_id": party_id,
+                "date": str(existing["invoice_date"]),
+                "reference": existing.get("reference") or "",
+                "notes": (existing.get("notes") or "").replace("__opening_balance__", "").strip(),
+                "paid": currency.to_input_text(paid_initial, settings),
+                "lines": initial_rows,
+            }
         else:
-            lines_grid.add_row({"qty": 1})
+            initial_tab = _blank_tab(invoice_type)
+        _init_tabs(initial_tab)
         refresh_summary()
 
         sheet.content = ft.Container(
@@ -3018,24 +3249,21 @@ class InvoiceCenter:
                             icon_bubble,
                             ft.Column(
                                 [
-                                    ft.Text(
-                                        f"تعديل فاتورة #{self._display_invoice_number(invoice_id)}" if invoice_id else ("فاتورة مبيعات" if invoice_type == "sale" else "فاتورة مشتريات"),
-                                        size=17,
-                                        weight=ft.FontWeight.BOLD,
-                                    ),
-                                    ft.Text(
-                                        "عدّل بيانات الفاتورة وبنودها من الجدول ثم احفظ التغييرات"
-                                        if invoice_id
-                                        else "أدخل البنود في الجدول ثم احفظ مباشرة",
-                                        size=11,
-                                        color=Colors.TEXT_SECONDARY,
-                                    ),
+                                    header_title,
+                                    header_subtitle,
                                 ],
                                 spacing=1, expand=True,
                             ),
                             header_close_button(close),
                         ],
                         spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Text("الفواتير المفتوحة", size=10, color=Colors.TEXT_SECONDARY),
+                            ft.Container(tab_strip, expand=True),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row(
                         [
