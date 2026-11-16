@@ -2882,6 +2882,23 @@ class InvoiceCenter:
                 close()
                 self.notify(message, sound_kind="save")
                 self.show_center()
+
+                async def open_print_after_close() -> None:
+                    # Let the sheet's dismiss animation finish before opening
+                    # the print-settings window; opening a dialog in the same
+                    # tick races Flutter's pop route and it never renders.
+                    await asyncio.sleep(0.15)
+                    try:
+                        print_handler = self._print_handler(saved_id)
+                        if print_handler is not None:
+                            print_handler(None)
+                    except Exception:
+                        pass
+
+                try:
+                    self.page.run_task(open_print_after_close)
+                except Exception:
+                    pass
                 if is_sale:
                     # Same PHASE10 refresh the wizard/page editor trigger.
                     refresh_home_widget(self.page, self.native_files, self.ctx.dashboard, self.ctx.settings)
@@ -2890,7 +2907,7 @@ class InvoiceCenter:
             except Exception as exc:
                 self.notify(str(exc), kind="error")
 
-        save_button = primary_button("تحديث" if invoice_id else "حفظ الفاتورة", icon=ft.Icons.SAVE_OUTLINED)
+        save_button = primary_button("تحديث" if invoice_id else "حفظ وطباعة", icon=ft.Icons.SAVE_OUTLINED)
         save_button.on_click = wire_busy(save_button, save)
 
         def type_changed(_=None) -> None:
