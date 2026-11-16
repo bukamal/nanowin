@@ -3262,6 +3262,7 @@ class InvoiceCenter:
                         [
                             ft.Text("الفواتير المفتوحة", size=10, color=Colors.TEXT_SECONDARY),
                             ft.Container(tab_strip, expand=True),
+                            ft.Container(type_dd, width=200),
                         ],
                         spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
