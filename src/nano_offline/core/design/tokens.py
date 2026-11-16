@@ -47,10 +47,13 @@ SIZES = {
 }
 
 # POS layout sizes by density: bigger targets for large touch screens.
+# ``tile_h`` is a *fixed* height (the grid previously left desktop tiles
+# unsized, so rows were ragged): room for the icon, a two-line name block,
+# the price and the corner stock badge with a little breathing space.
 POS_DENSITY = {
-    "compact": {"rail": 180, "cart": 340, "tile_h": 96, "row": 46},
-    "comfortable": {"rail": 210, "cart": 420, "tile_h": 124, "row": 54},
-    "touch": {"rail": 290, "cart": 470, "tile_h": 164, "row": 66},
+    "compact": {"rail": 180, "cart": 340, "tile_h": 120, "row": 46},
+    "comfortable": {"rail": 210, "cart": 420, "tile_h": 136, "row": 54},
+    "touch": {"rail": 290, "cart": 470, "tile_h": 172, "row": 66},
 }
 
 

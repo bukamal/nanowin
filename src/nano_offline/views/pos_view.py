@@ -2659,40 +2659,105 @@ class POSCenter:
         name_size = 15 if touch else (11 if compact else 12)
         price_size = 16 if touch else (12 if compact else 13)
         tile_padding = 14 if touch else (8 if compact else 10)
-        qty_badge = None
+        content_pad = max(6, tile_padding - 2)
+        strip_h = 5 if touch else 4
+        # Fixed two-line name block: every tile reserves the same text height
+        # so prices/badges line up across a row instead of jittering with the
+        # length of each name.
+        name_block_h = name_size * 2 + 8
+
         out_of_stock = False
+        badge_text: str | None = None
+        badge_color = Colors.TEXT_MUTED
+        badge_bg = Colors.BACKGROUND_ALT
         if not is_service:
             available = float(item.get("quantity") or 0)
             out_of_stock = available <= 0
-            badge_color = Colors.DANGER_DARK if out_of_stock else Colors.TEXT_FAINT
-            qty_badge = ft.Text(f"م: {self._qty(item['quantity'])}", size=10 if not touch else 12, color=badge_color, weight=ft.FontWeight.BOLD if out_of_stock else None)
-        idx = 0
-        # stable-ish color by category id for a touch of visual grouping
-        if item.get("category_id"):
-            idx = int(item["category_id"])
+            if out_of_stock:
+                badge_text = "غير متوفر"
+                badge_color, badge_bg = Colors.DANGER, Colors.DANGER_BG
+            else:
+                badge_text = f"م: {self._qty(item['quantity'])}"
+
+        # Stable color per category: a thin accent strip on top groups the
+        # grid visually by section without adding a second label row.
+        idx = int(item["category_id"]) if item.get("category_id") else 0
         color = CHIP_PALETTE[idx % len(CHIP_PALETTE)]
-        return ft.Container(
-            ft.Column(
-                [
-                    ft.Container(
-                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED if not is_service else ft.Icons.DESIGN_SERVICES_OUTLINED, color=color, size=icon_size),
-                        width=icon_box, height=icon_box, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND_ALT,
-                        border_radius=12 if not touch else 16,
-                    ),
-                    ft.Text(item["name"], size=name_size, weight=ft.FontWeight.W_600, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER),
-                    ft.Text(self.money(item["selling_price"], field="price"), size=price_size, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                    qty_badge or ft.Container(height=1),
-                ],
-                spacing=6 if touch else 4, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+
+        icon_box_ctrl = ft.Container(
+            ft.Icon(
+                ft.Icons.INVENTORY_2_OUTLINED if not is_service else ft.Icons.DESIGN_SERVICES_OUTLINED,
+                color=color, size=icon_size,
             ),
-            padding=tile_padding,
-            height=self._pos_sizes["tile_h"] if touch else None,
+            width=icon_box, height=icon_box, alignment=ft.alignment.center,
+            bgcolor=Colors.BACKGROUND_ALT,
+            border_radius=Radius.LG if touch else Radius.MD,
+        )
+
+        # STRETCH makes every child span the tile width, so text_align=CENTER
+        # truly centres the name/price in the tile (previously the text sized
+        # to its own content and only *looked* off-centre). The icon is
+        # wrapped in a centred Row so it keeps its square shape.
+        inner = ft.Column(
+            [
+                ft.Row([icon_box_ctrl], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Container(
+                    ft.Text(
+                        item["name"], size=name_size, weight=ft.FontWeight.W_600,
+                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                        text_align=ft.TextAlign.CENTER, tooltip=item["name"],
+                    ),
+                    height=name_block_h, alignment=ft.alignment.center,
+                ),
+                ft.Text(
+                    self.money(item["selling_price"], field="price"),
+                    size=price_size, weight=ft.FontWeight.BOLD,
+                    color=Colors.PRIMARY_DARK, text_align=ft.TextAlign.CENTER,
+                ),
+            ],
+            spacing=6 if touch else (4 if compact else 5),
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            alignment=ft.MainAxisAlignment.CENTER,
+            expand=True,
+        )
+
+        content = ft.Column(
+            [
+                ft.Container(
+                    height=strip_h, bgcolor=color,
+                    border_radius=ft.border_radius.only(top_left=Radius.MD, top_right=Radius.MD),
+                ),
+                ft.Container(
+                    inner, expand=True,
+                    padding=ft.padding.only(left=content_pad, right=content_pad, top=2, bottom=content_pad),
+                ),
+            ],
+            spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH, expand=True,
+        )
+
+        stack_children: list[ft.Control] = [content]
+        if badge_text is not None:
+            stack_children.append(
+                ft.Container(
+                    ft.Text(badge_text, size=9 if not touch else 11, weight=ft.FontWeight.BOLD, color=badge_color),
+                    top=strip_h + 4, right=content_pad,
+                    padding=ft.padding.symmetric(horizontal=6 if not touch else 8, vertical=2),
+                    bgcolor=badge_bg, border_radius=999,
+                )
+            )
+
+        return ft.Container(
+            ft.Stack(stack_children, fit=ft.StackFit.EXPAND, expand=True),
+            # Unified height across all densities: previously desktop tiles had
+            # height=None, so rows were ragged and names drifted out of line.
+            height=self._pos_sizes["tile_h"],
             bgcolor=Colors.WHITE,
             # Out-of-stock is a nudge, not a block -- the sale is still
             # allowed (e.g. a known backorder), just flagged visually via
-            # the border so the cashier notices before scanning more.
+            # the border and the corner badge.
             border=ft.border.all(1.5 if out_of_stock else 1, Colors.DANGER if out_of_stock else Colors.BORDER),
             border_radius=Radius.MD,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
             ink=True,
             col={"xs": 6, "sm": 4, "md": 4, "lg": 3, "xl": 2},
             on_click=lambda _, i=int(item["id"]): self._add_item(i),
