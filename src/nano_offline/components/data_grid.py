@@ -1265,6 +1265,13 @@ class DataGrid(ft.Column):
         self._render_body()
         self._safe_update(self._body)
         self._emit_selection()
+        # An editable grid is an entry surface: arm it as soon as it has data
+        # so Enter/Tab (and type-to-edit) work immediately -- exactly like the
+        # items bulk sheet, which arms through add_row. Read-only list grids
+        # (no editable columns) stay unarmed until a click, so their row
+        # navigation/activation is unchanged.
+        if any(col.editable for col in self._all_columns):
+            self._armed = True
 
     def set_row_height(self, height: int) -> None:
         """Switch density ("comfortable" 48px vs "compact" 36px)."""

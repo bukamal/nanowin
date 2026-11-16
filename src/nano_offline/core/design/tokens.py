@@ -50,10 +50,26 @@ SIZES = {
 # ``tile_h`` is a *fixed* height (the grid previously left desktop tiles
 # unsized, so rows were ragged): room for the icon, a two-line name block,
 # the price and the corner stock badge with a little breathing space.
+# Every item-card metric (icon glyph, icon box, name/price text, padding,
+# accent strip) lives here too, so the POS grid -- and restaurant mode, which
+# reuses the same tile -- is driven entirely by the one "density" appearance
+# setting instead of hard-coded numbers scattered in the view.
 POS_DENSITY = {
-    "compact": {"rail": 180, "cart": 340, "tile_h": 120, "row": 46},
-    "comfortable": {"rail": 210, "cart": 420, "tile_h": 136, "row": 54},
-    "touch": {"rail": 290, "cart": 470, "tile_h": 172, "row": 66},
+    "compact": {
+        "rail": 180, "cart": 340, "tile_h": 120, "row": 46,
+        "tile_icon": 20, "tile_icon_box": 36, "tile_name": 11, "tile_price": 12,
+        "tile_pad": 8, "tile_strip": 4, "tile_spacing": 4,
+    },
+    "comfortable": {
+        "rail": 210, "cart": 420, "tile_h": 136, "row": 54,
+        "tile_icon": 26, "tile_icon_box": 44, "tile_name": 12, "tile_price": 13,
+        "tile_pad": 10, "tile_strip": 4, "tile_spacing": 5,
+    },
+    "touch": {
+        "rail": 290, "cart": 470, "tile_h": 172, "row": 66,
+        "tile_icon": 34, "tile_icon_box": 58, "tile_name": 15, "tile_price": 16,
+        "tile_pad": 14, "tile_strip": 5, "tile_spacing": 6,
+    },
 }
 
 

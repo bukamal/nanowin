@@ -2652,15 +2652,18 @@ class POSCenter:
 
     def _item_tile(self, item: dict) -> ft.Container:
         is_service = item["item_type"] == "خدمة"
+        # Every metric comes from the density tokens (Admin > المظهر > الكثافة),
+        # so POS *and* restaurant mode -- which reuse this same tile -- size
+        # their item cards from the one appearance setting.
+        sizes = self._pos_sizes
         touch = getattr(self, "_pos_density", "comfortable") == "touch"
-        compact = getattr(self, "_pos_density", "comfortable") == "compact"
-        icon_size = 34 if touch else (20 if compact else 26)
-        icon_box = 58 if touch else (36 if compact else 44)
-        name_size = 15 if touch else (11 if compact else 12)
-        price_size = 16 if touch else (12 if compact else 13)
-        tile_padding = 14 if touch else (8 if compact else 10)
+        icon_size = sizes["tile_icon"]
+        icon_box = sizes["tile_icon_box"]
+        name_size = sizes["tile_name"]
+        price_size = sizes["tile_price"]
+        tile_padding = sizes["tile_pad"]
         content_pad = max(6, tile_padding - 2)
-        strip_h = 5 if touch else 4
+        strip_h = sizes["tile_strip"]
         # Fixed two-line name block: every tile reserves the same text height
         # so prices/badges line up across a row instead of jittering with the
         # length of each name.
@@ -2715,7 +2718,7 @@ class POSCenter:
                     color=Colors.PRIMARY_DARK, text_align=ft.TextAlign.CENTER,
                 ),
             ],
-            spacing=6 if touch else (4 if compact else 5),
+            spacing=sizes["tile_spacing"],
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             alignment=ft.MainAxisAlignment.CENTER,
             expand=True,

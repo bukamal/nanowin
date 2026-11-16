@@ -97,3 +97,20 @@ def test_pos_density_sizes_scale():
     assert touch["cart"] > comfortable["cart"] > compact["cart"]
     assert touch["tile_h"] > compact["tile_h"]
     assert pos_sizes("unknown") == comfortable
+
+
+def test_pos_item_tile_metrics_come_from_density():
+    # Every item-card metric (icon glyph/box, name/price text, padding and
+    # accent strip) lives in the density tokens, so POS and restaurant mode
+    # size their cards from the one "density" appearance setting.
+    from nano_offline.core.design.tokens import pos_sizes
+
+    touch = pos_sizes("touch")
+    comfortable = pos_sizes("comfortable")
+    compact = pos_sizes("compact")
+    for key in ("tile_icon", "tile_icon_box", "tile_name", "tile_price", "tile_pad", "tile_strip", "tile_spacing"):
+        assert key in compact and key in comfortable and key in touch, key
+        assert compact[key] <= comfortable[key] <= touch[key], key
+    # the icon must fit inside its box in every density
+    for size in (compact, comfortable, touch):
+        assert size["tile_icon"] < size["tile_icon_box"]

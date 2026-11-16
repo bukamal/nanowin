@@ -812,3 +812,24 @@ def test_add_row_preserves_values_for_hidden_columns():
 
     g.set_hidden_keys({"name", "quantity"})
     assert g._rows[idx]["quantity"] == 3.5
+
+
+def test_editable_grid_arms_when_rows_arrive_via_set_rows():
+    # Regression: the tabbed invoice table sheet loads its lines with
+    # set_rows, so the grid stayed disarmed and Enter/Tab did nothing until a
+    # click. An editable grid must arm as soon as it holds data.
+    g = make_grid(rows=[])
+    assert g._armed is False
+    g.set_rows(ROWS)
+    assert g._armed is True
+    g._handle_key(FakeKey("Arrow Down"))
+    assert g.nav.cell == (1, 0)
+
+
+def test_readonly_grid_stays_unarmed_after_set_rows():
+    ro_cols = [GridColumn("name", "الاسم"), GridColumn("price", "السعر", kind="money")]
+    g = DataGrid(columns=ro_cols, rows=[], page=None)
+    g.set_rows([{"name": "قلم", "price": 1.5}])
+    assert g._armed is False
+    g._handle_key(FakeKey("Arrow Down"))
+    assert g.nav.cell == (0, 0)
