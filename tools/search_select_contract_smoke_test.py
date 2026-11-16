@@ -4,7 +4,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # Contract: mostly customer-facing screens must use search-select, not raw
 # Dropdown. Screens and reusable controls that legitimately use ft.Dropdown
 # for a focused interaction are pinned as EXEMPT so the intent stays explicit.
-EXEMPT = ['admin_view.py', 'finance_view.py', 'items_view.py', 'notifications_view.py', 'reports_view.py']
+# search_select.py is the shared control itself: its optional dropdown=True
+# mode renders a real ft.Dropdown for *limited* option sets (fixed
+# enumerations), which is exactly the sanctioned single place for one.
+EXEMPT = ['admin_view.py', 'finance_view.py', 'items_view.py', 'notifications_view.py', 'reports_view.py', 'search_select.py']
 INVOICE_VIEW = ROOT / "src" / "nano_offline" / "views" / "invoice_view.py"
 DATA_GRID = ROOT / "src" / "nano_offline" / "components" / "data_grid.py"
 invoice_text = INVOICE_VIEW.read_text(encoding="utf-8")
