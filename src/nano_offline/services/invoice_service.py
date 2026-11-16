@@ -167,6 +167,11 @@ class InvoiceService:
                 invoice_type, total, paid_amount, customer_id, supplier_id
             )
             self._require_party_for_credit(invoice_type, total, paid_amount, customer_id, supplier_id)
+            # A party with a fixed dealing currency gets its documents recorded
+            # in that currency (strict link); otherwise inherit the display one.
+            party_currency_code = self._party_currency_code(conn, invoice_type, customer_id, supplier_id)
+            snapshot_code = currency.party_currency(settings, party_currency_code)
+            snapshot_symbol = currency.symbol_for(settings, snapshot_code)
             print_snapshot = invoice_settings.encode_print_snapshot(
                 invoice_settings.print_snapshot_from_settings(settings)
             )
@@ -191,8 +196,8 @@ class InvoiceService:
                     # stores (and prints) the configured rate instead of being
                     # pinned to 1.0 when the admin later changes the rate.
                     currency.get_exchange_rate(settings),
-                    currency.get_display_currency(settings),
-                    currency.get_display_symbol(settings),
+                    snapshot_code,
+                    snapshot_symbol,
                     print_snapshot,
                 ),
             )
@@ -726,6 +731,20 @@ class InvoiceService:
             raise ValueError("اختر العميل للفاتورة الآجلة أو اجعل المدفوع مساويًا للإجمالي")
         if invoice_type == "purchase" and supplier_id is None:
             raise ValueError("اختر المورد للفاتورة الآجلة أو اجعل المدفوع مساويًا للإجمالي")
+
+    @staticmethod
+    def _party_currency_code(conn, invoice_type: str, customer_id, supplier_id) -> str:
+        """The party's fixed dealing currency ('' when unset/inherited)."""
+        try:
+            if invoice_type == "sale" and customer_id:
+                row = conn.execute("SELECT currency FROM customers WHERE id=?", (customer_id,)).fetchone()
+            elif invoice_type == "purchase" and supplier_id:
+                row = conn.execute("SELECT currency FROM suppliers WHERE id=?", (supplier_id,)).fetchone()
+            else:
+                row = None
+            return str((row["currency"] if row is not None else "") or "").strip().upper()
+        except Exception:
+            return ""
 
     @staticmethod
     def _ensure_restaurant_party(conn) -> int:

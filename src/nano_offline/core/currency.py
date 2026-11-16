@@ -215,6 +215,41 @@ def get_display_symbol(settings) -> str:
     return settings.get(key, "") or _DEFAULT_SYMBOL_BY_CURRENCY[display_currency]
 
 
+def symbol_for(settings, code: str | None) -> str:
+    """Symbol for an explicit currency code (falls back to the display one)."""
+    normalized = str(code or "").strip().upper()
+    if normalized not in SUPPORTED_DISPLAY_CURRENCIES:
+        return get_display_symbol(settings)
+    if settings is not None:
+        key = _SYMBOL_KEY_BY_CURRENCY[normalized]
+        value = settings.get(key, "")
+        if value:
+            return value
+    return _DEFAULT_SYMBOL_BY_CURRENCY[normalized]
+
+
+def party_currency(settings, code: str | None) -> str:
+    """Resolve a party's stored currency: an explicit SYP/USD wins, otherwise
+    inherit the global display currency. Used to pin a party's invoices and
+    vouchers to the currency it actually deals in."""
+    normalized = str(code or "").strip().upper()
+    if normalized in SUPPORTED_DISPLAY_CURRENCIES:
+        return normalized
+    return get_display_currency(settings)
+
+
+def effective_rate_for(settings, code: str | None) -> float:
+    """Rate to persist alongside an explicit currency snapshot.
+
+    Mirrors :func:`get_effective_rate`: 1.0 for USD (display == stored), the
+    configured SYP-per-USD rate otherwise.
+    """
+    normalized = str(code or "").strip().upper()
+    if normalized == DISPLAY_CURRENCY_USD:
+        return 1.0
+    return get_exchange_rate(settings)
+
+
 def to_display(amount_usd: float | int | None, rate: float) -> float:
     """Convert a stored USD amount into the displayed amount at ``rate``.
 
@@ -390,6 +425,9 @@ __all__ = [
     "set_exchange_rate",
     "invoice_settings",
     "get_display_symbol",
+    "symbol_for",
+    "party_currency",
+    "effective_rate_for",
     "to_display",
     "to_stored",
     "amount_field_label",

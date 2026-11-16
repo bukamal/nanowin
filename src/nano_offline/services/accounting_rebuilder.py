@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from datetime import date
+
 from nano_offline.core import money
 
 EPSILON = 1e-9
+
+#: Equity account that absorbs party opening balances so they are two-sided
+#: (AR/AP vs equity) without touching cash or the income statement.
+OPENING_EQUITY_ACCOUNT = "OPENING_EQUITY"
 
 #: Marker stored on an invoice's ``notes`` when it represents a converted
 #: opening-stock balance ("أول المدة"). Such invoices exist to expose opening
@@ -329,7 +335,7 @@ class AccountingRebuilder:
 
     @classmethod
     def _rebuild_ledger_and_party_balances(cls, conn) -> None:
-        conn.execute("DELETE FROM ledger_entries WHERE source_type IN ('invoice','payment')")
+        conn.execute("DELETE FROM ledger_entries WHERE source_type IN ('invoice','payment','opening')")
         conn.execute("UPDATE customers SET balance=0,updated_at=CURRENT_TIMESTAMP")
         conn.execute("UPDATE suppliers SET balance=0,updated_at=CURRENT_TIMESTAMP")
 
@@ -403,6 +409,68 @@ class AccountingRebuilder:
                 conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (amount, p["customer_id"]))
             elif p["direction"] == "out" and p["supplier_id"]:
                 conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (amount, p["supplier_id"]))
+
+        # Party opening balances: posted last so each party's balance can be
+        # re-derived from the *full* ledger (invoices/payments + opening) in
+        # one place. They never touch cash or the income statement.
+        for row in conn.execute("SELECT id FROM customers").fetchall():
+            cls.sync_party_opening(conn, "customers", party_id=int(row["id"]))
+        for row in conn.execute("SELECT id FROM suppliers").fetchall():
+            cls.sync_party_opening(conn, "suppliers", party_id=int(row["id"]))
+
+    @classmethod
+    def sync_party_opening(cls, conn, table: str, *, party_id: int) -> None:
+        """(Re)post one party's opening-balance ledger pair from its columns.
+
+        The signed ``opening_balance`` is the party's *natural* balance: a
+        positive customer value is a receivable (debit AR), a positive supplier
+        value is a payable (credit AP). The offset is ``OPENING_EQUITY`` so the
+        entry is always balanced and never posts cash/P&L. The party's
+        ``balance`` is then re-derived from the whole ledger, keeping this
+        correct whether it runs after a party save or inside a full rebuild.
+        """
+        party_type = "customer" if table == "customers" else "supplier"
+        account = "AR" if party_type == "customer" else "AP"
+        conn.execute(
+            "DELETE FROM ledger_entries WHERE source_type='opening' AND party_type=? AND party_id=?",
+            (party_type, party_id),
+        )
+        row = conn.execute(
+            f"SELECT name,opening_balance,opening_balance_date FROM {table} WHERE id=?",
+            (party_id,),
+        ).fetchone()
+        if row is None:
+            return
+        balance = float(row["opening_balance"] or 0)
+        entry_date = str(row["opening_balance_date"] or "").strip() or date.today().isoformat()
+        if abs(balance) > EPSILON:
+            amount = abs(balance)
+            if party_type == "customer":
+                party_debit = amount if balance > 0 else 0.0
+                party_credit = amount if balance < 0 else 0.0
+            else:
+                party_debit = amount if balance < 0 else 0.0
+                party_credit = amount if balance > 0 else 0.0
+            label = f"رصيد افتتاحي — {row['name']}"
+            conn.execute(
+                """INSERT INTO ledger_entries(
+                       entry_date,account_code,party_type,party_id,debit,credit,source_type,source_id,description
+                   ) VALUES(?,?,?,?,?,?, 'opening', ?, ?)""",
+                (entry_date, account, party_type, party_id, party_debit, party_credit, party_id, label),
+            )
+            conn.execute(
+                """INSERT INTO ledger_entries(
+                       entry_date,account_code,party_type,party_id,debit,credit,source_type,source_id,description
+                   ) VALUES(?,?,?,?,?,?, 'opening', ?, ?)""",
+                (entry_date, OPENING_EQUITY_ACCOUNT, party_type, party_id, party_credit, party_debit, party_id, label),
+            )
+        raw = float(conn.execute(
+            "SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries"
+            " WHERE party_type=? AND party_id=? AND account_code=?",
+            (party_type, party_id, account),
+        ).fetchone()[0])
+        natural = raw if party_type == "customer" else -raw
+        conn.execute(f"UPDATE {table} SET balance=? WHERE id=?", (money.quantized(natural), party_id))
 
     @staticmethod
     def _write_payment_ledger(

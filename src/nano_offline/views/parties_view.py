@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv as _csv
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import flet as ft
@@ -10,14 +10,17 @@ import flet as ft
 from nano_offline.core.toast import toast
 from nano_offline.core.party_reliability import grade_party
 
-from nano_offline.components import SelectAllTextField, empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn
+from nano_offline.components import (
+    SelectAllTextField, SmartAmountField, SmartDateField, SearchSelect,
+    empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn,
+)
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components import sheets
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
-from nano_offline.core import privacy
+from nano_offline.core import currency, privacy
 
 
 # Desktop grid columns for the customers/suppliers screens. Balance is the
@@ -215,34 +218,270 @@ class PartyCenter:
                 shadow=Shadow.SM,
             )
 
+        def _split_opening(raw: float) -> tuple[float, str]:
+            """Natural signed opening balance -> (magnitude, debit/credit side)."""
+            if is_customer:
+                return (raw, "debit") if raw >= 0 else (-raw, "credit")
+            return (raw, "credit") if raw >= 0 else (-raw, "debit")
+
+        def _natural_from(magnitude_usd: float, side: str) -> float:
+            """(magnitude, side) -> the party's natural signed balance.
+
+            Customer: debit = positive (receivable), credit = negative.
+            Supplier: credit = positive (payable), debit = negative.
+            """
+            is_debit = str(side or "").strip().lower() == "debit"
+            positive = is_debit if is_customer else (not is_debit)
+            value = abs(float(magnitude_usd or 0))
+            return value if positive else -value
+
+        default_side = "debit" if is_customer else "credit"
+
+        def _confirm_opening_change(on_confirm) -> None:
+            dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
+
+            def close_d(_=None):
+                page.close(dialog)
+
+            def yes(_=None):
+                close_d()
+                on_confirm(None)
+
+            dialog.title = ft.Text("تعديل الرصيد الافتتاحي")
+            dialog.content = ft.Text(
+                "سيُعاد ترحيل القيد الافتتاحي لهذا الحساب وتُحدَّث الأرصدة وكشف الحساب. "
+                "تُسجَّل العملية في سجل التدقيق. هل تريد المتابعة؟"
+            )
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=close_d),
+                primary_button("متابعة", on_click=yes, width=None, size="md"),
+            ]
+            page.open(dialog)
+
         def open_editor(party: dict | None = None):
+            settings = self.ctx.settings
+            raw_opening, party_side = _split_opening(float((party or {}).get("opening_balance") or 0))
             name = SelectAllTextField(label="الاسم", value=(party or {}).get("name", ""))
             phone = SelectAllTextField(label="الهاتف", value=(party or {}).get("phone") or "", keyboard_type=ft.KeyboardType.PHONE)
             address = SelectAllTextField(label="العنوان", value=(party or {}).get("address") or "", multiline=True, min_lines=1, max_lines=3)
+            opening = SmartAmountField(
+                label=currency.amount_field_label("الرصيد الافتتاحي", settings),
+                value=currency.to_input_text(raw_opening, settings),
+            )
+            side = SearchSelect(
+                label="نوع الرصيد الافتتاحي",
+                choices=[("debit", "مدين (عليه)"), ("credit", "دائن (له)")],
+                value=party_side, allow_clear=False, dropdown=True,
+            )
+            opening_date = SmartDateField(
+                label="تاريخ الرصيد الافتتاحي",
+                value=str((party or {}).get("opening_balance_date") or date.today().isoformat()),
+            )
+            party_curr = SearchSelect(
+                label="عملة التعامل",
+                choices=[("", "موروثة (عملة العرض)"), ("SYP", "ليرة سورية (ل.س)"), ("USD", "دولار أمريكي ($)")],
+                value=str((party or {}).get("currency") or ""), allow_clear=False, dropdown=True,
+            )
+            credit = SmartAmountField(
+                label=currency.amount_field_label("سقف الائتمان (اختياري)", settings),
+                value=currency.to_input_text(float((party or {}).get("credit_limit") or 0), settings),
+            )
+            notes = SelectAllTextField(label="ملاحظات", value=(party or {}).get("notes") or "", multiline=True, min_lines=1, max_lines=2)
             sheet = new_form_sheet()
 
             def close(_=None):
                 page.close(sheet)
 
-            def save(_=None):
+            def payload() -> dict:
+                magnitude = currency.parse_display_input(opening.value, settings)
+                return {
+                    "name": (name.value or "").strip(),
+                    "phone": phone.value,
+                    "address": address.value,
+                    "opening_balance": _natural_from(magnitude, side.value or default_side),
+                    "opening_balance_date": (opening_date.value or date.today().isoformat()),
+                    "currency": party_curr.value or "",
+                    "credit_limit": max(0.0, currency.parse_display_input(credit.value, settings)),
+                    "notes": notes.value,
+                }
+
+            def commit(_=None):
                 try:
+                    data = payload()
+                    name_value, phone_value, address_value = data.pop("name"), data.pop("phone"), data.pop("address")
                     if party:
-                        repo.update(int(party["id"]), name.value or "", phone.value, address.value)
+                        repo.update(int(party["id"]), name_value, phone_value, address_value, **data)
                         message = f"تم تحديث {singular}"
                     else:
-                        repo.create(name.value or "", phone.value, address.value)
+                        repo.create(name_value, phone_value, address_value, **data)
                         message = f"تمت إضافة {singular}"
                     close()
-                    notify(message)
+                    notify(message, sound_kind="save")
                     refresh()
                 except Exception as exc:
                     notify(str(exc), kind="error")
 
+            def save(_=None):
+                if party:
+                    old = float(party.get("opening_balance") or 0)
+                    try:
+                        new = payload()["opening_balance"]
+                    except Exception:
+                        new = old
+                    if abs(new - old) > 1e-9:
+                        _confirm_opening_change(commit)
+                        return
+                commit()
+
             render_form_sheet(
                 page, sheet,
                 title=f"{'تعديل' if party else 'إضافة'} {singular}",
-                fields=[name, phone, address],
+                fields=[name, phone, address, opening, side, opening_date, party_curr, credit, notes],
                 on_close=close, on_save=save,
+            )
+            page.open(sheet)
+
+        def open_bulk_sheet():
+            """Bulk add several customers/suppliers in one editable table."""
+            settings = self.ctx.settings
+            existing_names = {str(p.get("name") or "").strip().casefold() for p in repo.list()}
+            row_defaults = {
+                "name": "", "phone": "", "address": "", "opening": 0.0,
+                "side": default_side, "currency": "", "credit_limit": 0.0, "notes": "",
+            }
+            page_w = int(page.width or 1280)
+            page_h = int(page.height or 800)
+            sheet_w = max(360, page_w - 32)
+            sheet_h = max(420, int(page_h * 0.85))
+            sheet = ft.BottomSheet(
+                content=ft.Container(),
+                is_scroll_controlled=True,
+                enable_drag=True,
+                maintain_bottom_view_insets_padding=True,
+                size_constraints=ft.BoxConstraints(min_width=sheet_w, max_width=sheet_w),
+            )
+
+            def close(_=None):
+                page.close(sheet)
+                try:
+                    grid.attach()
+                except Exception:
+                    pass
+
+            sheet.on_dismiss = lambda e: grid.attach()
+
+            def formatter(col, value, row):
+                if col.key in ("opening", "credit_limit"):
+                    return self.money(value, field="price") if value else ""
+                if col.key == "side":
+                    return "مدين" if str(value or default_side) == "debit" else "دائن"
+                if col.key == "currency":
+                    return {"": "موروثة", "SYP": "ل.س", "USD": "$"}.get(str(value or ""), "موروثة")
+                if col.key == "_status":
+                    n = str(row.get("name") or "").strip()
+                    if not n:
+                        return ("ناقص", Colors.WARNING_DARK, Colors.WARNING_BG)
+                    if n.casefold() in existing_names:
+                        return ("مكرر", Colors.DANGER, Colors.DANGER_BG)
+                    return ("جاهز", Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
+                return None
+
+            def edit_text(col, value, _row):
+                if col.kind == "money":
+                    return currency.to_input_text(value, settings)
+                return None
+
+            def parse(col, text):
+                if col.kind == "money":
+                    return currency.parse_display_input(text, settings)
+                return (text or "").strip()
+
+            bulk_grid = DataGrid(
+                columns=[
+                    GridColumn("name", "الاسم", editable=True),
+                    GridColumn("phone", "الهاتف", width=120, editable=True),
+                    GridColumn("address", "العنوان", width=170, editable=True),
+                    GridColumn("opening", "الرصيد الافتتاحي", width=140, align="end", kind="money", editable=True),
+                    GridColumn("side", "مدين/دائن", width=110, align="center", kind="picker", editable=True, sortable=False),
+                    GridColumn("currency", "العملة", width=100, align="center", kind="picker", editable=True, sortable=False),
+                    GridColumn("credit_limit", "سقف الائتمان", width=130, align="end", kind="money", editable=True),
+                    GridColumn("notes", "ملاحظات", width=170, editable=True),
+                    GridColumn("_status", "الحالة", width=90, align="center", kind="badge", sortable=False),
+                ],
+                rows=[], page=page, row_height=44, center_cells=True,
+                formatter=formatter, edit_formatter=edit_text, parser=parse,
+                picker_options=lambda col, _row: (
+                    [("debit", "مدين (عليه)"), ("credit", "دائن (له)")] if col.key == "side"
+                    else [("", "موروثة"), ("SYP", "ل.س"), ("USD", "$")] if col.key == "currency"
+                    else []
+                ),
+                empty_text="اضغط «سطر جديد» لإدخال طرف",
+            )
+            batch_date = SmartDateField(label="تاريخ الأرصدة الافتتاحية", value=date.today().isoformat())
+
+            def add_blank(_=None):
+                bulk_grid.add_row(dict(row_defaults))
+
+            def save_all(_=None):
+                rows = [r for r in bulk_grid.rows if str(r.get("name") or "").strip()]
+                if not rows:
+                    notify("أدخل اسمًا واحدًا على الأقل", kind="warning")
+                    return
+                created = 0
+                errors: list[str] = []
+                for row in rows:
+                    party_name = str(row.get("name") or "").strip()
+                    try:
+                        natural = _natural_from(float(row.get("opening") or 0), str(row.get("side") or default_side))
+                        repo.create(
+                            party_name, str(row.get("phone") or ""), str(row.get("address") or ""),
+                            opening_balance=natural,
+                            opening_balance_date=(batch_date.value or date.today().isoformat()),
+                            currency=str(row.get("currency") or ""),
+                            credit_limit=max(0.0, float(row.get("credit_limit") or 0)),
+                            notes=str(row.get("notes") or ""),
+                        )
+                        created += 1
+                    except Exception as exc:
+                        errors.append(f"{party_name}: {exc}")
+                refresh()
+                if errors:
+                    notify(f"أُضيف {created} — فشل {len(errors)} (أول خطأ: {errors[0]})", kind="error")
+                    return
+                close()
+                notify(f"تمت إضافة {created} {singular}", sound_kind="save")
+
+            bulk_grid.add_row(dict(row_defaults))
+            add_btn = secondary_button("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank, width=None, size="md")
+            save_btn = primary_button("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all, width=None, size="md")
+            cancel_btn = secondary_button("إلغاء", icon=ft.Icons.CLOSE, on_click=close, width=None, size="md")
+            sheet.content = ft.Container(
+                ft.Column(
+                    [
+                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        ft.Row(
+                            [
+                                ft.Text(f"إضافة {title} كجدول", size=17, weight=ft.FontWeight.BOLD, expand=True),
+                                ft.IconButton(icon=ft.Icons.CLOSE, tooltip="إغلاق", on_click=close),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Text(
+                            "أضف عدة أطراف دفعة واحدة: أدخل الاسم والرصيد الافتتاحي (مدين/دائن) والعملة وسقف الائتمان، ثم احفظ الكل.",
+                            size=11, color=Colors.TEXT_SECONDARY,
+                        ),
+                        ft.Row([ft.Container(batch_date, width=220), add_btn, ft.Container(expand=True), save_btn, cancel_btn],
+                               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True),
+                        ft.Container(bulk_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE),
+                    ],
+                    spacing=10, expand=True,
+                ),
+                width=sheet_w, height=sheet_h,
+                padding=ft.padding.only(left=18, right=18, top=12, bottom=16),
+                bgcolor=Colors.WHITE,
+                border_radius=ft.border_radius.only(top_left=28, top_right=28),
+                shadow=Shadow.LG,
+                rtl=True,
             )
             page.open(sheet)
 
@@ -768,6 +1007,10 @@ class PartyCenter:
                 RibbonAction(
                     "add_party", f"إضافة {singular}", ft.Icons.ADD, accent=True,
                     on_click=lambda _=None: open_editor(),
+                ),
+                RibbonAction(
+                    "bulk_party", "إضافة جدولية", ft.Icons.TABLE_ROWS_OUTLINED,
+                    on_click=lambda _=None: open_bulk_sheet(),
                 ),
             ])
         content.content = ft.Column(

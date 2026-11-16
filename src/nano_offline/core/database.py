@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 25  # sections: system-printer type + name
+SCHEMA_VERSION = 26  # parties: opening balance/date, currency, credit limit, notes
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -63,6 +63,15 @@ CREATE TABLE IF NOT EXISTS customers (
     phone TEXT,
     address TEXT,
     balance REAL NOT NULL DEFAULT 0,
+    -- Party opening balance: signed natural balance (customer positive =
+    -- receivable / debit; supplier positive = payable / credit). Posted as a
+    -- balanced OPENING_EQUITY ledger pair, never as a fake sale/purchase.
+    opening_balance REAL NOT NULL DEFAULT 0,
+    opening_balance_date TEXT,
+    -- Preferred dealing currency: '' = inherit the global display currency.
+    currency TEXT NOT NULL DEFAULT '',
+    credit_limit REAL NOT NULL DEFAULT 0,
+    notes TEXT,
     -- 1 for internal accounts (e.g. the restaurant open-orders ledger) that
     -- must never appear in the customer list / pickers (schema 24).
     is_system INTEGER NOT NULL DEFAULT 0 CHECK(is_system IN (0,1)),
@@ -76,6 +85,11 @@ CREATE TABLE IF NOT EXISTS suppliers (
     phone TEXT,
     address TEXT,
     balance REAL NOT NULL DEFAULT 0,
+    opening_balance REAL NOT NULL DEFAULT 0,
+    opening_balance_date TEXT,
+    currency TEXT NOT NULL DEFAULT '',
+    credit_limit REAL NOT NULL DEFAULT 0,
+    notes TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -852,6 +866,21 @@ class Database:
             conn.execute("ALTER TABLE sections ADD COLUMN printer_type TEXT NOT NULL DEFAULT 'network'")
         if self._table_exists(conn, "sections") and not self._has_column(conn, "sections", "printer_name"):
             conn.execute("ALTER TABLE sections ADD COLUMN printer_name TEXT")
+
+        # Schema 26: party opening balances + currency + credit limit + notes.
+        for _party_table in ("customers", "suppliers"):
+            if not self._table_exists(conn, _party_table):
+                continue
+            if not self._has_column(conn, _party_table, "opening_balance"):
+                conn.execute(f"ALTER TABLE {_party_table} ADD COLUMN opening_balance REAL NOT NULL DEFAULT 0")
+            if not self._has_column(conn, _party_table, "opening_balance_date"):
+                conn.execute(f"ALTER TABLE {_party_table} ADD COLUMN opening_balance_date TEXT")
+            if not self._has_column(conn, _party_table, "currency"):
+                conn.execute(f"ALTER TABLE {_party_table} ADD COLUMN currency TEXT NOT NULL DEFAULT ''")
+            if not self._has_column(conn, _party_table, "credit_limit"):
+                conn.execute(f"ALTER TABLE {_party_table} ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0")
+            if not self._has_column(conn, _party_table, "notes"):
+                conn.execute(f"ALTER TABLE {_party_table} ADD COLUMN notes TEXT")
 
         added_opening_qty = False
         added_opening_cost = False

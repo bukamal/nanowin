@@ -155,6 +155,7 @@ class StatementService:
         "COGS": ("تكلفة البضاعة", "debit"),
         "INVENTORY": ("المخزون", "debit"),
         "EXPENSE": ("المصروفات", "debit"),
+        "OPENING_EQUITY": ("رصيد افتتاحي", "credit"),
         # Cash-count variance accounts: a day close that posts an adjustment
         # books the surplus as other income and the shortfall as other expense
         # so every posting stays two-sided (see CashDayCloseService.close_day).

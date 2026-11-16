@@ -126,6 +126,17 @@ class PaymentService:
                 str(r["key"]): str(r["value"])
                 for r in conn.execute("SELECT key,value FROM settings").fetchall()
             }
+            # A party with a fixed dealing currency settles in that currency.
+            party_currency_code = ""
+            party_table = "customers" if customer_id else ("suppliers" if supplier_id else None)
+            party_id = customer_id or supplier_id
+            if party_table and party_id:
+                try:
+                    row = conn.execute(f"SELECT currency FROM {party_table} WHERE id=?", (party_id,)).fetchone()
+                    party_currency_code = str((row["currency"] if row is not None else "") or "").strip().upper()
+                except Exception:
+                    party_currency_code = ""
+            snapshot_code = currency.party_currency(settings, party_currency_code)
             pcur = conn.execute(
                 """INSERT INTO payments(
                        customer_id,supplier_id,direction,amount,payment_date,reference,notes,source_type,source_id,
@@ -136,9 +147,9 @@ class PaymentService:
                     (reference or "").strip() or None,
                     self._payment_note(voucher_type, notes),
                     "voucher", voucher_id,
-                    currency.get_effective_rate(settings),
-                    currency.get_display_currency(settings),
-                    currency.get_display_symbol(settings),
+                    currency.effective_rate_for(settings, snapshot_code),
+                    snapshot_code,
+                    currency.symbol_for(settings, snapshot_code),
                 ),
             )
             self._apply_allocations(
