@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Callable, Iterable
 
 import flet as ft
@@ -37,6 +38,7 @@ class SearchSelect(ft.Column):
         allow_clear: bool = True,
         max_results: int = 6,
         on_change: Callable | None = None,
+        dropdown: bool = False,
     ):
         self._label = label
         self._choices: list[SearchChoice] = []
@@ -44,6 +46,14 @@ class SearchSelect(ft.Column):
         self._on_change = on_change
         self.allow_clear = allow_clear
         self.max_results = max(1, int(max_results))
+        # ``dropdown=True`` renders a plain Dropdown instead of the search
+        # field. Use it for *limited* option sets (a handful of fixed
+        # choices) where typing to filter is noise; long/dynamic lists
+        # (customers, items, printers) keep the searchable selector.
+        self._dropdown_mode = bool(dropdown)
+        self.dropdown: ft.Dropdown | None = None
+        if self._dropdown_mode:
+            self.dropdown = ft.Dropdown(label=label, options=[], value=None, on_change=self._dropdown_changed)
         self.field = SelectAllTextField(
             label=label,
             hint_text=hint_text,
@@ -63,7 +73,8 @@ class SearchSelect(ft.Column):
         # Cache the last rendered query so we skip redundant rebuilds.
         self._last_render_query: str = ""
         self._last_render_controls: list[ft.Control] = []
-        super().__init__([self.field, self.results_box], spacing=3, tight=True)
+        controls = [self.dropdown] if self._dropdown_mode else [self.field, self.results_box]
+        super().__init__(controls, spacing=3, tight=True)
         self.set_choices(choices, preserve_value=False)
         self.value = value
 
@@ -75,6 +86,8 @@ class SearchSelect(ft.Column):
     def label(self, value: str) -> None:
         self._label = value
         self.field.label = value
+        if self.dropdown is not None:
+            self.dropdown.label = value
 
     @property
     def value(self) -> str | None:
@@ -84,6 +97,9 @@ class SearchSelect(ft.Column):
     def value(self, key: str | None) -> None:
         normalized = str(key) if key not in (None, "") else None
         self._value = normalized
+        if self.dropdown is not None:
+            self.dropdown.value = normalized
+            return
         label = self._label_for(normalized) if normalized else ""
         self.field.value = label or ""
         self.results_box.visible = False
@@ -94,11 +110,32 @@ class SearchSelect(ft.Column):
 
     @on_change.setter
     def on_change(self, callback) -> None:
+        # Store the callback only; the Dropdown keeps pointing at our wrapper
+        # so ``_value`` is refreshed before the caller's callback runs.
         self._on_change = callback
+
+    def _dropdown_changed(self, _=None) -> None:
+        raw = self.dropdown.value if self.dropdown is not None else None
+        self._value = str(raw) if raw not in (None, "") else None
+        if self._on_change:
+            # Mirror a Flet event so call sites that use ``e.control.value``
+            # (captured before this dropdown mode existed) keep working.
+            self._on_change(SimpleNamespace(control=self.dropdown, data=self._value))
 
     def set_choices(self, choices: Iterable[tuple[str, str]], *, preserve_value: bool = True) -> None:
         previous = self._value if preserve_value else None
         self._choices = [SearchChoice(str(key), str(label)) for key, label in choices]
+        if self.dropdown is not None:
+            options = [ft.dropdown.Option(choice.key, choice.label) for choice in self._choices]
+            if self.allow_clear:
+                options.insert(0, ft.dropdown.Option("", "بدون اختيار"))
+            self.dropdown.options = options
+            if previous and any(c.key == previous for c in self._choices):
+                self.value = previous
+            else:
+                self._value = None
+                self.dropdown.value = "" if self.allow_clear else None
+            return
         if previous and any(c.key == previous for c in self._choices):
             self.value = previous
         elif not preserve_value:

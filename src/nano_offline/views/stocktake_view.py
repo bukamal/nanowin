@@ -9,6 +9,7 @@ from nano_offline.components import SelectAllTextField, SearchSelect, SmartAmoun
 from nano_offline.components.buttons import inline_icon_button
 from nano_offline.core.theme import Colors
 from nano_offline.core import barcode_settings
+from nano_offline.core import privacy
 from nano_offline.core.platform_capabilities import supports
 
 DEFAULT_UNIT_NAME = "قطعة"
@@ -597,7 +598,7 @@ class StocktakeCenter:
                                 ft.Column(
                                     [
                                         ft.Text(f"{sign}{self._qty(diff)} {unit}", size=13, weight=ft.FontWeight.BOLD, color=accent),
-                                        ft.Text(f"{sign}{self.money(value_diff)}", size=11, color=accent),
+                                        ft.Text(f"{sign}{privacy.money_ctx(value_diff, self.ctx)}", size=11, color=accent),
                                     ],
                                     spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END,
                                 ),

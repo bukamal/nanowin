@@ -326,12 +326,18 @@ class ItemsCenter:
                 stock_value = stock_qty * avg_cost
                 if not stock_value:
                     return ""
+                # Stock value is derived from cost -> masked in safe mode.
+                if privacy.hidden(ctx):
+                    return privacy.MASK_TEXT
                 if col.key == "_stock_usd":
                     sym = str(ctx.settings.get(currency.USD_DISPLAY_SYMBOL_KEY) or currency.DEFAULT_USD_DISPLAY_SYMBOL)
                     return currency.format_amount(stock_value, rate=1.0, symbol=sym, decimals=2)
                 rate = currency.get_exchange_rate(ctx.settings)
                 sym = str(ctx.settings.get(currency.DISPLAY_SYMBOL_KEY) or currency.DEFAULT_DISPLAY_SYMBOL)
                 return currency.format_amount(stock_value, rate=rate, symbol=sym, decimals=0)
+            if col.key == "purchase_price":
+                # Purchase price is sensitive cost data -> masked in safe mode.
+                return self.private_money(value, field="price")
             if col.kind == "money":
                 return money(value, field="price")
             return None  # text columns: default rendering
@@ -468,7 +474,7 @@ class ItemsCenter:
             return ft.Row(
                 [
                     chip(ft.Icons.QR_CODE_2_OUTLINED, "الباركود", str(row.get("barcode") or "بلا باركود")),
-                    chip(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, "قيمة المخزون", money(stock_value)),
+                    chip(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, "قيمة المخزون", self.private_money(stock_value)),
                     chip(ft.Icons.HISTORY_ROUNDED, "آخر حركة", last_move),
                 ],
                 spacing=8, wrap=True,
@@ -1024,6 +1030,7 @@ class ItemsCenter:
                 choices=[("EAN13", "EAN-13"), ("CODE128", "Code 128"), ("QR", "QR")],
                 value=barcode_quality.detect_barcode_kind(barcode.value) or barcode_settings.default_kind(ctx.settings),
                 allow_clear=False,
+                dropdown=True,
             )
             _initial_detected = barcode_quality.detect_barcode_kind(barcode.value)
             barcode_type_hint = ft.Text(
@@ -1107,7 +1114,7 @@ class ItemsCenter:
                     "أضف باركود كل وحدة فرعية من الخطوة الرابعة.",
                     size=10, color=Colors.TEXT_FAINT,
                 )
-            kind = SearchSelect(label="النوع", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")], value=(item or {}).get("item_type") or "مخزون", allow_clear=False)
+            kind = SearchSelect(label="النوع", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")], value=(item or {}).get("item_type") or "مخزون", allow_clear=False, dropdown=True)
             category = SearchSelect(label="التصنيف", choices=[(str(c["id"]), c["name"]) for c in categories], value=str(item.get("category_id")) if item and item.get("category_id") else None)
             default_unit_id = str(item.get("base_unit_id")) if item and item.get("base_unit_id") else (None if item else ensure_default_unit_id())
             base_unit = SearchSelect(label="الوحدة الأساسية", choices=[(str(u["id"]), u["name"]) for u in units], value=default_unit_id)
@@ -1630,6 +1637,7 @@ class ItemsCenter:
                 choices=[("2", "٢ أعمدة"), ("3", "٣ أعمدة"), ("4", "٤ أعمدة")],
                 value=str(barcode_settings.label_columns(ctx.settings)),
                 allow_clear=False,
+                dropdown=True,
             )
             printer_note = ft.Container(
                 ft.Row(
@@ -2628,7 +2636,7 @@ class ItemsCenter:
 
             type_sel = SearchSelect(
                 label="النوع الافتراضي", choices=[("مخزون", "مخزون"), ("خدمة", "خدمة")],
-                value="مخزون", allow_clear=False,
+                value="مخزون", allow_clear=False, dropdown=True,
             )
             cat_sel = SearchSelect(label="التصنيف الافتراضي", choices=cat_options, value=None)
             unit_sel = SearchSelect(
@@ -2775,7 +2783,7 @@ class ItemsCenter:
                 bulk_grid.set_footer({
                     "name": f"{stats['ready']} جاهز من {stats['total']} صف",
                     "quantity": qty_fmt(stats["qty"]) if stats["qty"] else "",
-                    "purchase_price": money(stats["buy"]) if stats["buy"] else "",
+                    "purchase_price": self.private_money(stats["buy"]) if stats["buy"] else "",
                     "selling_price": money(stats["sell"]) if stats["sell"] else "",
                 })
 

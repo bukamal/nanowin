@@ -2101,7 +2101,7 @@ class POSCenter:
                 [
                     back_btn,
                     ft.Column(
-                        [ft.Text("نقطة البيع", size=15, weight=ft.FontWeight.BOLD), today_summary_text],
+                        [ft.Text("نقطة البيع", size=15, weight=ft.FontWeight.BOLD)],
                         spacing=0, expand=True,
                     ),
                     ft.IconButton(
@@ -2678,10 +2678,9 @@ class POSCenter:
         if not is_service:
             available = float(item.get("quantity") or 0)
             out_of_stock = available <= 0
-            if out_of_stock:
-                badge_text = "غير متوفر"
-                badge_color, badge_bg = Colors.DANGER, Colors.DANGER_BG
-            else:
+            # Out-of-stock items keep the red border nudge but no "غير متوفر"
+            # corner label (hidden per the requested POS layout).
+            if not out_of_stock:
                 badge_text = f"م: {self._qty(item['quantity'])}"
 
         # Stable color per category: a thin accent strip on top groups the
@@ -3125,6 +3124,7 @@ class POSCenter:
         unit_id: int | None = None,
         factor: float = 1.0,
         apply_multiplier: bool = True,
+        play_cue: bool = True,
     ) -> None:
         item = self.item_map.get(item_id)
         if item is None:
@@ -3160,6 +3160,10 @@ class POSCenter:
         self._remember_recent(item_id)
         self._refresh_cart()
         self._show_last_scan_card(item, new_qty, unit_price=unit_price, is_repeat=is_repeat)
+        # Audible cue when a product is added to the cart by tapping it. The
+        # barcode path passes play_cue=False (it already plays the 'scan' tone).
+        if play_cue:
+            sound_engine.play(self.page, "pick")
         self.page.update()
 
     def _set_multiplier(self, value: int) -> None:
@@ -3681,7 +3685,7 @@ class POSCenter:
         else:
             qty_note = f" × {self._qty(factor)}" if unit_id is not None and factor != 1 else ""
             self.notify(f"✔ أُضيف: {found['name']}{qty_note}", sound_kind="scan")
-        self._add_item(item_id, qty_delta, unit_price, unit_id=unit_id, factor=factor)
+        self._add_item(item_id, qty_delta, unit_price, unit_id=unit_id, factor=factor, play_cue=False)
 
     def _offer_create_item(self, code: str) -> None:
         # A scan that matched nothing gets its own dedicated tone

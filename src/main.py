@@ -1463,6 +1463,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 return
             _privacy.set_safe_mode(ctx.settings, not _privacy.is_safe_mode(ctx.settings))
             _refresh_safe()
+            # Safe mode changes what every view renders, so the tab cache must
+            # not serve a pre-toggle snapshot of the current surface.
+            try:
+                tab_cache.clear()
+            except Exception:
+                pass
             try:
                 navigate(selected_key["value"])
             except Exception:

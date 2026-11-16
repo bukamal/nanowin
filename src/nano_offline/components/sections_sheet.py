@@ -349,6 +349,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
             choices=[("network", "شبكة (IP:منفذ)"), ("system", "طابعة ويندوز")],
             value=str((section or {}).get("printer_type") or "network"),
             allow_clear=False,
+            dropdown=True,
         )
         host_f = SelectAllTextField(label="عنوان الطابعة (IP)", value=(section or {}).get("printer_host") or "")
         port_f = SelectAllTextField(label="المنفذ", value=str((section or {}).get("printer_port") or 9100), keyboard_type=ft.KeyboardType.NUMBER)
@@ -357,6 +358,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
             label="طابعة ويندوز",
             choices=[(_existing_printer, _existing_printer)] if _existing_printer else [],
             value=_existing_printer or None,
+            dropdown=True,
         )
 
         def load_system_printers(_=None) -> None:
@@ -408,18 +410,21 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
             choices=[("kitchen", "مطبخ / تحضير"), ("receipt", "فاتورة")],
             value=str((section or {}).get("kind") or "kitchen"),
             allow_clear=False,
+            dropdown=True,
         )
         width_f = SearchSelect(
             label="عرض الورق",
             choices=[("80", "80 مم"), ("58", "58 مم")],
             value=str((section or {}).get("paper_width_mm") or 80),
             allow_clear=False,
+            dropdown=True,
         )
         encoding_f = SearchSelect(
             label="ترميز العربية",
             choices=[("cp1256", "Windows Arabic (cp1256)"), ("cp864", "Arabic DOS (cp864)"), ("cp850", "cp850")],
             value=str((section or {}).get("encoding") or "cp1256"),
             allow_clear=False,
+            dropdown=True,
         )
         fallback_f = SearchSelect(
             label="طابعة بديلة عند الفشل (اختياري)",
@@ -429,6 +434,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
                 if not section or int(s["id"]) != int(section["id"])
             ],
             value=str(section.get("fallback_section_id")) if section and section.get("fallback_section_id") else None,
+            dropdown=True,
         )
         active_f = ft.Switch(value=bool((section or {}).get("active", True)) if section else True, label="مفعّل")
         status = ft.Text("", size=11, color=Colors.DANGER)

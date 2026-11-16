@@ -217,6 +217,7 @@ class AdminCenter:
             value="accountant",
             choices=[(k, v) for k, v in ROLE_LABELS.items()],
             allow_clear=False,
+            dropdown=True,
         )
         users_grid = DataGrid(
             columns=[
@@ -2289,10 +2290,10 @@ class AdminCenter:
             value=theme_settings.schedule_enabled(sset),
         )
         theme_schedule_start_field = SearchSelect(
-            label="من الساعة", value=f"{_sched_start:02d}", choices=_hour_choices, allow_clear=False,
+            label="من الساعة", value=f"{_sched_start:02d}", choices=_hour_choices, allow_clear=False, dropdown=True,
         )
         theme_schedule_end_field = SearchSelect(
-            label="إلى الساعة", value=f"{_sched_end:02d}", choices=_hour_choices, allow_clear=False,
+            label="إلى الساعة", value=f"{_sched_end:02d}", choices=_hour_choices, allow_clear=False, dropdown=True,
         )
         theme_schedule_row = ft.Row(
             [theme_schedule_start_field, theme_schedule_end_field], spacing=10,
@@ -2950,6 +2951,7 @@ class AdminCenter:
                                     choices=appearance_settings.SHAPES,
                                     value=appearance_settings.shape(self.ctx.settings),
                                     allow_clear=False,
+                                    dropdown=True,
                                     on_change=lambda e: self._save_appearance(appearance_settings.set_shape, e.control.value),
                                 ),
                                 col={"xs": 12, "md": 4},
@@ -2960,6 +2962,7 @@ class AdminCenter:
                                     choices=appearance_settings.DENSITIES,
                                     value=appearance_settings.density(self.ctx.settings),
                                     allow_clear=False,
+                                    dropdown=True,
                                     on_change=lambda e: self._save_appearance(appearance_settings.set_density, e.control.value),
                                 ),
                                 col={"xs": 12, "md": 4},
@@ -2970,6 +2973,7 @@ class AdminCenter:
                                     choices=appearance_settings.CONTRASTS,
                                     value=appearance_settings.contrast(self.ctx.settings),
                                     allow_clear=False,
+                                    dropdown=True,
                                     on_change=lambda e: self._save_appearance(appearance_settings.set_contrast, e.control.value),
                                 ),
                                 col={"xs": 12, "md": 4},

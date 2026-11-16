@@ -479,6 +479,7 @@ class DataGrid(ft.Column):
             else:
                 self._range_anchor = None
             self._paint_selection()
+            self._notify_cell_selected()
 
     def _page_rows(self) -> int:
         page = self._page
@@ -914,6 +915,17 @@ class DataGrid(ft.Column):
             self._safe_update(self._body)
         return True
 
+    def _play_cue(self, kind: str) -> None:
+        """Best-effort sound cue for a grid interaction."""
+        if self._page is None:
+            return
+        try:
+            from nano_offline.core import sound
+
+            sound.play(self._page, kind)
+        except Exception:
+            pass
+
     def _notify_cell_edited(self) -> None:
         """Play the short 'cell commit' cue for a real edit (best-effort).
 
@@ -921,14 +933,15 @@ class DataGrid(ft.Column):
         wiring it; the picker path suppresses it separately (it plays the
         distinct 'pick' cue from the view instead).
         """
-        if self._page is None:
-            return
-        try:
-            from nano_offline.core import sound
+        self._play_cue("cell")
 
-            sound.play(self._page, "cell")
-        except Exception:
-            pass
+    def _notify_cell_selected(self) -> None:
+        """Short cue when the active cell moves (click / arrows / Enter / Tab)."""
+        self._play_cue("cell")
+
+    def _notify_line_added(self) -> None:
+        """Cue when a new blank row is appended to an editable grid."""
+        self._play_cue("line_add")
 
     def _restore_rows(self, snapshots: dict[int, dict]) -> None:
         changed: list[tuple[int, str, object]] = []
@@ -1331,6 +1344,7 @@ class DataGrid(ft.Column):
         self._render_body()
         self._safe_update(self._body)
         self._scroll_row_into_view(index)
+        self._notify_line_added()
         return index
 
     def remove_row(self, index: int) -> None:
@@ -1455,6 +1469,7 @@ class DataGrid(ft.Column):
             return
         self.nav.select(r, c)
         self._paint_selection()
+        self._notify_cell_selected()
 
     def disarm(self) -> None:
         """Stop handling navigation keys (e.g. while a view's search box has
@@ -1744,6 +1759,7 @@ class DataGrid(ft.Column):
         (editable grids only)."""
         if self.nav.tab(False):
             self._paint_selection()
+            self._notify_cell_selected()
             return
         if self.nav.editable_cols:
             self.add_row()
@@ -1752,6 +1768,7 @@ class DataGrid(ft.Column):
         """Step to the previous cell (Shift+Tab); stops at the very start."""
         if self.nav.tab(shift=True):
             self._paint_selection()
+            self._notify_cell_selected()
 
     def _cancel_edit(self) -> None:
         if self._edit_field is None:

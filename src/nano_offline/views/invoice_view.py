@@ -38,6 +38,7 @@ from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
+from nano_offline.core import privacy
 from nano_offline.core import restaurant_settings
 from nano_offline.core import sound
 from nano_offline.core.margin_guard import check_sale_margin
@@ -2256,6 +2257,9 @@ class InvoiceCenter:
             if col.key == "_avg_cost":
                 # The item's real weighted average cost (from its purchases and
                 # opening balance), read-only, shown in the display currency.
+                # Cost data is masked in safe mode before any formatting.
+                if privacy.hidden(self.ctx):
+                    return privacy.MASK_TEXT
                 item_row = item_map.get(int(row["item"])) if row.get("item") else None
                 try:
                     avg_cost = float((item_row or {}).get("average_cost") or 0)
@@ -2278,6 +2282,8 @@ class InvoiceCenter:
                 else:
                     cost_usd = price_usd
                 if col.key == "_extra_cost":
+                    if privacy.hidden(self.ctx):
+                        return privacy.MASK_TEXT
                     return _extra_text(cost_usd)
                 return _extra_text(qty * price_usd)
             if col.key == "item":
