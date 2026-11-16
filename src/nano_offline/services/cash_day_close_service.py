@@ -106,20 +106,37 @@ class CashDayCloseService:
                 ),
             )
             if post_adjustment and abs(variance) > 1e-6:
-                # Align book to counted: positive variance => debit CASH, negative => credit
+                # Align book to counted with a *balanced* pair so the trial
+                # balance survives the count. A surplus (counted > book) is
+                # other income (credit CASH_OVERAGE); a shortfall is other
+                # expense (debit CASH_SHORTAGE). Posting only the CASH side --
+                # as this used to do -- left debit != credit on every close.
+                amount = abs(float(variance))
                 if variance > 0:
                     conn.execute(
                         """INSERT INTO ledger_entries(
                                entry_date,account_code,debit,credit,source_type,source_id,description
                            ) VALUES(?,?,?,?, 'day_close', NULL, ?)""",
-                        (today, "CASH", abs(variance), 0.0, f"تسوية إغلاق يوم {today}"),
+                        (today, "CASH", amount, 0.0, f"فائض جرد الصندوق — إغلاق {today}"),
+                    )
+                    conn.execute(
+                        """INSERT INTO ledger_entries(
+                               entry_date,account_code,debit,credit,source_type,source_id,description
+                           ) VALUES(?,?,?,?, 'day_close', NULL, ?)""",
+                        (today, "CASH_OVERAGE", 0.0, amount, f"فائض جرد الصندوق — إغلاق {today}"),
                     )
                 else:
                     conn.execute(
                         """INSERT INTO ledger_entries(
                                entry_date,account_code,debit,credit,source_type,source_id,description
                            ) VALUES(?,?,?,?, 'day_close', NULL, ?)""",
-                        (today, "CASH", 0.0, abs(variance), f"تسوية إغلاق يوم {today}"),
+                        (today, "CASH_SHORTAGE", amount, 0.0, f"عجز جرد الصندوق — إغلاق {today}"),
+                    )
+                    conn.execute(
+                        """INSERT INTO ledger_entries(
+                               entry_date,account_code,debit,credit,source_type,source_id,description
+                           ) VALUES(?,?,?,?, 'day_close', NULL, ?)""",
+                        (today, "CASH", 0.0, amount, f"عجز جرد الصندوق — إغلاق {today}"),
                     )
                 payload["adjustment_posted"] = True
             else:

@@ -155,6 +155,11 @@ class StatementService:
         "COGS": ("تكلفة البضاعة", "debit"),
         "INVENTORY": ("المخزون", "debit"),
         "EXPENSE": ("المصروفات", "debit"),
+        # Cash-count variance accounts: a day close that posts an adjustment
+        # books the surplus as other income and the shortfall as other expense
+        # so every posting stays two-sided (see CashDayCloseService.close_day).
+        "CASH_OVERAGE": ("فائض جرد الصندوق", "credit"),
+        "CASH_SHORTAGE": ("عجز جرد الصندوق", "debit"),
     }
 
     @classmethod
@@ -167,9 +172,9 @@ class StatementService:
         One row per known account (zero rows included, as a real trial
         balance lists every account), each with its debit/credit totals and
         its balance on the account's normal side, plus grand totals and a
-        balanced flag. NOTE: day-close adjustments post single-sided CASH
-        lines, so a posted adjustment shows here honestly as a difference
-        instead of being silently absorbed.
+        balanced flag. A posted day-close adjustment is booked two-sided
+        (CASH against CASH_OVERAGE / CASH_SHORTAGE), so it keeps the trial
+        balance balanced instead of showing as a difference.
         """
         with self.db.connect() as conn:
             sums = {
