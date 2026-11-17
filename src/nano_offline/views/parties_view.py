@@ -15,7 +15,7 @@ from nano_offline.components import (
     empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn,
 )
 from nano_offline.components.column_visibility import ColumnVisibility
-from nano_offline.components.buttons import danger_button, primary_button, secondary_button
+from nano_offline.components.buttons import danger_button, danger_outline_button, primary_button, secondary_button
 from nano_offline.components import sheets
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
@@ -396,31 +396,165 @@ class PartyCenter:
                     return currency.parse_display_input(text, settings)
                 return (text or "").strip()
 
+            bulk_columns = [
+                GridColumn("name", "الاسم", editable=True),
+                GridColumn("phone", "الهاتف", width=120, editable=True),
+                GridColumn("address", "العنوان", width=170, editable=True),
+                GridColumn("opening", "الرصيد الافتتاحي", width=140, align="end", kind="money", editable=True),
+                GridColumn("side", "مدين/دائن", width=110, align="center", kind="picker", editable=True, sortable=False),
+                GridColumn("currency", "العملة", width=100, align="center", kind="picker", editable=True, sortable=False),
+                GridColumn("credit_limit", "سقف الائتمان", width=130, align="end", kind="money", editable=True),
+                GridColumn("notes", "ملاحظات", width=170, editable=True),
+                GridColumn("_status", "الحالة", width=90, align="center", kind="badge", sortable=False),
+            ]
+            bulk_density_state = {"compact": settings.get("ui.parties_bulk_density", "comfortable") == "compact"}
+            bulk_visibility = ColumnVisibility(
+                columns=bulk_columns,
+                settings=settings,
+                preference_key="ui.parties_bulk_hidden_columns",
+                on_change=lambda: (bulk_grid.set_hidden_keys(bulk_visibility.hidden_keys), page.update()),
+            )
+            bulk_columns_button = bulk_visibility.button()
+
             bulk_grid = DataGrid(
-                columns=[
-                    GridColumn("name", "الاسم", editable=True),
-                    GridColumn("phone", "الهاتف", width=120, editable=True),
-                    GridColumn("address", "العنوان", width=170, editable=True),
-                    GridColumn("opening", "الرصيد الافتتاحي", width=140, align="end", kind="money", editable=True),
-                    GridColumn("side", "مدين/دائن", width=110, align="center", kind="picker", editable=True, sortable=False),
-                    GridColumn("currency", "العملة", width=100, align="center", kind="picker", editable=True, sortable=False),
-                    GridColumn("credit_limit", "سقف الائتمان", width=130, align="end", kind="money", editable=True),
-                    GridColumn("notes", "ملاحظات", width=170, editable=True),
-                    GridColumn("_status", "الحالة", width=90, align="center", kind="badge", sortable=False),
-                ],
-                rows=[], page=page, row_height=44, center_cells=True,
+                columns=bulk_columns,
+                rows=[], page=page, row_height=36 if bulk_density_state["compact"] else 48, center_cells=True,
+                hidden_keys=bulk_visibility.hidden_keys,
                 formatter=formatter, edit_formatter=edit_text, parser=parse,
                 picker_options=lambda col, _row: (
                     [("debit", "مدين (عليه)"), ("credit", "دائن (له)")] if col.key == "side"
                     else [("", "موروثة"), ("SYP", "ل.س"), ("USD", "$")] if col.key == "currency"
                     else []
                 ),
+                on_sort=lambda key, direction: apply_bulk_sort(key, direction),
+                on_row_menu=lambda row: bulk_row_menu(row),
+                selectable=True,
+                on_selection_change=lambda rows: render_bulk_selection(rows),
                 empty_text="اضغط «سطر جديد» لإدخال طرف",
             )
             batch_date = SmartDateField(label="تاريخ الأرصدة الافتتاحية", value=date.today().isoformat())
+            bulk_bar = ft.Container(visible=False)
 
             def add_blank(_=None):
                 bulk_grid.add_row(dict(row_defaults))
+                refresh_bulk_footer()
+
+            def duplicate_rows(rows: list[dict]) -> None:
+                for row in rows:
+                    bulk_grid.add_row({k: v for k, v in row.items() if k != "_status"})
+                if rows:
+                    refresh_bulk_footer()
+
+            def delete_row(target: dict) -> None:
+                for index, row in enumerate(bulk_grid.rows):
+                    if row == target:
+                        bulk_grid.remove_row(index)
+                        break
+                refresh_bulk_footer()
+
+            def bulk_row_menu(row: dict) -> list:
+                return [
+                    ("تكرار الصف", ft.Icons.CONTENT_COPY_OUTLINED, lambda r=row: duplicate_rows([dict(r)])),
+                    ("حذف الصف", ft.Icons.DELETE_OUTLINE, lambda r=row: delete_row(r)),
+                ]
+
+            def remove_selected_rows() -> None:
+                selected = bulk_grid.selected_rows()
+                if not selected:
+                    return
+                rows_now = bulk_grid.rows
+                doomed: list[int] = []
+                for wanted in selected:
+                    for index, row in enumerate(rows_now):
+                        if index not in doomed and row == wanted:
+                            doomed.append(index)
+                            break
+                for index in sorted(doomed, reverse=True):
+                    bulk_grid.remove_row(index)
+                refresh_bulk_footer()
+
+            def render_bulk_selection(rows: list[dict]) -> None:
+                if not rows:
+                    bulk_bar.visible = False
+                    bulk_bar.content = None
+                else:
+                    bulk_bar.content = ft.Row(
+                        [
+                            ft.Icon(ft.Icons.CHECK_BOX, size=16, color=Colors.PRIMARY),
+                            ft.Text(f"تم تحديد {len(rows)} صف", size=12, weight=ft.FontWeight.W_600, color=Colors.PRIMARY_DARK),
+                            secondary_button("تكرار المحدد", icon=ft.Icons.CONTENT_COPY_OUTLINED, on_click=lambda _=None: duplicate_rows(list(rows)), width=None, size="md"),
+                            danger_outline_button("حذف المحدد", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _=None: remove_selected_rows(), width=None, size="md"),
+                            ft.TextButton("إلغاء التحديد", on_click=lambda _=None: bulk_grid.clear_selection()),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                    bulk_bar.visible = True
+                try:
+                    bulk_bar.update()
+                except Exception:
+                    pass
+
+            def apply_bulk_sort(key, direction) -> None:
+                if key:
+                    def sort_value(row: dict):
+                        value = row.get(key)
+                        if key in ("opening", "credit_limit"):
+                            try:
+                                return float(value or 0)
+                            except (TypeError, ValueError):
+                                return 0.0
+                        return str(value or "")
+                    bulk_grid.set_rows(sorted(bulk_grid.rows, key=sort_value, reverse=direction == "desc"))
+                refresh_bulk_footer()
+
+            def refresh_bulk_footer() -> None:
+                rows = bulk_grid.rows
+                if not rows:
+                    bulk_grid.set_footer(None)
+                    return
+                ready = sum(1 for row in rows if str(row.get("name") or "").strip())
+                opening_usd = sum(float(row.get("opening") or 0) for row in rows if str(row.get("name") or "").strip())
+                credit_usd = sum(float(row.get("credit_limit") or 0) for row in rows if str(row.get("name") or "").strip())
+                bulk_grid.set_footer({
+                    "name": f"{ready} جاهز من {len(rows)} صف",
+                    "opening": self.money(opening_usd, field="price") if opening_usd else "",
+                    "credit_limit": self.money(credit_usd, field="price") if credit_usd else "",
+                })
+
+            def bulk_toggle_density(_=None) -> None:
+                compact = not bulk_density_state["compact"]
+                bulk_density_state["compact"] = compact
+                bulk_grid.set_row_height(36 if compact else 48)
+                bulk_density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+                bulk_density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+                settings.set("ui.parties_bulk_density", "compact" if compact else "comfortable")
+                page.update()
+
+            async def bulk_export_csv(_=None) -> None:
+                rows = [row for row in bulk_grid.rows if str(row.get("name") or "").strip()]
+                if not rows:
+                    notify("لا توجد صفوف جاهزة للتصدير", kind="warning")
+                    return
+                if self.native_files is None:
+                    notify("تصدير الملفات غير مهيأ في هذا البناء", kind="error")
+                    return
+                try:
+                    path = Path(tempfile.gettempdir()) / f"nano_{repo.table}_bulk_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                    with open(path, "w", encoding="utf-8-sig", newline="") as handle:
+                        writer = _csv.writer(handle)
+                        writer.writerow(["الاسم", "الهاتف", "العنوان", "الرصيد الافتتاحي", "مدين/دائن", "العملة", "سقف الائتمان", "ملاحظات"])
+                        for row in rows:
+                            writer.writerow([
+                                row.get("name") or "", row.get("phone") or "", row.get("address") or "",
+                                row.get("opening") or 0,
+                                "مدين" if str(row.get("side") or default_side) == "debit" else "دائن",
+                                {"": "موروثة", "SYP": "ل.س", "USD": "$"}.get(str(row.get("currency") or ""), "موروثة"),
+                                row.get("credit_limit") or 0, row.get("notes") or "",
+                            ])
+                    await self.native_files.share_file(str(path), mime_type="text/csv", subject=f"تصدير {title}")
+                    notify("تم تجهيز ملف CSV")
+                except Exception as exc:
+                    notify(str(exc), kind="error")
 
             def save_all(_=None):
                 rows = [r for r in bulk_grid.rows if str(r.get("name") or "").strip()]
@@ -452,9 +586,18 @@ class PartyCenter:
                 notify(f"تمت إضافة {created} {singular}", sound_kind="save")
 
             bulk_grid.add_row(dict(row_defaults))
+            refresh_bulk_footer()
             add_btn = secondary_button("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank, width=None, size="md")
             save_btn = primary_button("حفظ الكل", icon=ft.Icons.SAVE_OUTLINED, on_click=save_all, width=None, size="md")
             cancel_btn = secondary_button("إلغاء", icon=ft.Icons.CLOSE, on_click=close, width=None, size="md")
+            bulk_density_button = ft.IconButton(
+                icon=ft.Icons.DENSITY_SMALL if bulk_density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
+                tooltip="عرض مريح" if bulk_density_state["compact"] else "عرض مضغوط",
+                on_click=bulk_toggle_density,
+            )
+            bulk_export_button = ft.IconButton(
+                icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, tooltip="تصدير الصفوف الجاهزة CSV", on_click=bulk_export_csv,
+            )
             sheet.content = ft.Container(
                 ft.Column(
                     [
@@ -467,17 +610,22 @@ class PartyCenter:
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         ft.Text(
-                            "أضف عدة أطراف دفعة واحدة: أدخل الاسم والرصيد الافتتاحي (مدين/دائن) والعملة وسقف الائتمان، ثم احفظ الكل.",
+                            "أضف عدة أطراف دفعة واحدة: الاسم والرصيد الافتتاحي (مدين/دائن) والعملة وسقف الائتمان، ثم احفظ الكل. "
+                            "تجاهل الحفظ الصفوف بلا اسم.",
                             size=11, color=Colors.TEXT_SECONDARY,
                         ),
                         # Plain Rows (NOT wrap): a wrapping Row cannot host the
-                        # expand spacers below -- Flutter renders a blank grey
-                        # box over the whole area when it can't lay it out.
-                        ft.Row([ft.Container(batch_date, width=220), add_btn, ft.Container(expand=True)],
-                               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        # expand spacers -- Flutter renders a blank grey box over
+                        # the whole area when it can't lay it out.
+                        ft.Row(
+                            [ft.Container(batch_date, width=220), add_btn, ft.Container(expand=True),
+                             bulk_columns_button, bulk_density_button, bulk_export_button],
+                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        bulk_bar,
+                        ft.Container(bulk_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE),
                         ft.Row([ft.Container(expand=True), cancel_btn, save_btn],
                                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        ft.Container(bulk_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE),
                     ],
                     spacing=10, expand=True,
                 ),
