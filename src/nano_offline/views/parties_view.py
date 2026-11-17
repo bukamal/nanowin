@@ -279,8 +279,8 @@ class PartyCenter:
             )
             party_curr = SearchSelect(
                 label="عملة التعامل",
-                choices=[("", "موروثة (عملة العرض)"), ("SYP", "ليرة سورية (ل.س)"), ("USD", "دولار أمريكي ($)")],
-                value=str((party or {}).get("currency") or ""), allow_clear=False, dropdown=True,
+                choices=[("inherit", "موروثة (عملة العرض)"), ("SYP", "ليرة سورية (ل.س)"), ("USD", "دولار أمريكي ($)")],
+                value=str((party or {}).get("currency") or "inherit"), allow_clear=False, dropdown=True,
             )
             credit = SmartAmountField(
                 label=currency.amount_field_label("سقف الائتمان (اختياري)", settings),
@@ -300,7 +300,7 @@ class PartyCenter:
                     "address": address.value,
                     "opening_balance": _natural_from(magnitude, side.value or default_side),
                     "opening_balance_date": (opening_date.value or date.today().isoformat()),
-                    "currency": party_curr.value or "",
+                    "currency": "" if (party_curr.value in (None, "inherit")) else party_curr.value,
                     "credit_limit": max(0.0, currency.parse_display_input(credit.value, settings)),
                     "notes": notes.value,
                 }
@@ -347,7 +347,7 @@ class PartyCenter:
             existing_names = {str(p.get("name") or "").strip().casefold() for p in repo.list()}
             row_defaults = {
                 "name": "", "phone": "", "address": "", "opening": 0.0,
-                "side": default_side, "currency": "", "credit_limit": 0.0, "notes": "",
+                "side": default_side, "currency": "inherit", "credit_limit": 0.0, "notes": "",
             }
             page_w = int(page.width or 1280)
             page_h = int(page.height or 800)
@@ -376,7 +376,7 @@ class PartyCenter:
                 if col.key == "side":
                     return "مدين" if str(value or default_side) == "debit" else "دائن"
                 if col.key == "currency":
-                    return {"": "موروثة", "SYP": "ل.س", "USD": "$"}.get(str(value or ""), "موروثة")
+                    return {"inherit": "موروثة", "": "موروثة", "SYP": "ل.س", "USD": "$"}.get(str(value or ""), "موروثة")
                 if col.key == "_status":
                     n = str(row.get("name") or "").strip()
                     if not n:
@@ -423,7 +423,7 @@ class PartyCenter:
                 formatter=formatter, edit_formatter=edit_text, parser=parse,
                 picker_options=lambda col, _row: (
                     [("debit", "مدين (عليه)"), ("credit", "دائن (له)")] if col.key == "side"
-                    else [("", "موروثة"), ("SYP", "ل.س"), ("USD", "$")] if col.key == "currency"
+                    else [("inherit", "موروثة"), ("SYP", "ل.س"), ("USD", "$")] if col.key == "currency"
                     else []
                 ),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
@@ -548,7 +548,7 @@ class PartyCenter:
                                 row.get("name") or "", row.get("phone") or "", row.get("address") or "",
                                 row.get("opening") or 0,
                                 "مدين" if str(row.get("side") or default_side) == "debit" else "دائن",
-                                {"": "موروثة", "SYP": "ل.س", "USD": "$"}.get(str(row.get("currency") or ""), "موروثة"),
+                                {"inherit": "موروثة", "": "موروثة", "SYP": "ل.س", "USD": "$"}.get(str(row.get("currency") or ""), "موروثة"),
                                 row.get("credit_limit") or 0, row.get("notes") or "",
                             ])
                     await self.native_files.share_file(str(path), mime_type="text/csv", subject=f"تصدير {title}")
@@ -567,11 +567,12 @@ class PartyCenter:
                     party_name = str(row.get("name") or "").strip()
                     try:
                         natural = _natural_from(float(row.get("opening") or 0), str(row.get("side") or default_side))
+                        row_currency = str(row.get("currency") or "inherit")
                         repo.create(
                             party_name, str(row.get("phone") or ""), str(row.get("address") or ""),
                             opening_balance=natural,
                             opening_balance_date=(batch_date.value or date.today().isoformat()),
-                            currency=str(row.get("currency") or ""),
+                            currency="" if row_currency in ("", "inherit") else row_currency,
                             credit_limit=max(0.0, float(row.get("credit_limit") or 0)),
                             notes=str(row.get("notes") or ""),
                         )

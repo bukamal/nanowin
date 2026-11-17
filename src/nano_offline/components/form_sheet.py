@@ -47,11 +47,15 @@ def wire_enter_navigation(fields: Iterable[ft.Control], on_last_submit: Callable
     the editable grids: advance one field at a time, commit on the last.
     """
     text_fields = [field for control in fields for field in _iter_text_fields(control)]
-    for index, field in enumerate(text_fields):
+    # Multiline fields consume Enter to insert a newline (Flutter never fires
+    # on_submit for them), so they must not join the advance chain -- otherwise
+    # Enter dead-ends there and the fields after it look unreachable.
+    chain = [field for field in text_fields if not getattr(field, "multiline", False)]
+    for index, field in enumerate(chain):
         if getattr(field, "on_submit", None) is not None:
             continue
-        if index + 1 < len(text_fields):
-            target = text_fields[index + 1]
+        if index + 1 < len(chain):
+            target = chain[index + 1]
             field.on_submit = lambda _e, target=target: target.focus()
         else:
             field.on_submit = lambda _e, callback=on_last_submit: callback(None)

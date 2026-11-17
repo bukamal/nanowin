@@ -16,7 +16,7 @@ from nano_offline.components.form_sheet import render_form_sheet
 from nano_offline.components.print_profile import (
     apply_print_profile,
     open_print_profile_dialog,
-    save_print_layout,
+    preview_document,
     saved_print_profile,
 )
 from nano_offline.components.buttons import hero_button, stepper_icon_button
@@ -607,31 +607,6 @@ class POSCenter:
         received_display = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD)
         change_text = ft.Text("الباقي: 0.00", size=16, weight=ft.FontWeight.BOLD, color=Colors.SUCCESS_DARK)
         auto_print_switch = ft.Switch(label="طباعة تلقائية بعد الدفع", value=pos_settings.auto_print_default(self.ctx.settings), scale=0.85)
-        saved_layout, _saved_roll_width = saved_print_profile(self.ctx.settings, surface="pos")
-        print_layout_toggle = SegmentedToggle(
-            options=[
-                SegmentOption("sheet", "ورق A4", ft.Icons.DESCRIPTION_OUTLINED),
-                SegmentOption("roll", "حراري", ft.Icons.RECEIPT_LONG_OUTLINED),
-            ],
-            value=saved_layout,
-        )
-
-        def persist_print_layout(_=None):
-            try:
-                save_print_layout(self.ctx.settings, "pos", print_layout_toggle.value or "sheet")
-            except Exception:
-                pass
-
-        print_layout_toggle.on_change = persist_print_layout
-        print_layout_block = ft.Column(
-            [
-                ft.Text("نوع الطباعة", size=12, weight=ft.FontWeight.W_600),
-                print_layout_toggle,
-                ft.Text("يُحفظ لنقطة البيع فقط.", size=10, color=Colors.TEXT_FAINT),
-            ],
-            spacing=6,
-            tight=True,
-        )
 
         checkout_btn = hero_button("دفع", icon=ft.Icons.PAYMENTS_OUTLINED)
 
@@ -1376,6 +1351,14 @@ class POSCenter:
                 _sync_received_display()
                 self.page.update()
 
+            def _key_sep(_=None) -> None:
+                digits = self.received_digits or ""
+                if "." in digits:
+                    return
+                self.received_digits = (digits + ".") if digits else "0."
+                _sync_received_display()
+                self.page.update()
+
             def _key_btn(label: str, handler) -> ft.Control:
                 return ft.Container(
                     ft.Text(label, size=18, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
@@ -1388,7 +1371,8 @@ class POSCenter:
 
             # A wide, low two-row keypad that spans the sheet instead of
             # stacking four tall rows. Hidden by default; a button inside the
-            # sheet reveals it, so the payment sheet stays compact.
+            # sheet reveals it, so the payment sheet stays compact. The second
+            # row carries a decimal-separator key so cents (USD) can be typed.
             keypad = ft.Column(
                 [
                     ft.Row(
@@ -1397,7 +1381,7 @@ class POSCenter:
                     ),
                     ft.Row(
                         [_key_btn(str(n), (lambda d=n: _key_digit(str(d)))) for n in (7, 8, 9, 0)]
-                        + [_key_btn("C", _key_clear), _key_btn("⌫", _key_back)],
+                        + [_key_btn(".", _key_sep), _key_btn("⌫", _key_back)],
                         spacing=6,
                     ),
                 ],
@@ -1420,6 +1404,57 @@ class POSCenter:
                 icon_color=Colors.PRIMARY,
                 on_click=toggle_keypad,
             )
+            clear_btn = ft.IconButton(
+                icon=ft.Icons.CLEAR, tooltip="مسح المبلغ", icon_color=Colors.TEXT_SECONDARY, on_click=_key_clear,
+            )
+
+            def _cart_preview_html() -> str:
+                from nano_offline.core import branding
+
+                rows_list = [self.cart[key] for key in self.cart_order if key in self.cart]
+                lines_html = "".join(
+                    "<tr>"
+                    f"<td>{row['item'].get('name', '')}</td>"
+                    f"<td style='text-align:center'>{self._qty(row.get('qty'))}</td>"
+                    f"<td style='text-align:left'>{self._money_receive(_cart_line_price(row) * float(row.get('qty') or 0))}</td>"
+                    "</tr>"
+                    for row in rows_list
+                )
+                return (
+                    "<html dir='rtl'><head><meta charset='utf-8'></head>"
+                    "<body style='font-family:Cairo,Segoe UI,Tahoma,Arial,sans-serif;padding:6px;direction:rtl'>"
+                    f"<h3 style='text-align:center;margin:4px 0'>{branding.APP_BRAND}</h3>"
+                    "<div style='text-align:center;font-size:11px;color:#64748B'>معاينة قبل الطباعة</div>"
+                    "<table style='width:100%;font-size:12px;border-collapse:collapse'>"
+                    "<thead><tr><th style='text-align:right'>المادة</th><th>الكمية</th>"
+                    "<th style='text-align:left'>الإجمالي</th></tr></thead>"
+                    f"<tbody>{lines_html}</tbody></table>"
+                    f"<hr><div style='font-size:16px;font-weight:bold;text-align:left'>الإجمالي: {self._money_receive(total_amount())}</div>"
+                    "</body></html>"
+                )
+
+            async def _preview_confirm(layout: str, width: int) -> None:
+                try:
+                    await preview_document(
+                        self.native_files, _cart_preview_html(),
+                        name="nano-pos-preview", layout=layout, roll_width_mm=width,
+                    )
+                except Exception as exc:
+                    self.notify(f"تعذرت المعاينة: {exc}", kind="warning")
+
+            def open_print_preview(_=None) -> None:
+                if self.native_files is None:
+                    self.notify("المعاينة غير مهيأة في هذا البناء", kind="warning")
+                    return
+                open_print_profile_dialog(
+                    self.page, self.ctx.settings, _preview_confirm,
+                    title="معاينة الطباعة", surface="pos", native_files=self.native_files,
+                    preview_builder=lambda _layout, _width: _cart_preview_html(),
+                )
+
+            preview_btn = ft.TextButton(
+                "معاينة قبل الطباعة", icon=ft.Icons.VISIBILITY_OUTLINED, on_click=open_print_preview,
+            )
 
             body.controls = [
                 ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
@@ -1427,7 +1462,7 @@ class POSCenter:
                 ft.Container(height=4),
                 currency_toggle_row,
                 ft.Row(
-                    [ft.Container(received_display, expand=True), keypad_toggle],
+                    [ft.Container(received_display, expand=True), clear_btn, keypad_toggle],
                     spacing=6,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
@@ -1453,8 +1488,10 @@ class POSCenter:
                 customer_insight,
                 recent_customers_row(),
                 ft.Divider(height=1, color=Colors.BORDER),
-                auto_print_switch,
-                print_layout_block,
+                ft.Row(
+                    [auto_print_switch, ft.Container(expand=True), preview_btn],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 ft.Row(
                     [
                         ft.OutlinedButton("إلغاء", on_click=lambda _: self.page.close(payment_sheet), height=SIZES["cta"]),
@@ -1940,10 +1977,10 @@ class POSCenter:
         )
         checkout_btn.expand = True
 
-        # Cart header: the title is centred at the top of the cart container,
-        # with the count/actions pinned to the sides behind it (Stack so the
-        # centred title sits over the empty middle of the controls row).
-        cart_header = ft.Stack(
+        # Cart header: the title sits on its own centred line at the top of
+        # the cart container; the count + action buttons run below it (a Stack
+        # used to overlap the title with the icons, tangling the two).
+        cart_header = ft.Column(
             [
                 ft.Row(
                     [ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD)],
@@ -1959,12 +1996,10 @@ class POSCenter:
                         hold_btn,
                         undo_btn,
                     ],
-                    left=0,
-                    right=0,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
             ],
-            alignment=ft.alignment.center,
+            spacing=4, tight=True,
         )
         cart_pane = ft.Container(
             ft.Column(

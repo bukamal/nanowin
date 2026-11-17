@@ -23,11 +23,15 @@ class StatementService:
 
             before_sql = "SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries WHERE party_type=? AND party_id=? AND account_code=?"
             params: list[object] = [party_type, party_id, account]
+            # Opening balances are a starting balance, never a period movement:
+            # always fold them into the opening figure (and exclude them from
+            # the rows below) so a statement never shows the opening inside the
+            # period's closing total.
             if date_from:
-                before_sql += " AND entry_date<?"
+                before_sql += " AND (source_type='opening' OR entry_date<?)"
                 params.append(date_from)
             else:
-                before_sql += " AND 1=0"
+                before_sql += " AND source_type='opening'"
             raw_opening = float(conn.execute(before_sql, params).fetchone()[0])
             opening = raw_opening if sign == 1 else -raw_opening
 
@@ -53,7 +57,8 @@ class StatementService:
                      FROM ledger_entries le
                      LEFT JOIN invoices i ON le.source_type='invoice' AND i.id=le.source_id
                      LEFT JOIN payments p ON le.source_type='payment' AND p.id=le.source_id
-                     WHERE le.party_type=? AND le.party_id=? AND le.account_code=?"""
+                     WHERE le.party_type=? AND le.party_id=? AND le.account_code=?
+                       AND le.source_type<>'opening'"""
             row_params: list[object] = [party_type, party_id, account]
             if date_from:
                 sql += " AND le.entry_date>=?"
@@ -139,6 +144,7 @@ class StatementService:
             "payment": "دفعة",
             "expense": "مصروف",
             "day_close": "تسوية",
+            "opening": "رصيد افتتاحي",
         }.get(str(source_type), str(source_type))
 
     # General-ledger account registry: every account_code the rebuilder and

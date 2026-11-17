@@ -26,6 +26,49 @@ from nano_offline.core.home_widget import refresh_home_widget
 
 # Compatibility terminology: «سند دفع» هو نفسه «سند صرف» في الإصدارات السابقة.
 
+
+def _grid_density_button(page, settings, grid, key: str) -> ft.IconButton:
+    """A persisted density toggle that resizes one finance grid's rows.
+
+    Brings the read-only finance tables in line with the list grids elsewhere
+    (vouchers/expenses/invoices) which already expose comfortable/compact.
+    """
+    compact = {"v": settings.get(f"ui.finance_{key}_density", "comfortable") == "compact"}
+    button = ft.IconButton(
+        icon=ft.Icons.DENSITY_SMALL if compact["v"] else ft.Icons.DENSITY_MEDIUM,
+        tooltip="عرض مريح" if compact["v"] else "عرض مضغوط",
+    )
+
+    def apply() -> None:
+        grid.set_row_height(36 if compact["v"] else 48)
+        button.icon = ft.Icons.DENSITY_SMALL if compact["v"] else ft.Icons.DENSITY_MEDIUM
+        button.tooltip = "عرض مريح" if compact["v"] else "عرض مضغوط"
+
+    def toggle(_=None) -> None:
+        compact["v"] = not compact["v"]
+        apply()
+        settings.set(f"ui.finance_{key}_density", "compact" if compact["v"] else "comfortable")
+        page.update()
+
+    button.on_click = toggle
+    apply()
+    return button
+
+
+def _grid_columns_button(page, settings, grid, columns, key: str) -> ft.Control:
+    """A persisted show/hide-columns menu wired to one finance grid."""
+    visibility = ColumnVisibility(
+        columns=columns,
+        settings=settings,
+        preference_key=f"ui.finance_{key}_hidden_columns",
+        on_change=lambda: (grid.set_hidden_keys(visibility.hidden_keys), page.update()),
+    )
+    try:
+        grid.set_hidden_keys(visibility.hidden_keys)
+    except Exception:
+        pass
+    return visibility.button()
+
 # Desktop grid columns for the vouchers screen (قبض/دفع). Both the
 # allocated and unallocated shares are shown side by side so the
 # "على الحساب" leftovers that need follow-up are one glance away.
@@ -208,7 +251,9 @@ class FinanceCenter:
         )
 
     def _summary_toggle(self, summary: ft.Control) -> ft.OutlinedButton:
-        visible = {"value": self.ctx.settings.get("ui.finance_summary_visible", "true").strip().lower() in ("1", "true", "yes", "on")}
+        # Finance summaries start hidden so the tables get the space; a tap
+        # reveals them. (Was default-visible, which buried the grids.)
+        visible = {"value": self.ctx.settings.get("ui.finance_summary_visible", "false").strip().lower() in ("1", "true", "yes", "on")}
         summary.visible = visible["value"]
 
         def toggle(_=None):
@@ -272,6 +317,7 @@ class FinanceCenter:
             kpi_card("مصروفات تستحق المراجعة", str(len(anomalies["anomalies"])),
                      ft.Icons.TRENDING_UP, Colors.ORANGE),
         ], spacing=8)
+        summary_toggle = self._summary_toggle(summary)
 
         collection_grid = DataGrid(
             columns=COLLECTION_GRID_COLUMNS,
@@ -499,6 +545,7 @@ class FinanceCenter:
                     ft.Row(
                         [ft.Text(f"ملخص حتى {today}", color=Colors.TEXT_SECONDARY),
                          ft.Container(expand=True),
+                         summary_toggle,
                          ft.OutlinedButton("تصدير المؤشرات", icon=ft.Icons.DOWNLOAD_OUTLINED, on_click=export_finance_snapshot),
                          primary_button("مطابقة وإغلاق الصندوق", icon=ft.Icons.CHECK_CIRCLE_OUTLINE, on_click=close_cash_day)],
                         spacing=10,
@@ -511,16 +558,35 @@ class FinanceCenter:
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
             shadow=Shadow.SM,
         )
+        collection_tools = (
+            _grid_columns_button(self.page, self.ctx.settings, collection_grid, COLLECTION_GRID_COLUMNS, "collections"),
+            _grid_density_button(self.page, self.ctx.settings, collection_grid, "collections"),
+        )
+        commitment_tools = (
+            _grid_columns_button(self.page, self.ctx.settings, commitment_grid, COMMITMENT_GRID_COLUMNS, "commitments"),
+            _grid_density_button(self.page, self.ctx.settings, commitment_grid, "commitments"),
+        )
+        anomaly_tools = (
+            _grid_columns_button(self.page, self.ctx.settings, anomaly_grid, ANOMALY_GRID_COLUMNS, "anomalies"),
+            _grid_density_button(self.page, self.ctx.settings, anomaly_grid, "anomalies"),
+        )
+
+        def _grid_title(label: str, tools) -> ft.Control:
+            return ft.Row(
+                [ft.Text(label, size=15, weight=ft.FontWeight.BOLD), ft.Container(expand=True), *tools],
+                spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
         body = ft.Column(
             [
                 summary,
-                ft.Text("أولوية التحصيل", size=15, weight=ft.FontWeight.BOLD),
+                _grid_title("أولوية التحصيل", collection_tools),
                 ft.Text("الترتيب حسب الفواتير المتأخرة الفعلية وتاريخ الاستحقاق المحفوظ؛ غير المحدد لا يُعد متأخرًا.", size=11, color=Colors.TEXT_SECONDARY),
                 collection_grid,
-                ft.Text("الالتزامات والاستحقاقات", size=15, weight=ft.FontWeight.BOLD),
+                _grid_title("الالتزامات والاستحقاقات", commitment_tools),
                 ft.Text(dated_note, size=11, color=Colors.TEXT_SECONDARY),
                 commitment_grid,
-                ft.Text("مصروفات أعلى من المعتاد", size=15, weight=ft.FontWeight.BOLD),
+                _grid_title("مصروفات أعلى من المعتاد", anomaly_tools),
                 ft.Text(
                     f"مقارنة الشهر حتى اليوم بمتوسط {anomalies['baseline_months']} أشهر سابقة مع مراعاة الأيام المنقضية. "
                     "إشارة للمراجعة وليست حكمًا بوجود خطأ.",
@@ -1852,6 +1918,8 @@ class FinanceCenter:
         date_to = SmartDateField(label="إلى تاريخ", hint_text="YYYY-MM-DD")
         result = ft.Column(spacing=8)
         export_actions = ft.Row(visible=False, wrap=True)
+        statement_summary = ft.Container()
+        statement_summary_button = self._summary_toggle(statement_summary)
         statement_rows: list[dict] = []
         export_rows: list[dict] = []
         sort_state = {"key": None, "direction": None}
@@ -1903,6 +1971,11 @@ class FinanceCenter:
                 self.money(value) if col.kind == "money"
                 else str(value or row.get("source_label") or "—")
             ),
+        )
+
+        statement_tools = (
+            _grid_columns_button(self.page, self.ctx.settings, statement_grid, PARTY_STATEMENT_GRID_COLUMNS, "statement"),
+            _grid_density_button(self.page, self.ctx.settings, statement_grid, "statement"),
         )
 
         async def export_statement_csv(_=None):
@@ -1995,6 +2068,8 @@ class FinanceCenter:
             ft.OutlinedButton("طباعة الكشف", icon=ft.Icons.PRINT_OUTLINED, on_click=print_statement),
             ft.OutlinedButton("مشاركة PDF", icon=ft.Icons.PICTURE_AS_PDF_OUTLINED, on_click=share_statement_pdf),
             ft.OutlinedButton("تصدير CSV", icon=ft.Icons.DOWNLOAD_OUTLINED, on_click=export_statement_csv),
+            statement_summary_button,
+            *statement_tools,
         ]
 
         def render(_=None):
@@ -2011,15 +2086,14 @@ class FinanceCenter:
                     date_to=(date_to.value or "").strip() or None,
                 )
                 export_actions.visible = True
-                result.controls.append(
-                    metric_row([
-                        kpi_card("رصيد نهاية الفترة", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=data["closing_balance"], settings=self.ctx.settings),
-                        kpi_card("رصيد بداية الفترة", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings),
-                        kpi_card("إجمالي المدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=data["debit_total"], settings=self.ctx.settings),
-                        kpi_card("إجمالي الدائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=data["credit_total"], settings=self.ctx.settings),
-                        kpi_card("فواتير مفتوحة", str(len(data["open_invoices"])), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.ORANGE),
-                    ])
-                )
+                statement_summary.content = metric_row([
+                    kpi_card("رصيد نهاية الفترة", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY, amount_usd=data["closing_balance"], settings=self.ctx.settings),
+                    kpi_card("رصيد بداية الفترة", "", ft.Icons.HISTORY_OUTLINED, Colors.PURPLE, amount_usd=data["opening_balance"], settings=self.ctx.settings),
+                    kpi_card("إجمالي المدين", "", ft.Icons.ARROW_DOWNWARD, Colors.PRIMARY, amount_usd=data["debit_total"], settings=self.ctx.settings),
+                    kpi_card("إجمالي الدائن", "", ft.Icons.ARROW_UPWARD, Colors.PURPLE, amount_usd=data["credit_total"], settings=self.ctx.settings),
+                    kpi_card("فواتير مفتوحة", str(len(data["open_invoices"])), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.ORANGE),
+                ])
+                result.controls.append(statement_summary)
                 statement_rows[:] = list(data["rows"])
                 export_rows[:] = list(statement_rows)
                 if sort_state["key"]:
@@ -2190,6 +2264,14 @@ class FinanceCenter:
                 else str(value or row.get("party_name") or "—")
             ),
         )
+        trial_tools = (
+            _grid_columns_button(self.page, self.ctx.settings, trial_grid, TRIAL_BALANCE_GRID_COLUMNS, "trial"),
+            _grid_density_button(self.page, self.ctx.settings, trial_grid, "trial"),
+        )
+        ledger_tools = (
+            _grid_columns_button(self.page, self.ctx.settings, ledger_grid, LEDGER_GRID_COLUMNS, "ledger"),
+            _grid_density_button(self.page, self.ctx.settings, ledger_grid, "ledger"),
+        )
         export_button = ft.OutlinedButton("تصدير CSV", icon=ft.Icons.DOWNLOAD_OUTLINED)
 
         async def export_ledger(_=None):
@@ -2308,6 +2390,8 @@ class FinanceCenter:
                             ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_period("month")),
                             ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_period("30")),
                             ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
+                            *trial_tools,
+                            *ledger_tools,
                             export_button,
                             ft.FilledButton("عرض", icon=ft.Icons.SEARCH, on_click=render_from_filters),
                         ],

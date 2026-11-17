@@ -646,6 +646,39 @@ class InvoiceCenter:
             body=body,
         )
 
+    def _open_create_party_dialog(self, is_sale: bool, on_created) -> None:
+        """Quick-create a customer/supplier from an invoice sheet.
+
+        Mirrors the POS payment sheet's "+" button: a small name/phone form
+        that creates the party and hands its id back to the caller to select.
+        """
+        repo = self.ctx.customers if is_sale else self.ctx.suppliers
+        title = "عميل جديد" if is_sale else "مورد جديد"
+        name_field = SelectAllTextField(label="الاسم *", autofocus=True)
+        phone_field = SelectAllTextField(label="الهاتف (اختياري)", keyboard_type=ft.KeyboardType.PHONE)
+        sheet = new_form_sheet()
+
+        def close(_=None):
+            self.page.close(sheet)
+
+        def save(_=None):
+            name = (name_field.value or "").strip()
+            if not name:
+                self.notify("الاسم مطلوب", kind="error")
+                return
+            try:
+                party_id = int(repo.create(name, (phone_field.value or "").strip()))
+            except Exception as exc:
+                self.notify(str(exc), kind="error")
+                return
+            close()
+            self.notify(f"تمت إضافة {'العميل' if is_sale else 'المورد'}", sound_kind="save")
+            if on_created:
+                on_created(party_id)
+
+        render_form_sheet(self.page, sheet, title=title, fields=[name_field, phone_field], on_close=close, on_save=save)
+        self.page.open(sheet)
+
     def show_center(self, initial_type: str | None = None) -> None:
         """Reference-style invoice browser: the same table language as the
         materials screen (round clipped grid, centred cells, tinted pinned
@@ -1960,7 +1993,21 @@ class InvoiceCenter:
             [
                 draft_banner,
                 ft.Column([ft.Text("نوع الفاتورة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY), type_dd], spacing=6, tight=True),
-                ft.Column([party_dd, party_insight], spacing=6, tight=True),
+                ft.Row(
+                    [
+                        ft.Column([party_dd, party_insight], spacing=6, tight=True, expand=True),
+                        ft.IconButton(
+                            icon=ft.Icons.PERSON_ADD_ALT_1_OUTLINED,
+                            tooltip="إضافة عميل أو مورد جديد",
+                            icon_color=Colors.PRIMARY,
+                            on_click=lambda _=None: self._open_create_party_dialog(
+                                (type_dd.value or "sale") == "sale",
+                                lambda pid: (party_options(), setattr(party_dd, "value", str(pid)), update_party_insight(), refresh_summary()),
+                            ),
+                        ),
+                    ],
+                    spacing=4, vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
                 ft.ResponsiveRow(
                     [
                         ft.Container(invoice_date, col={"xs": 12, "md": 6}),
@@ -3305,7 +3352,24 @@ class InvoiceCenter:
                             [
                                 ft.Row(
                                     [
-                                        ft.Container(party_dd, width=250),
+                                        ft.Container(
+                                            ft.Row(
+                                                [
+                                                    ft.Container(party_dd, expand=True),
+                                                    ft.IconButton(
+                                                        icon=ft.Icons.PERSON_ADD_ALT_1_OUTLINED,
+                                                        tooltip="إضافة عميل أو مورد جديد",
+                                                        icon_color=Colors.PRIMARY,
+                                                        on_click=lambda _=None: self._open_create_party_dialog(
+                                                            (type_dd.value or "sale") == "sale",
+                                                            lambda pid: (party_options(), setattr(party_dd, "value", str(pid)), refresh_summary()),
+                                                        ),
+                                                    ),
+                                                ],
+                                                spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                            ),
+                                            width=290,
+                                        ),
                                         ft.Container(invoice_date, width=190),
                                         ft.Container(expand=True),
                                         ft.Container(
@@ -4683,7 +4747,21 @@ class InvoiceCenter:
                     ft.ResponsiveRow(
                         [
                             ft.Container(
-                                ft.Column([party_dd, party_insight], spacing=6),
+                                ft.Row(
+                                    [
+                                        ft.Column([party_dd, party_insight], spacing=6, expand=True),
+                                        ft.IconButton(
+                                            icon=ft.Icons.PERSON_ADD_ALT_1_OUTLINED,
+                                            tooltip="إضافة عميل أو مورد جديد",
+                                            icon_color=Colors.PRIMARY,
+                                            on_click=lambda _=None: self._open_create_party_dialog(
+                                                (type_dd.value or "sale") == "sale",
+                                                lambda pid: (party_options(), setattr(party_dd, "value", str(pid)), party_changed(None)),
+                                            ),
+                                        ),
+                                    ],
+                                    spacing=4, vertical_alignment=ft.CrossAxisAlignment.START,
+                                ),
                                 col={"xs": 12, "md": 5},
                             ),
                             ft.Container(invoice_date, col={"xs": 6, "md": 2}),
