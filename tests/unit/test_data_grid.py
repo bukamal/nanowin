@@ -833,3 +833,33 @@ def test_readonly_grid_stays_unarmed_after_set_rows():
     assert g._armed is False
     g._handle_key(FakeKey("Arrow Down"))
     assert g.nav.cell == (0, 0)
+
+
+def test_formatter_exception_falls_back_to_raw_value():
+    # A view formatter bug must never raise mid-render (it used to leave an
+    # inline editor stuck open after a commit re-rendered the row).
+    def boom(col, value, row):
+        raise TypeError("bad formatter signature")
+
+    g = make_grid(rows=[dict(ROWS[0])], formatter=boom)
+    control = g._display(COLS[0], "قلم", ROWS[0])
+    assert isinstance(control, ft.Text)
+    assert control.value == "قلم"
+
+
+def test_commit_with_raising_formatter_does_not_freeze():
+    def boom(col, value, row):
+        if col.key == "price":
+            raise TypeError("bad formatter signature")
+        return None
+
+    g = DataGrid(columns=COLS, rows=[dict(ROWS[0])], page=None, formatter=boom)
+    g.arm()
+    g.nav.select(0, 0)
+    g._begin_edit()
+    assert g._edit_field is not None
+    g._edit_field.value = "قلم معدّل"
+    g._commit_edit(move="next")
+    # The editor closed and the cursor advanced despite the failing formatter.
+    assert g._edit_field is None
+    assert g.nav.cell == (0, 1)

@@ -58,8 +58,8 @@ class PartyCenter:
         if self.on_title_change:
             self.on_title_change(title, subtitle)
 
-    def money(self, value) -> str:
-        return privacy.money_ctx(value, self.ctx)
+    def money(self, value, field: str = "total") -> str:
+        return privacy.money_ctx(value, self.ctx, field=field)
 
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)

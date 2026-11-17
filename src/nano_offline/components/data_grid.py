@@ -986,7 +986,15 @@ class DataGrid(ft.Column):
 
     def _display(self, col: GridColumn, value, row: dict) -> ft.Control:
         if self._formatter is not None:
-            out = self._formatter(col, value, row)
+            try:
+                out = self._formatter(col, value, row)
+            except Exception:
+                # A view formatter bug must never freeze the grid: fall back to
+                # the raw value instead of raising mid-render (which used to
+                # leave an inline editor stuck open when a commit re-rendered
+                # the row).
+                logging.getLogger(__name__).exception("cell formatter failed for column %s", col.key)
+                return self._text(col, _default_text(col, value), row=row, value_raw=value)
             if isinstance(out, ft.Control):
                 return out
             if isinstance(out, tuple) and len(out) == 3:
