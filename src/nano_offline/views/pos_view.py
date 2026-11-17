@@ -17,6 +17,7 @@ from nano_offline.components.print_profile import (
     apply_print_profile,
     open_print_profile_dialog,
     preview_document,
+    save_print_layout,
     saved_print_profile,
 )
 from nano_offline.components.buttons import hero_button, stepper_icon_button
@@ -604,9 +605,28 @@ class POSCenter:
             choices=[(str(c["id"]), c["name"]) for c in customers],
         )
 
-        received_display = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD)
+        received_display = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
         change_text = ft.Text("الباقي: 0.00", size=16, weight=ft.FontWeight.BOLD, color=Colors.SUCCESS_DARK)
         auto_print_switch = ft.Switch(label="طباعة تلقائية بعد الدفع", value=pos_settings.auto_print_default(self.ctx.settings), scale=0.85)
+        # Print type (A4 / thermal) restored, kept compact on one line with the
+        # preview button so the sheet stays short. The choice is saved for the
+        # POS surface, which is exactly what the silent auto-print uses.
+        saved_layout, _saved_roll_width = saved_print_profile(self.ctx.settings, surface="pos")
+        print_layout_toggle = SegmentedToggle(
+            options=[
+                SegmentOption("sheet", "ورق A4", ft.Icons.DESCRIPTION_OUTLINED),
+                SegmentOption("roll", "حراري", ft.Icons.RECEIPT_LONG_OUTLINED),
+            ],
+            value=saved_layout,
+        )
+
+        def persist_print_layout(_=None):
+            try:
+                save_print_layout(self.ctx.settings, "pos", print_layout_toggle.value or "sheet")
+            except Exception:
+                pass
+
+        print_layout_toggle.on_change = persist_print_layout
 
         checkout_btn = hero_button("دفع", icon=ft.Icons.PAYMENTS_OUTLINED)
 
@@ -1448,7 +1468,9 @@ class POSCenter:
                     return
                 open_print_profile_dialog(
                     self.page, self.ctx.settings, _preview_confirm,
-                    title="معاينة الطباعة", surface="pos", native_files=self.native_files,
+                    title="معاينة الطباعة", surface="pos",
+                    initial_layout=(print_layout_toggle.value or "sheet"),
+                    native_files=self.native_files,
                     preview_builder=lambda _layout, _width: _cart_preview_html(),
                 )
 
@@ -1462,7 +1484,7 @@ class POSCenter:
                 ft.Container(height=4),
                 currency_toggle_row,
                 ft.Row(
-                    [ft.Container(received_display, expand=True), clear_btn, keypad_toggle],
+                    [ft.Container(received_display, expand=True, alignment=ft.alignment.center), clear_btn, keypad_toggle],
                     spacing=6,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
@@ -1491,6 +1513,14 @@ class POSCenter:
                 ft.Row(
                     [auto_print_switch, ft.Container(expand=True), preview_btn],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Row(
+                    [
+                        ft.Text("نوع الطباعة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                        ft.Container(print_layout_toggle, width=190),
+                        ft.Container(expand=True),
+                    ],
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Row(
                     [
