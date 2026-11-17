@@ -470,8 +470,13 @@ class PartyCenter:
                             "أضف عدة أطراف دفعة واحدة: أدخل الاسم والرصيد الافتتاحي (مدين/دائن) والعملة وسقف الائتمان، ثم احفظ الكل.",
                             size=11, color=Colors.TEXT_SECONDARY,
                         ),
-                        ft.Row([ft.Container(batch_date, width=220), add_btn, ft.Container(expand=True), save_btn, cancel_btn],
-                               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True),
+                        # Plain Rows (NOT wrap): a wrapping Row cannot host the
+                        # expand spacers below -- Flutter renders a blank grey
+                        # box over the whole area when it can't lay it out.
+                        ft.Row([ft.Container(batch_date, width=220), add_btn, ft.Container(expand=True)],
+                               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Row([ft.Container(expand=True), cancel_btn, save_btn],
+                               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         ft.Container(bulk_grid, expand=True, border=ft.border.all(1, Colors.BORDER), border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE),
                     ],
                     spacing=10, expand=True,
