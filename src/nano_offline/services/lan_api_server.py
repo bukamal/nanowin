@@ -44,7 +44,7 @@ READ_METHODS = frozenset({
     # definitions
     "definitions.list_categories", "definitions.list_units",
     # documents (print HTML generated from shared data)
-    "documents.invoice_html", "documents.statement_html", "documents.voucher_html",
+    "documents.invoice_html", "documents.invoice_html_for", "documents.statement_html", "documents.voucher_html",
     "documents.day_close_html", "documents.party_card_html", "documents.item_card_html",
     "documents.barcode_labels_html", "documents.section_ticket_preview_html",
     # statements / reports / dashboard
