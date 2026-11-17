@@ -325,6 +325,17 @@ table th, table td {{ text-align:center; }}
         inv = self.invoices.get_invoice(invoice_id)
         if not inv:
             raise ValueError("الفاتورة غير موجودة")
+        return self.invoice_html_for(inv)
+
+    def invoice_html_for(self, inv: dict) -> str:
+        """Render an already-assembled invoice dict through the *same* template
+        as :meth:`invoice_html`.
+
+        Used for a live cart preview before the invoice row exists, so the
+        preview IS the document that will be printed (identical layout,
+        fields, totals, QR and print-option snapshot handling) rather than a
+        throwaway table.
+        """
         settings = self._settings()
         print_options = invoice_settings.print_snapshot(inv, settings)
         labels = business_profile.labels_for_type(print_options["business_type"])

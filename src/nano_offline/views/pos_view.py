@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import copy
 import flet as ft
@@ -1429,29 +1429,81 @@ class POSCenter:
             )
 
             def _cart_preview_html() -> str:
-                from nano_offline.core import branding
-
+                # Build a prospective invoice dict from the current cart and
+                # render it through the SAME template the printed invoice uses,
+                # so the preview is exactly the document that will be printed.
+                settings = self.ctx.settings
                 rows_list = [self.cart[key] for key in self.cart_order if key in self.cart]
-                lines_html = "".join(
-                    "<tr>"
-                    f"<td>{row['item'].get('name', '')}</td>"
-                    f"<td style='text-align:center'>{self._qty(row.get('qty'))}</td>"
-                    f"<td style='text-align:left'>{self._money_receive(_cart_line_price(row) * float(row.get('qty') or 0))}</td>"
-                    "</tr>"
-                    for row in rows_list
-                )
-                return (
-                    "<html dir='rtl'><head><meta charset='utf-8'></head>"
-                    "<body style='font-family:Cairo,Segoe UI,Tahoma,Arial,sans-serif;padding:6px;direction:rtl'>"
-                    f"<h3 style='text-align:center;margin:4px 0'>{branding.APP_BRAND}</h3>"
-                    "<div style='text-align:center;font-size:11px;color:#64748B'>معاينة قبل الطباعة</div>"
-                    "<table style='width:100%;font-size:12px;border-collapse:collapse'>"
-                    "<thead><tr><th style='text-align:right'>المادة</th><th>الكمية</th>"
-                    "<th style='text-align:left'>الإجمالي</th></tr></thead>"
-                    f"<tbody>{lines_html}</tbody></table>"
-                    f"<hr><div style='font-size:16px;font-weight:bold;text-align:left'>الإجمالي: {self._money_receive(total_amount())}</div>"
-                    "</body></html>"
-                )
+                preview_lines: list[dict] = []
+                for row in rows_list:
+                    item = row["item"]
+                    try:
+                        qty = float(row.get("qty") or 0)
+                        factor = float(row.get("factor") or 1)
+                    except (TypeError, ValueError):
+                        continue
+                    price = _cart_line_price(row)
+                    unit_id = row.get("unit_id")
+                    unit_label = str(item.get("unit_abbreviation") or item.get("unit_name") or "")
+                    if unit_id:
+                        try:
+                            unit_row = next(
+                                (u for u in self.ctx.items.units(int(item["id"])) if int(u["id"]) == int(unit_id)),
+                                None,
+                            )
+                            if unit_row is not None:
+                                unit_label = str(unit_row.get("abbreviation") or unit_row.get("name") or unit_label)
+                        except Exception:
+                            pass
+                    preview_lines.append({
+                        "description": str(item.get("name") or ""),
+                        "item_name": str(item.get("name") or ""),
+                        "item_id": int(item["id"]),
+                        "unit_id": int(unit_id) if unit_id else None,
+                        "unit_abbreviation": unit_label,
+                        "unit_name": unit_label,
+                        "quantity": qty,
+                        "quantity_in_base": qty * factor,
+                        "unit_price": price,
+                        "total": price * qty,
+                    })
+                total_usd = total_amount()
+                paid = min(received_amount(), total_usd)
+                if total_usd - paid <= 1e-9:
+                    status = "paid"
+                elif paid > 1e-9:
+                    status = "partial"
+                else:
+                    status = "unpaid"
+                customer = self.ctx.customers.get(self.customer_id) if self.customer_id else None
+                code = currency.party_currency(settings, (customer or {}).get("currency"))
+                try:
+                    with self.ctx.db.connect() as conn:
+                        next_id = int(conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM invoices").fetchone()[0])
+                except Exception:
+                    next_id = 1
+                draft = {
+                    "id": next_id,
+                    "type": "sale",
+                    "invoice_date": date.today().isoformat(),
+                    "reference": None,
+                    "notes": None,
+                    "customer_id": self.customer_id,
+                    "supplier_id": None,
+                    "party_name": (customer or {}).get("name") or "نقدي",
+                    "total": total_usd,
+                    "paid_amount": paid,
+                    "remaining_amount": max(0.0, total_usd - paid),
+                    "payment_status": status,
+                    "invoice_exchange_rate": currency.get_exchange_rate(settings),
+                    "invoice_currency_code": code,
+                    "invoice_currency_symbol": currency.symbol_for(settings, code),
+                    "lines": preview_lines,
+                }
+                try:
+                    return self.ctx.documents.invoice_html_for(draft)
+                except Exception:
+                    return "<html dir='rtl'><body style='font-family:Cairo,Arial;padding:12px'>تعذّر تجهيز معاينة الفاتورة</body></html>"
 
             async def _preview_confirm(layout: str, width: int) -> None:
                 try:
@@ -2099,7 +2151,7 @@ class POSCenter:
                 ("F4", "تعليق الفاتورة"),
                 ("F7", "وضع فحص السعر"),
                 ("F8", "تراجع عن آخر إزالة"),
-                ("F12", "طباعة آخر فاتورة"),
+                ("F12", "إتمام وطباعة (وسلة فارغة: إعادة طباعة آخر فاتورة)"),
                 ("Esc مرتين", "تفريغ السلة"),
                 ("Ctrl+Enter", "إتمام الدفع"),
             ]
@@ -2610,7 +2662,13 @@ class POSCenter:
                         self.notify("لا يوجد إجراء للتراجع عنه")
                     return
                 if k == "f12" and pos_settings.f12_print_enabled(self.ctx.settings):
-                    self._print_last_receipt()
+                    # F12 finishes the current sale (quick cash + auto-print),
+                    # which clears the cart and plays the success cue; with an
+                    # empty cart it reprints the last receipt instead.
+                    if self.cart_order:
+                        self._do_checkout()
+                    else:
+                        self._print_last_receipt()
                     return
                 if k == "enter" and (e.ctrl or e.meta):
                     checkout_btn.on_click(None)
