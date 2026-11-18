@@ -70,9 +70,9 @@ POS_DENSITY = {
         "board_title": 14, "board_value": 16, "board_meta": 10,
     },
     "touch": {
-        "rail": 290, "cart": 470, "tile_h": 172, "row": 66,
-        "tile_icon": 34, "tile_icon_box": 58, "tile_name": 15, "tile_price": 16,
-        "tile_pad": 14, "tile_strip": 5, "tile_spacing": 6,
+        "rail": 290, "cart": 470, "tile_h": 150, "row": 66,
+        "tile_icon": 30, "tile_icon_box": 52, "tile_name": 14, "tile_price": 15,
+        "tile_pad": 12, "tile_strip": 5, "tile_spacing": 6,
         "board_card_w": 220, "kds_card_w": 290, "board_card_pad": 16,
         "board_title": 17, "board_value": 20, "board_meta": 12,
     },

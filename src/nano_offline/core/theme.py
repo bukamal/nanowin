@@ -76,7 +76,16 @@ def _blend_color(color: str, target: str, amount: float) -> str:
     return "#" + "".join(f"{channel:02X}" for channel in blended)
 
 
+_brand_tokens_cache: dict[str, tuple[dict[str, str], dict[str, str]]] = {}
+
+
 def _brand_tokens(accent: str) -> tuple[dict[str, str], dict[str, str]]:
+    # Memoised per accent: brand tokens are resolved on *every* ``Colors.X``
+    # access (thousands of times while building a screen), and recomputing the
+    # blend arithmetic each time was a measurable chunk of UI build time.
+    cached = _brand_tokens_cache.get(accent)
+    if cached is not None:
+        return cached
     light = {
         "PRIMARY": accent,
         "PRIMARY_DARK": _blend_color(accent, "#000000", 0.20),
@@ -95,6 +104,7 @@ def _brand_tokens(accent: str) -> tuple[dict[str, str], dict[str, str]]:
         "BRAND_DEEP": _blend_color(accent, "#000000", 0.18),
         "BRAND_CYAN": _blend_color(accent, "#FFFFFF", 0.30),
     }
+    _brand_tokens_cache[accent] = (light, dark)
     return light, dark
 
 

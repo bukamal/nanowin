@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from collections import OrderedDict
 from datetime import date, datetime, timezone
 
 import copy
@@ -445,6 +446,7 @@ class POSCenter:
 
         def set_category(cat_id: int | None):
             state["category_id"] = cat_id
+            state["grid_limit"] = GRID_PAGE
             render_categories()
             render_grid()
             self.page.update()
@@ -510,6 +512,41 @@ class POSCenter:
         # required, unlike GridView(expand=True).
         grid = ft.ResponsiveRow(spacing=10, run_spacing=10)
 
+        # Windowing: never build a tile per item up front (3000 items = ~42k
+        # Flet controls / ~15s). Render a page (GRID_PAGE) and grow it on
+        # demand; tiles are also cached so paging/filtering reuses controls.
+        GRID_PAGE = 60
+        state.setdefault("grid_limit", GRID_PAGE)
+
+        def _tile_key(item: dict) -> tuple:
+            settings = self.ctx.settings
+            return (
+                int(item["id"]),
+                str(item.get("name") or ""),
+                float(item.get("selling_price") or 0),
+                float(item.get("quantity") or 0),
+                str(currency.get_display_currency(settings)),
+                str(currency.get_display_symbol(settings)),
+                float(currency.get_effective_rate(settings)),
+                str(getattr(self, "_pos_density", "comfortable")),
+            )
+
+        def _tile_for(item: dict) -> ft.Control:
+            cache = getattr(self, "_tile_cache", None)
+            if cache is None:
+                cache = self._tile_cache = OrderedDict()
+            key = _tile_key(item)
+            hit = cache.get(key)
+            if hit is not None:
+                cache.move_to_end(key)
+                return hit
+            tile = self._item_tile(item)
+            cache[key] = tile
+            # Bound memory when a cashier pages through thousands of items.
+            while len(cache) > 600:
+                cache.popitem(last=False)
+            return tile
+
         def render_grid():
             raw_q = state["query"].strip()
             q = normalize_ar(raw_q.casefold())
@@ -537,9 +574,35 @@ class POSCenter:
             # Best sellers are shown in the vertical rail now, so the grid is
             # a single flat result set (pos_catalog() still returns
             # best-sellers-first, so the ordering stays familiar).
-            grid.controls = [self._item_tile(it) for it in matched]
+            limit = max(GRID_PAGE, int(state.get("grid_limit") or GRID_PAGE))
+            visible = matched[:limit]
+            controls = [_tile_for(it) for it in visible]
+            if len(matched) > limit:
+                remaining = len(matched) - limit
+                controls.append(
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.OutlinedButton(
+                                    f"تحميل المزيد ({remaining:,})",
+                                    icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                                    on_click=lambda _=None: load_more(),
+                                )
+                            ],
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        col={"xs": 12},
+                        padding=ft.padding.only(top=6),
+                    )
+                )
+            grid.controls = controls
             grid.visible = bool(matched)
             empty_box.visible = not matched
+
+        def load_more(_=None):
+            state["grid_limit"] = int(state.get("grid_limit") or GRID_PAGE) + GRID_PAGE
+            render_grid()
+            self.page.update()
 
         empty_box = empty_state(
             "لا توجد نتائج",
@@ -548,23 +611,42 @@ class POSCenter:
         )
         empty_box.visible = False
 
-        def search_changed(e):
+        def search_changed(e=None):
             state["query"] = search_field.value or ""
-            render_grid()
-            self.page.update()
+            state["grid_limit"] = GRID_PAGE
+            token = int(state.get("query_token") or 0) + 1
+            state["query_token"] = token
+
+            async def _debounced() -> None:
+                # Coalesce fast typing: only the latest query renders.
+                await asyncio.sleep(0.25)
+                if int(state.get("query_token") or 0) != token:
+                    return
+                render_grid()
+                self.page.update()
+
+            try:
+                self.page.run_task(_debounced)
+            except Exception:
+                render_grid()
+                self.page.update()
 
         search_field.on_change = search_changed
 
         def search_submit(_=None):
-            # Enter in the search box: when the Arabic-normalized query
-            # narrows the catalog to exactly one item, add it without
-            # reaching for the tile. Ambiguous queries keep the grid so the
-            # cashier picks by eye.
+            # Enter in the search box: render immediately (bypass the debounce),
+            # then when the query narrows to exactly one item add it without
+            # reaching for the tile.
+            state["query"] = search_field.value or ""
+            state["grid_limit"] = GRID_PAGE
+            state["query_token"] = int(state.get("query_token") or 0) + 1
+            render_grid()
             matched = state.get("matched") or []
             if len(matched) == 1 and not self._price_check_mode:
                 self._add_item(int(matched[0]["id"]))
                 search_field.value = ""
                 state["query"] = ""
+                state["grid_limit"] = GRID_PAGE
                 render_grid()
                 self.page.update()
             elif len(matched) == 1:
@@ -1340,9 +1422,9 @@ class POSCenter:
             self._render_payment_customer_insight = render_customer_insight
 
             confirm_btn = hero_button("إتمام وطباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=confirm_payment)
-            confirm_btn.expand = False
+            confirm_btn.expand = True
             confirm_btn.height = SIZES["cta"]
-            confirm_btn.width = 260
+            confirm_btn.width = None
 
             def sync_confirm_label(_=None):
                 printing = bool(auto_print_switch.value)
@@ -1526,7 +1608,7 @@ class POSCenter:
                     preview_builder=lambda _layout, _width: _cart_preview_html(),
                 )
 
-            preview_btn = ft.TextButton(
+            preview_btn = ft.OutlinedButton(
                 "معاينة قبل الطباعة", icon=ft.Icons.VISIBILITY_OUTLINED, on_click=open_print_preview,
             )
 
@@ -1535,8 +1617,13 @@ class POSCenter:
                 ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
                 ft.Container(height=4),
                 currency_toggle_row,
+                # Same centred alignment as the "الإجمالي المطلوب" figure above
+                # (a full-width centred child, not an expand-fill inside a Row
+                # that also held the clear/keypad buttons -- which shifted the
+                # optical centre off the sheet centre).
+                received_display,
                 ft.Row(
-                    [ft.Container(received_display, expand=True, alignment=ft.alignment.center), clear_btn, keypad_toggle],
+                    [ft.Container(expand=True), clear_btn, keypad_toggle],
                     spacing=6,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
@@ -1563,7 +1650,7 @@ class POSCenter:
                 recent_customers_row(),
                 ft.Divider(height=1, color=Colors.BORDER),
                 ft.Row(
-                    [auto_print_switch, ft.Container(expand=True), preview_btn],
+                    [auto_print_switch, ft.Container(expand=True)],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Row(
@@ -1571,17 +1658,13 @@ class POSCenter:
                         ft.Text("نوع الطباعة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
                         ft.Container(print_layout_toggle, width=190),
                         ft.Container(expand=True),
+                        preview_btn,
                     ],
                     spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                ft.Row(
-                    [
-                        ft.OutlinedButton("إلغاء", on_click=lambda _: self.page.close(payment_sheet), height=SIZES["cta"]),
-                        confirm_btn,
-                    ],
-                    spacing=10,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ft.Container(
+                    ft.Row([confirm_btn], alignment=ft.MainAxisAlignment.CENTER),
+                    padding=ft.padding.symmetric(horizontal=16),
                 ),
             ]
             render_currency_toggle()
@@ -1590,7 +1673,18 @@ class POSCenter:
                 ft.Column(
                     [
                         ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
-                        ft.Text("إتمام الدفع", size=18, weight=ft.FontWeight.BOLD),
+                        ft.Row(
+                            [
+                                ft.Container(expand=True),
+                                ft.Text("إتمام الدفع", size=18, weight=ft.FontWeight.BOLD),
+                                ft.Container(expand=True),
+                                ft.IconButton(
+                                    icon=ft.Icons.CLOSE, tooltip="إغلاق",
+                                    on_click=lambda _: self.page.close(payment_sheet),
+                                ),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                         body,
                     ],
                     spacing=12,
@@ -1902,49 +1996,59 @@ class POSCenter:
         multiplier_field.on_change = _multiplier_changed
         self._multiplier_field = multiplier_field
 
-        catalog_pane = ft.Column(
-            [
-                ft.Container(
-                    ft.Column(
+        barcode_panel = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
                         [
-                            ft.Row(
-                                [
-                                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=14, color=Colors.PRIMARY),
-                                    ft.Text("جاهز لقارئ الباركود", size=10, color=Colors.PRIMARY_DARK),
-                                ],
-                                spacing=5,
-                                tight=True,
-                            ),
-                            ft.Row(
-                                [
-                                    barcode_field,
-                                    multiplier_field,
-                                    ft.IconButton(
-                                        icon=ft.Icons.CAMERA_ALT_OUTLINED,
-                                        tooltip="مسح بالكاميرا",
-                                        on_click=scan_button_handler,
-                                        icon_color=Colors.PRIMARY,
-                                        visible=supports("barcode_camera_scan"),
-                                    ),
-                                ],
-                                spacing=8,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
+                            ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=14, color=Colors.PRIMARY),
+                            ft.Text("جاهز لقارئ الباركود", size=10, color=Colors.PRIMARY_DARK),
                         ],
                         spacing=5,
+                        tight=True,
                     ),
-                    padding=10,
-                    bgcolor=Colors.PRIMARY_BG,
-                    border=ft.border.all(1, Colors.PRIMARY_BORDER),
-                    border_radius=Radius.MD,
-                ),
-                ft.Row([search_field], spacing=10),
-                recent_toggle,
-                recent_row,
-                grid,
-                empty_box,
-            ],
+                    ft.Row(
+                        [
+                            barcode_field,
+                            multiplier_field,
+                            ft.IconButton(
+                                icon=ft.Icons.CAMERA_ALT_OUTLINED,
+                                tooltip="مسح بالكاميرا",
+                                on_click=scan_button_handler,
+                                icon_color=Colors.PRIMARY,
+                                visible=supports("barcode_camera_scan"),
+                            ),
+                        ],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=5,
+            ),
+            padding=10,
+            bgcolor=Colors.PRIMARY_BG,
+            border=ft.border.all(1, Colors.PRIMARY_BORDER),
+            border_radius=Radius.MD,
+        )
+        # Fixed catalog header: barcode + material search (+ recent) stay
+        # pinned at the top; only the materials grid scrolls beneath them.
+        catalog_header = ft.Container(
+            ft.Column(
+                [
+                    barcode_panel,
+                    ft.Row([search_field], spacing=10),
+                    recent_toggle,
+                    recent_row,
+                ],
+                spacing=10,
+            ),
+            padding=ft.padding.only(bottom=4),
+        )
+        catalog_scroll = ft.Column(
+            [grid, empty_box],
             spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
         )
 
         # Cart pane keeps only what a cashier needs while still browsing --
@@ -2098,7 +2202,7 @@ class POSCenter:
             bgcolor=Colors.WHITE,
             border=ft.border.all(1, Colors.BORDER),
             border_radius=Radius.LG,
-            shadow=Shadow.MD,
+            shadow=Shadow.SM,
         )
 
         # Vertical side rail: categories stacked on top, then the best-seller
@@ -2265,14 +2369,11 @@ class POSCenter:
         # refines the catalog, it does not collapse the receipt the cashier
         # is reading.
 
-        # Only the catalog scrolls now. The cart pane used to sit inside
-        # this same scrolling body, which meant scrolling through the catalog
-        # grid could scroll the cart out of view too. The cart is pulled out
-        # as a fixed side rail instead, so it (and the total/checkout button)
-        # stays reachable no matter how far the catalog is scrolled.
-        scroll_body = ft.Column(
-            [catalog_pane],
-            scroll=ft.ScrollMode.AUTO,
+        # Only the materials grid scrolls; the barcode/search header above it
+        # is pinned, and the cart is a fixed side rail.
+        catalog_column = ft.Column(
+            [catalog_header, catalog_scroll],
+            spacing=10,
             expand=True,
         )
 
@@ -2284,7 +2385,7 @@ class POSCenter:
             [
                 catalog_rail,
                 ft.Container(
-                    scroll_body,
+                    catalog_column,
                     padding=ft.padding.only(left=16, right=16, top=14, bottom=10),
                     expand=True,
                 ),
@@ -2886,7 +2987,13 @@ class POSCenter:
             border_radius=Radius.MD,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             ink=True,
-            col={"xs": 6, "sm": 4, "md": 4, "lg": 3, "xl": 2},
+            # Fewer columns for the big-touch density so a tile stays roughly
+            # square instead of becoming a tall narrow rectangle.
+            col={
+                "touch": {"xs": 6, "sm": 6, "md": 4, "lg": 3, "xl": 3},
+                "comfortable": {"xs": 6, "sm": 4, "md": 4, "lg": 3, "xl": 2},
+                "compact": {"xs": 6, "sm": 4, "md": 3, "lg": 2, "xl": 2},
+            }.get(getattr(self, "_pos_density", "comfortable"), {"xs": 6, "sm": 4, "md": 4, "lg": 3, "xl": 2}),
             on_click=lambda _, i=int(item["id"]): self._add_item(i),
         )
 

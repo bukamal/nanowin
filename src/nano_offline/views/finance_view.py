@@ -597,7 +597,9 @@ class FinanceCenter:
                 ft.Container(height=20),
             ],
             spacing=10,
-            scroll=ft.ScrollMode.AUTO,
+            # Hidden outer scrollbar: the tables inside own their own scrollbar;
+            # hiding the page-level one avoids two bars sitting side by side.
+            scroll=ft.ScrollMode.HIDDEN,
             expand=True,
         )
         self.content.content = ft.Column(
@@ -1025,7 +1027,8 @@ class FinanceCenter:
                     list_switch,
                 ],
                 spacing=12,
-                scroll=ft.ScrollMode.AUTO,
+                # Outer bar hidden; the voucher grid owns the visible one.
+                scroll=ft.ScrollMode.HIDDEN,
                 expand=True,
             ),
             expand=True,
@@ -1737,7 +1740,8 @@ class FinanceCenter:
                     ft.Container(height=24),
                 ],
                 spacing=12,
-                scroll=ft.ScrollMode.AUTO,
+                # Outer bar hidden; the expense grid owns the visible one.
+                scroll=ft.ScrollMode.HIDDEN,
                 expand=True,
             ),
             expand=True,
@@ -2176,7 +2180,7 @@ class FinanceCenter:
             shadow=Shadow.SM,
         )
         scroll_body = ft.Container(
-            ft.Column([result, ft.Container(height=24)], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True),
+            ft.Column([result, ft.Container(height=24)], spacing=12, scroll=ft.ScrollMode.HIDDEN, expand=True),
             expand=True,
             padding=ft.padding.only(top=12, left=16, right=16),
         )
@@ -2431,7 +2435,7 @@ class FinanceCenter:
             shadow=Shadow.SM,
         )
         scroll_body = ft.Container(
-            ft.Column([result, ft.Container(height=24)], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True),
+            ft.Column([result, ft.Container(height=24)], spacing=12, scroll=ft.ScrollMode.HIDDEN, expand=True),
             expand=True,
             padding=ft.padding.only(top=12, left=16, right=16),
         )

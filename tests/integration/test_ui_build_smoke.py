@@ -320,3 +320,28 @@ def test_items_bulk_sheet_builds_for_add_and_edit():
         assert getattr(page.opened[-1], "content", None) is not None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_pos_grid_renders_only_a_page_of_tiles():
+    # Windowing guard: opening POS with many items must NOT build a tile per
+    # item (that was ~15s at 3000 items). Only the first page is materialised.
+    from nano_offline.views.pos_view import POSCenter
+
+    ctx, tmp = _ctx()
+    try:
+        unit = ctx.definitions.create_unit("قطعة", "ق")
+        for i in range(150):
+            ctx.items.create(
+                name=f"مادة {i:03d}", item_type="مخزون", purchase_price=1.0,
+                selling_price=2.0, quantity=10.0, base_unit_id=unit,
+            )
+        page, content = FakePage(), ft.Container(expand=True)
+        center = POSCenter(
+            page, ctx, content, native_files=None, on_title_change=lambda *a: None,
+            on_create_item=lambda *a: None, on_fullscreen_enter=lambda: None,
+            on_fullscreen_exit=lambda: None, on_toggle_fullscreen=lambda: True,
+        )
+        center.show_center()
+        assert len(getattr(center, "_tile_cache", {})) <= 60
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
