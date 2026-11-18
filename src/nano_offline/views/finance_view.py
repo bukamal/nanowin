@@ -627,36 +627,37 @@ class FinanceCenter:
         # business, so building a card for every single one on every
         # refresh does not scale. Render a page at a time instead.
         render_limit = {"n": 60}
-        # Real dropdown (ft.Dropdown) instead of a search-style field or a
-        # row of chips -- same control used for "ترتيب حسب" on the items
-        # screen: tap once, pick from the list, no typing involved.
-        type_filter = ft.Dropdown(
-            label="نوع السند",
-            value="all",
-            options=[
-                ft.dropdown.Option(key="all", text="الكل"),
-                ft.dropdown.Option(key="receipt", text="قبض"),
-                ft.dropdown.Option(key="payment", text="دفع"),
-            ],
-            filled=True,
-            bgcolor=Colors.BACKGROUND_ALT,
-            border_radius=Radius.MD,
-            border_color=Colors.BORDER,
-        )
+        # Filter chips (same language as the invoices/parties toolbars) instead
+        # of a dropdown, so the vouchers screen reads like every other list.
+        type_row = ft.Row(spacing=6, wrap=True)
+
+        def _filter_chip(key: str, label: str) -> ft.Container:
+            active = filter_state["type"] == key
+            return ft.Container(
+                ft.Text(label, size=11, weight=ft.FontWeight.W_600, color=Colors.WHITE if active else Colors.TEXT_MUTED),
+                padding=ft.padding.symmetric(horizontal=12, vertical=7),
+                bgcolor=Colors.PRIMARY if active else Colors.WHITE,
+                border=ft.border.all(1, Colors.PRIMARY if active else Colors.BORDER),
+                border_radius=18, ink=True,
+                on_click=lambda _=None, k=key: set_filter(k),
+            )
+
+        def render_type_chips() -> None:
+            type_row.controls = [
+                _filter_chip("all", "الكل"),
+                _filter_chip("receipt", "قبض"),
+                _filter_chip("payment", "دفع"),
+            ]
 
         def set_filter(key: str):
-            filter_state["type"] = key
-            if type_filter.value != key:
-                type_filter.value = key
+            filter_state["type"] = key if key in ("all", "receipt", "payment") else "all"
             render_limit["n"] = 60
+            render_type_chips()
+            try:
+                type_row.update()
+            except Exception:
+                pass
             refresh()
-
-        def on_type_filter_change(_=None):
-            filter_state["type"] = type_filter.value or "all"
-            render_limit["n"] = 60
-            refresh()
-
-        type_filter.on_change = on_type_filter_change
 
         # ---- desktop grid (same spreadsheet treatment as items/invoices) --
         grid_sort = {"key": None, "dir": None}
@@ -857,7 +858,6 @@ class FinanceCenter:
             activate_tooltip="فتح السند",
             empty_text="لا توجد سندات",
         )
-        type_filter.on_focus = lambda e: grid.disarm()
         grid_more = ft.Container(visible=False)
         desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
         list_switch = ft.Container(content=desktop_list)
@@ -956,12 +956,8 @@ class FinanceCenter:
             refresh()
 
         # Same sticky-header / scrolling-body split as invoice_view and
-        # items_view: the section tabs, search, and type filters live in a
-        # bordered white bar that stays put, while the KPI cards and the
-        # voucher list scroll together underneath it. Search shares its row
-        # with the type dropdown + actions (parties_view toolbar shape)
-        # instead of spanning the whole width by itself.
-        type_filter.width = 130
+        # items_view: section tabs, search, chips and actions in a bordered
+        # white bar that stays put, KPI cards + the voucher list scroll under.
         sticky_header = ft.Container(
             ft.Column(
                 [
@@ -969,7 +965,6 @@ class FinanceCenter:
                     ft.Row(
                         [
                             ft.Container(search, width=280),
-                            type_filter,
                             ft.Container(expand=True),
                             primary_button(
                                 "سند قبض",
@@ -1000,13 +995,15 @@ class FinanceCenter:
                     ),
                     ft.Row(
                         [
+                            type_row,
+                            ft.Container(expand=True),
                             date_from, date_to,
                             ft.OutlinedButton("هذا الشهر", on_click=lambda _: set_period("month")),
                             ft.OutlinedButton("آخر 30 يومًا", on_click=lambda _: set_period("30")),
                             ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
                             ft.FilledButton("تطبيق", icon=ft.Icons.FILTER_ALT_OUTLINED, on_click=refresh_from_search),
                         ],
-                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True,
                     ),
                     ft.Row([summary_toggle], alignment=ft.MainAxisAlignment.END),
                 ],
@@ -1036,6 +1033,7 @@ class FinanceCenter:
         # Creation actions live in the shell's contextual ribbon now (the old
         # floating speed-dial was mobile chrome): one button per voucher type
         # so قبض / دفع / مصروف stay one click away from any finance tab.
+        render_type_chips()
         refresh()
 
     def _voucher_html(self, voucher: dict) -> str:
@@ -1123,16 +1121,38 @@ class FinanceCenter:
             ft.Column(
                 [
                     sheets.sheet_handle(),
-                    ft.Text(f"{title} #{voucher_id}", size=18, weight=ft.FontWeight.BOLD),
+                    # Same detail chrome as invoice/material detail sheets: an
+                    # icon bubble + title/subtitle header, then chip meta.
+                    ft.Row(
+                        [
+                            ft.Container(
+                                ft.Icon(
+                                    ft.Icons.PAYMENTS_OUTLINED if receipt else ft.Icons.REQUEST_QUOTE_OUTLINED,
+                                    color=accent, size=22,
+                                ),
+                                width=44, height=44, alignment=ft.alignment.center,
+                                bgcolor=Colors.SUCCESS_BG if receipt else Colors.DANGER_BG, border_radius=14,
+                            ),
+                            ft.Column(
+                                [
+                                    ft.Text(f"{title} #{voucher_id}", size=17, weight=ft.FontWeight.BOLD),
+                                    ft.Text(str(voucher.get("party_name") or "نقدي"), size=11, color=Colors.TEXT_SECONDARY),
+                                ],
+                                spacing=1, expand=True,
+                            ),
+                            ft.IconButton(icon=ft.Icons.CLOSE, tooltip="إغلاق", on_click=close),
+                        ],
+                        spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     ft.Container(
                         ft.Column([
                             ft.Container(ft.Column([money_row(voucher.get("amount"), self.ctx.settings, size=28, weight=ft.FontWeight.BOLD, color=accent), ft.Text(title, size=11, color=Colors.TEXT_SECONDARY)], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2), padding=14, bgcolor=Colors.BACKGROUND, border_radius=16),
-                            ft.ResponsiveRow([
-                                ft.Container(ft.Text(f"التاريخ: {voucher.get('voucher_date') or '—'}", size=11), col={"xs": 6, "md": 3}),
-                                ft.Container(ft.Text(f"الحساب: {voucher.get('party_name') or '—'}", size=11), col={"xs": 6, "md": 3}),
-                                ft.Container(ft.Text(f"المرجع: {voucher.get('reference') or '—'}", size=11), col={"xs": 6, "md": 3}),
-                                ft.Container(ft.Row([ft.Text("على الحساب: ", size=11), money_row(voucher.get("unallocated_amount"), self.ctx.settings, size=11)], spacing=2, tight=True), col={"xs": 6, "md": 3}),
-                            ]),
+                            ft.Row([
+                                _detail_chip(ft.Icons.CALENDAR_MONTH_OUTLINED, "التاريخ", str(voucher.get("voucher_date") or "—")),
+                                _detail_chip(ft.Icons.PERSON_OUTLINE, "الحساب", str(voucher.get("party_name") or "نقدي")),
+                                _detail_chip(ft.Icons.TAG_OUTLINED, "المرجع", str(voucher.get("reference") or "—")),
+                                _detail_chip(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, "على الحساب", self.money(voucher.get("unallocated_amount"))),
+                            ], spacing=8, wrap=True),
                             ft.Text(voucher.get("notes") or "بدون ملاحظات", size=10, color=Colors.TEXT_SECONDARY),
                             ft.Divider(height=8), ft.Text("التوزيعات", size=13, weight=ft.FontWeight.BOLD), ft.Column(alloc_controls, spacing=5),
                         ], spacing=8, scroll=ft.ScrollMode.AUTO),
