@@ -44,6 +44,7 @@ SMOKE_SCRIPTS: list[str] = [
     "tools/sound_system_smoke_test.py",
     "tools/invoice_ui_android_regression_smoke_test.py",
     "tools/search_select_contract_smoke_test.py",
+    "tools/wrap_expand_contract_smoke_test.py",
     "tools/quick_auth_saved_login_smoke_test.py",
     "tools/cash_backup_pdf_android_smoke_test.py",
     "tools/qeid_reference_design_phase1_smoke_test.py",

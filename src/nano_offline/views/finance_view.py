@@ -993,6 +993,9 @@ class FinanceCenter:
                         ],
                         spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
+                    # Plain Row (NOT wrap): a wrapping Row cannot host the
+                    # expand spacer below -- Flutter paints a blank grey box
+                    # over the whole area when it can't lay it out.
                     ft.Row(
                         [
                             type_row,
@@ -1003,7 +1006,7 @@ class FinanceCenter:
                             ft.OutlinedButton("كل الفترة", on_click=lambda _: set_period("all")),
                             ft.FilledButton("تطبيق", icon=ft.Icons.FILTER_ALT_OUTLINED, on_click=refresh_from_search),
                         ],
-                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True,
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Row([summary_toggle], alignment=ft.MainAxisAlignment.END),
                 ],

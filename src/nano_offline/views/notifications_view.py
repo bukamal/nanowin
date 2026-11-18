@@ -1095,12 +1095,13 @@ class NotificationCenter:
         history_card = ft.Container(
             ft.Column(
                 [
+                    # Plain Row (NOT wrap): a wrapping Row cannot host the
+                    # expand title below -- Flutter paints a blank grey box.
                     ft.Row(
                         [
                             ft.Text("سجل التنبيهات والتوصيل", size=15, weight=ft.FontWeight.BOLD, expand=True),
                             ft.OutlinedButton("تحديث السجل", icon=ft.Icons.REFRESH, on_click=refresh_history),
                         ],
-                        wrap=True,
                     ),
                     ft.Text("يعرض التنبيهات الداخلية ومحاولات الإرسال الخارجي دون إظهار بيانات الاعتماد أو تفاصيل الأخطاء الحساسة.", size=11, color=Colors.TEXT_SECONDARY),
                     ft.Text("التنبيهات", size=13, weight=ft.FontWeight.W_600),
