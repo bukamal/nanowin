@@ -977,7 +977,7 @@ class POSCenter:
             self.page.update()
 
         # ---- checkout -----------------------------------------------------
-        def do_checkout(_=None) -> bool:
+        def do_checkout(_=None, *, force_print: bool = False) -> bool:
             if not self.cart_order:
                 self.notify("السلة فارغة")
                 return False
@@ -1003,7 +1003,7 @@ class POSCenter:
                     def proceed(_=None):
                         self.page.close(dialog)
                         self._margin_override = True
-                        if do_checkout():
+                        if do_checkout(force_print=force_print):
                             payment_sheet = getattr(self, "_payment_sheet", None)
                             if payment_sheet is not None:
                                 try:
@@ -1105,7 +1105,7 @@ class POSCenter:
                 clear_cart(undoable=False)
                 refresh_cart()
                 refresh_today_summary()
-                if auto_print_switch.value and self.native_files is not None:
+                if (force_print or auto_print_switch.value) and self.native_files is not None:
                     self.page.run_task(self._print_receipt, invoice_id, interactive=False)
                 try:
                     if self.on_saved:
@@ -2662,11 +2662,11 @@ class POSCenter:
                         self.notify("لا يوجد إجراء للتراجع عنه")
                     return
                 if k == "f12" and pos_settings.f12_print_enabled(self.ctx.settings):
-                    # F12 finishes the current sale (quick cash + auto-print),
-                    # which clears the cart and plays the success cue; with an
-                    # empty cart it reprints the last receipt instead.
+                    # F12 finishes the current sale AND prints it (silent
+                    # profile), clearing the cart and playing the success cue;
+                    # with an empty cart it reprints the last receipt instead.
                     if self.cart_order:
-                        self._do_checkout()
+                        self._do_checkout(force_print=True)
                     else:
                         self._print_last_receipt()
                     return
