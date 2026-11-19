@@ -115,6 +115,21 @@ class InvoiceCenter:
     def money(self, value: float) -> str:
         return currency.format_amount(value, self.ctx.settings)
 
+    def _row_money(self, value: float, row: dict | None) -> str:
+        """Format an amount in the *invoice row's own* currency snapshot.
+
+        The list shows each invoice at the currency/rate it was issued with
+        (exactly like the detail sheet and print), so editing the global
+        exchange rate later never re-expresses historical invoices.
+        """
+        settings = self.ctx.settings
+        if row:
+            try:
+                settings = currency.invoice_settings(row, self.ctx.settings)
+            except Exception:
+                settings = self.ctx.settings
+        return currency.format_amount(value, settings)
+
     @staticmethod
     def _qty(value) -> str:
         """Plain (non-currency) number formatting -- quantities, unit ratios.
@@ -779,7 +794,7 @@ class InvoiceCenter:
                         return (label, Colors.ORANGE_DARK, Colors.WARNING_BG_ALT)
                     return (label, Colors.DANGER_DARKER, Colors.DANGER_BG)
                 if col.kind == "money":
-                    return self.money(value)
+                    return self._row_money(value, row)
                 return None
 
             grid_sort = {"key": None, "dir": None}
@@ -889,7 +904,7 @@ class InvoiceCenter:
                     detail_chip(ft.Icons.TAG_OUTLINED, "المرجع", str(row.get("reference") or "—")),
                     detail_chip(
                         ft.Icons.PAYMENTS_OUTLINED, "مدفوع",
-                        f"{self.money(row.get('paid_amount'))} من {self.money(row.get('total'))}",
+                        f"{self._row_money(row.get('paid_amount'), row)} من {self._row_money(row.get('total'), row)}",
                     ),
                 ]
                 notes = str(row.get("notes") or "").strip()
