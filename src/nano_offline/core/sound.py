@@ -124,11 +124,10 @@ _SOUND_KINDS: frozenset[str] = frozenset(
     {"success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error", "line_add", "pick", "cell"}
 )
 
-# Logical event kinds that reuse an existing bundled asset. ``line_add`` (a
-# line/row appended in an invoice) and ``pick`` (a material chosen from the
-# inline picker) are separate enable-toggles in settings but borrow the short
-# ``scan`` blip rather than shipping a new .wav.
-_ASSET_FOR: dict[str, str] = {"line_add": "scan", "pick": "scan"}
+# Logical event kinds that reuse an existing bundled asset. Empty now that
+# ``line_add`` and ``pick`` ship their own distinct tones (a two-tick add cue
+# and a soft pick pop), so every kind resolves to its own .wav.
+_ASSET_FOR: dict[str, str] = {}
 
 _CTX_ATTR = "_nano_ctx"
 _NATIVE_FILES_ATTR = "_nano_native_files"

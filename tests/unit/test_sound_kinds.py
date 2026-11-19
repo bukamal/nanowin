@@ -1,15 +1,21 @@
-"""Sound-cue catalogue: the two data-entry kinds are registered and gated."""
+"""Sound-cue catalogue: the data-entry kinds are registered with their own tones."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from nano_offline.core import sound, sound_settings
 
 
-def test_data_entry_kinds_are_registered_and_borrow_the_scan_asset():
+def test_data_entry_kinds_are_registered_with_their_own_assets():
     assert "line_add" in sound._SOUND_KINDS
     assert "pick" in sound._SOUND_KINDS
-    assert sound._ASSET_FOR["line_add"] == "scan"
-    assert sound._ASSET_FOR["pick"] == "scan"
+    # These no longer borrow the 'scan' blip -- each resolves to its own .wav.
+    assert sound._ASSET_FOR.get("line_add", "line_add") == "line_add"
+    assert sound._ASSET_FOR.get("pick", "pick") == "pick"
+    sounds = Path(sound.__file__).resolve().parents[2] / "assets" / "sounds"
+    assert (sounds / "line_add.wav").is_file()
+    assert (sounds / "pick.wav").is_file()
 
 
 def test_data_entry_kinds_default_on_and_can_be_disabled():

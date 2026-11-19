@@ -570,6 +570,10 @@ class POSCenter:
                         continue
                 matched.append(item)
             state["matched"] = matched
+            try:
+                grid_count.value = f"{len(matched):,}"
+            except Exception:
+                pass
 
             # Best sellers are shown in the vertical rail now, so the grid is
             # a single flat result set (pos_catalog() still returns
@@ -610,6 +614,7 @@ class POSCenter:
             hint="جرّب اسمًا مختلفًا أو امسح باركود المادة مباشرة",
         )
         empty_box.visible = False
+        grid_count = ft.Text("", size=10, color=Colors.TEXT_SECONDARY)
 
         def search_changed(e=None):
             state["query"] = search_field.value or ""
@@ -2045,7 +2050,24 @@ class POSCenter:
             padding=ft.padding.only(bottom=4),
         )
         catalog_scroll = ft.Column(
-            [grid, empty_box],
+            [
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=15, color=Colors.PRIMARY),
+                        ft.Text("المواد", size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
+                        ft.Container(expand=True),
+                        grid_count,
+                    ],
+                    spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Container(
+                    ft.Column([grid, empty_box], spacing=10),
+                    padding=12,
+                    bgcolor=Colors.WHITE,
+                    border=ft.border.all(1, Colors.BORDER),
+                    border_radius=Radius.LG,
+                ),
+            ],
             spacing=10,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
@@ -2166,26 +2188,31 @@ class POSCenter:
         # Cart header: the title sits on its own centred line at the top of
         # the cart container; the count + action buttons run below it (a Stack
         # used to overlap the title with the icons, tangling the two).
-        cart_header = ft.Column(
-            [
-                ft.Row(
-                    [ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD)],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Row(
-                    [
-                        count_text,
-                        ft.Row([price_check_btn, recall_btn, print_last_btn], spacing=0, tight=True),
-                        ft.Container(expand=True),
-                        discount_cart_btn,
-                        hold_btn,
-                        undo_btn,
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
-            spacing=4, tight=True,
+        cart_header = ft.Container(
+            ft.Column(
+                [
+                    ft.Row(
+                        [ft.Text("السلة", size=16, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK)],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Row(
+                        [
+                            count_text,
+                            ft.Row([price_check_btn, recall_btn, print_last_btn], spacing=0, tight=True),
+                            ft.Container(expand=True),
+                            discount_cart_btn,
+                            hold_btn,
+                            undo_btn,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=4, tight=True,
+            ),
+            padding=ft.padding.symmetric(horizontal=8, vertical=6),
+            bgcolor=Colors.PRIMARY_BG,
+            border_radius=Radius.SM,
         )
         cart_pane = ft.Container(
             ft.Column(
@@ -2211,7 +2238,18 @@ class POSCenter:
         catalog_rail = ft.Container(
             ft.Column(
                 [
-                    ft.Text("التصنيفات", size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.CATEGORY_OUTLINED, size=15, color=Colors.PRIMARY),
+                                ft.Text("التصنيفات", size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK, expand=True),
+                            ],
+                            spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.padding.symmetric(horizontal=8, vertical=7),
+                        bgcolor=Colors.PRIMARY_BG,
+                        border_radius=Radius.SM,
+                    ),
                     cat_list,
                     best_toggle,
                     best_list,

@@ -68,7 +68,7 @@ with tempdir(prefix="nano-sound-") as td:
     sounds_dir = ROOT / "src" / "assets" / "sounds"
     for name in (
         "success.wav", "error.wav", "warning.wav", "info.wav", "scan.wav", "save.wav", "delete.wav",
-        "login.wav", "notify.wav", "barcode_error.wav", "cell.wav",
+        "login.wav", "notify.wav", "barcode_error.wav", "cell.wav", "line_add.wav", "pick.wav",
     ):
         path = sounds_dir / name
         assert path.is_file(), f"missing sound asset: {path}"
@@ -120,7 +120,7 @@ with tempdir(prefix="nano-sound-") as td:
     )
     assert sound_pool_dart.is_file(), f"missing native sound bridge: {sound_pool_dart}"
     dart_source = sound_pool_dart.read_text(encoding="utf-8")
-    for kind in ("success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error"):
+    for kind in ("success", "error", "warning", "info", "scan", "save", "delete", "login", "notify", "barcode_error", "cell", "line_add", "pick"):
         expected_entry = f"'{kind}': 'packages/flet_native_files/assets/sounds/{kind}.wav'"
         assert expected_entry in dart_source, (
             f"sound_pool.dart is missing or has changed the mapping for {kind!r} "
@@ -139,7 +139,7 @@ with tempdir(prefix="nano-sound-") as td:
     )
     for name in (
         "success.wav", "error.wav", "warning.wav", "info.wav", "scan.wav", "save.wav", "delete.wav",
-        "login.wav", "notify.wav", "barcode_error.wav", "cell.wav",
+        "login.wav", "notify.wav", "barcode_error.wav", "cell.wav", "line_add.wav", "pick.wav",
     ):
         path = flutter_sounds_dir / name
         assert path.is_file(), f"missing bundled Flutter sound asset: {path}"

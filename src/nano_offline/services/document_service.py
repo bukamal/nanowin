@@ -163,10 +163,11 @@ class DocumentService:
         header_number_html = (
             f'<div class="doc-number">{self._e(header_number)}</div>' if header_number else ""
         )
-        # Admin-chosen print font/size; "auto" keeps the default Arabic stack.
+        # Admin-chosen print font/size (separate from the on-screen UI font);
+        # "auto" keeps the default Arabic stack.
         chosen_family = font_settings.print_family(settings, None)
         font_stack = f"'{chosen_family}', " if chosen_family else ""
-        base_size = font_settings.font_size(settings)
+        base_size = font_settings.print_font_size(settings)
         return f"""<!doctype html>
 <html lang="ar" dir="rtl">
 <head>

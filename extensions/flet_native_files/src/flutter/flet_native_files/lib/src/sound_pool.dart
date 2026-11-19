@@ -68,6 +68,11 @@ const Map<String, String> kSoundAssetPaths = {
   // A crisp, stronger tick for committing an editable grid cell (distinct
   // from 'scan'/'pick' and from the heavier 'save').
   'cell': 'packages/flet_native_files/assets/sounds/cell.wav',
+  // Dedicated tones so these two no longer borrow 'scan':
+  // 'line_add' = a quick two-tick when a new row is appended to a grid,
+  // 'pick' = a soft pop when a material is chosen from a picker / POS tile.
+  'line_add': 'packages/flet_native_files/assets/sounds/line_add.wav',
+  'pick': 'packages/flet_native_files/assets/sounds/pick.wav',
 };
 
 // Empty prefix: kSoundAssetPaths above already supplies the full

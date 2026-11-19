@@ -2306,9 +2306,9 @@ class AdminCenter:
         theme_schedule_switch.on_change = _sync_schedule_row_visibility
         theme_schedule_row.visible = theme_schedule_switch.value
 
-        # --- Font family + base size (affect the UI and every printed doc) --#
+        # --- UI typography (screen) + Print typography (documents), separate -#
         font_family_field = ft.Dropdown(
-            label="خط الواجهة والطباعة",
+            label="خط الواجهة",
             value=font_settings.family(sset),
             options=[ft.dropdown.Option(key, label) for key, label in font_settings.FAMILIES],
             filled=True,
@@ -2317,6 +2317,18 @@ class AdminCenter:
         font_size_field = SegmentedToggle(
             options=[SegmentOption(str(px), label) for px, label in font_settings.SIZES],
             value=str(font_settings.font_size(sset)),
+        )
+        print_family_field = ft.Dropdown(
+            label="خط الطباعة",
+            value=str(sset.get(font_settings.SETTING_PRINT_FAMILY, "") or ""),
+            options=[ft.dropdown.Option("", "مثل الواجهة")]
+            + [ft.dropdown.Option(key, label) for key, label in font_settings.FAMILIES],
+            filled=True,
+            bgcolor=Colors.BACKGROUND_ALT,
+        )
+        print_size_field = SegmentedToggle(
+            options=[SegmentOption(str(px), label) for px, label in font_settings.SIZES],
+            value=str(font_settings.print_font_size(sset)),
         )
         fit_width_switch = ft.Switch(
             label="ملاءمة عرض أعمدة الجداول للشاشة تلقائيًا (توزيع نسبي بلا فيض)",
@@ -2334,6 +2346,8 @@ class AdminCenter:
             sset.set_many({
                 font_settings.SETTING_FAMILY: font_family_field.value or font_settings.DEFAULT_FAMILY,
                 font_settings.SETTING_SIZE: font_size_field.value or str(font_settings.DEFAULT_SIZE),
+                font_settings.SETTING_PRINT_FAMILY: print_family_field.value or "",
+                font_settings.SETTING_PRINT_SIZE: print_size_field.value or str(font_settings.print_font_size(sset)),
                 grid_settings.FIT_WIDTH_KEY: "1" if fit_width_switch.value else "0",
             })
             self._notify("تم حفظ إعدادات المظهر والخط", kind="success")
@@ -2928,15 +2942,23 @@ class AdminCenter:
                     ft.Text("مظهر التطبيق", size=12, weight=ft.FontWeight.W_600),
                     theme_mode_toggle,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                    ft.Text("الخط وحجمه", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text("خط الواجهة وحجمه", size=12, weight=ft.FontWeight.W_600),
                     ft.Text(
-                        "يُطبَّق خط الواجهة على كل الشاشات، ويُستخدم أيضًا في الطباعة وملفات PDF. "
-                        "الحجم الأساسي يضبط حجم نصوص المستندات المطبوعة وملفات PDF.",
+                        "يُطبَّق على كل شاشات التطبيق (لا يؤثر على الطباعة).",
                         size=11, color=Colors.TEXT_FAINT,
                     ),
                     font_family_field,
-                    ft.Text("الحجم الأساسي (للطباعة)", size=11, color=Colors.TEXT_SECONDARY),
+                    ft.Text("حجم خط الواجهة", size=11, color=Colors.TEXT_SECONDARY),
                     font_size_field,
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Text("الطباعة (الفواتير وملفات PDF)", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "خط وحجم المستندات المطبوعة وملفات PDF فقط. «مثل الواجهة» يتبع خط الواجهة.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                    print_family_field,
+                    ft.Text("حجم خط الطباعة", size=11, color=Colors.TEXT_SECONDARY),
+                    print_size_field,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("الشكل والكثافة والحركة", size=12, weight=ft.FontWeight.W_600),
                     ft.Text(

@@ -15,6 +15,10 @@ from __future__ import annotations
 
 SETTING_FAMILY = "ui.font_family"
 SETTING_SIZE = "ui.font_size"
+# Separate print typography, so screen and paper can differ. Both fall back to
+# the UI values when unset (existing installs keep printing as before).
+SETTING_PRINT_FAMILY = "print.font_family"
+SETTING_PRINT_SIZE = "print.font_size"
 
 DEFAULT_FAMILY = "auto"
 DEFAULT_SIZE = 13
@@ -84,8 +88,30 @@ def ui_family(settings, bundled: str | None) -> str | None:
 
 
 def print_family(settings, bundled: str | None) -> str | None:
-    """Family to place first in the print CSS stack (``None`` = default)."""
-    return ui_family(settings, bundled)
+    """Family to place first in the print CSS stack.
+
+    Prefers the dedicated print family; falls back to the UI family, then the
+    bundled default -- so splitting the settings never changes existing print
+    output until the admin actually picks a print-specific family.
+    """
+    try:
+        chosen = str(settings.get(SETTING_PRINT_FAMILY, "")).strip()
+    except Exception:
+        chosen = ""
+    if chosen not in _FAMILY_LABELS:
+        chosen = family(settings)
+    if chosen == "auto":
+        return bundled
+    return chosen
+
+
+def print_font_size(settings) -> int:
+    """Point size for printed documents (print-specific, else UI size)."""
+    try:
+        value = int(float(settings.get(SETTING_PRINT_SIZE, "")))
+    except (TypeError, ValueError):
+        return font_size(settings)
+    return value if value in _SIZE_VALUES else font_size(settings)
 
 
 def label_for_family(key: str) -> str:
@@ -97,7 +123,9 @@ def label_for_size(px: int) -> str:
 
 
 __all__ = [
-    "SETTING_FAMILY", "SETTING_SIZE", "DEFAULT_FAMILY", "DEFAULT_SIZE",
-    "FAMILIES", "SIZES", "family", "font_size", "ui_scale_factor", "ui_family", "print_family",
+    "SETTING_FAMILY", "SETTING_SIZE", "SETTING_PRINT_FAMILY", "SETTING_PRINT_SIZE",
+    "DEFAULT_FAMILY", "DEFAULT_SIZE",
+    "FAMILIES", "SIZES", "family", "font_size", "ui_scale_factor", "ui_family",
+    "print_family", "print_font_size",
     "label_for_family", "label_for_size",
 ]
