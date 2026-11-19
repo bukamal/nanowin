@@ -67,13 +67,36 @@ class ClientAuth:
     def create_user(self, **kwargs):
         return self._transport.call("auth", "create_user", **kwargs)
 
+    def update_user(self, user_id: int, **kwargs):
+        return self._transport.call("auth", "update_user", user_id=int(user_id), **kwargs)
+
     def set_active(self, user_id: int, active: bool) -> None:
         return self._transport.call("auth", "set_active", user_id=int(user_id), active=bool(active))
 
-    def reset_password(self, user_id: int, new_password: str) -> None:
+    def set_permissions(self, user_id: int, granted) -> None:
         return self._transport.call(
-            "auth", "reset_password", user_id=int(user_id), new_password=str(new_password)
+            "auth", "set_permissions", user_id=int(user_id), granted=list(granted or ())
         )
+
+    def reset_password(self, user_id: int, new_password: str, force_change: bool = True) -> None:
+        return self._transport.call(
+            "auth",
+            "reset_password",
+            user_id=int(user_id),
+            new_password=str(new_password),
+            force_change=bool(force_change),
+        )
+
+    def change_password(self, current_password: str, new_password: str) -> None:
+        return self._transport.call(
+            "auth",
+            "change_password",
+            current_password=str(current_password),
+            new_password=str(new_password),
+        )
+
+    def unlock_user(self, user_id: int) -> None:
+        return self._transport.call("auth", "unlock_user", user_id=int(user_id))
 
     def audit_entries(self, limit: int = 200, offset: int = 0) -> list:
         return self._transport.call("auth", "audit_entries", limit=int(limit), offset=int(offset))
@@ -109,6 +132,8 @@ class ClientAuth:
             str(user.get("username") or ""),
             str(user.get("full_name") or ""),
             str(user.get("role") or ""),
+            frozenset(str(key) for key in (user.get("permissions") or ())),
+            bool(user.get("must_change_password")),
         )
         return self._session
 

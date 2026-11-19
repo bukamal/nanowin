@@ -367,6 +367,25 @@ class InvoiceCenter:
         )
         self.page.update()
 
+    def _can_delete(self) -> bool:
+        session = self.ctx.auth.current()
+        return bool(session and session.can("delete_invoices"))
+
+    def _can_invoice_kind(self, invoice_type: str | None) -> bool:
+        session = self.ctx.auth.current()
+        if not session:
+            return False
+        key = "invoices_purchases" if (invoice_type or "sale") == "purchase" else "invoices_sales"
+        return session.can(key)
+
+    def _deny_invoice_kind(self, invoice_type: str | None) -> bool:
+        if self._can_invoice_kind(invoice_type):
+            return False
+        self.notify(
+            "لا تملك صلاحية إنشاء أو تعديل هذا النوع من الفواتير", kind="warning"
+        )
+        return True
+
     def _bottom_sheet(self, *, icon: str, icon_color: str, icon_bg: str, title: str, subtitle: str, body: ft.Control) -> ft.BottomSheet:
         # Same modal shell used by SecurityCenter/LoginGate (drag handle,
         # rounded top corners, icon bubble + title/subtitle, LG shadow) --
@@ -448,14 +467,13 @@ class InvoiceCenter:
             close()
             self.confirm_delete(invoice_id)
 
-        body = ft.Column(
-            [
-                self._sheet_action(icon=ft.Icons.PRINT_OUTLINED, icon_color=Colors.PRIMARY, icon_bg=Colors.PRIMARY_BG, label="طباعة", sublabel="طباعة الفاتورة مباشرة", on_click=do_print),
-                self._sheet_action(icon=ft.Icons.DESCRIPTION_OUTLINED, icon_color=Colors.PRIMARY, icon_bg=Colors.PRIMARY_BG, label="مشاركة PDF", sublabel="تصدير الفاتورة كملف PDF", on_click=do_pdf),
-                self._sheet_action(icon=ft.Icons.DELETE_OUTLINE, icon_color=Colors.DANGER, icon_bg=Colors.DANGER_BG, label="حذف الفاتورة", sublabel="حذف نهائي مع إعادة احتساب المخزون والأرصدة", on_click=do_delete),
-            ],
-            spacing=4,
-        )
+        body_actions = [
+            self._sheet_action(icon=ft.Icons.PRINT_OUTLINED, icon_color=Colors.PRIMARY, icon_bg=Colors.PRIMARY_BG, label="طباعة", sublabel="طباعة الفاتورة مباشرة", on_click=do_print),
+            self._sheet_action(icon=ft.Icons.DESCRIPTION_OUTLINED, icon_color=Colors.PRIMARY, icon_bg=Colors.PRIMARY_BG, label="مشاركة PDF", sublabel="تصدير الفاتورة كملف PDF", on_click=do_pdf),
+        ]
+        if self._can_delete():
+            body_actions.append(self._sheet_action(icon=ft.Icons.DELETE_OUTLINE, icon_color=Colors.DANGER, icon_bg=Colors.DANGER_BG, label="حذف الفاتورة", sublabel="حذف نهائي مع إعادة احتساب المخزون والأرصدة", on_click=do_delete))
+        body = ft.Column(body_actions, spacing=4)
         sheet = self._bottom_sheet(
             icon=ft.Icons.RECEIPT_LONG_ROUNDED,
             icon_color=Colors.PRIMARY,
@@ -645,12 +663,13 @@ class InvoiceCenter:
             ft.FilledButton("إغلاق", on_click=close, expand=True),
         ]
         body.controls.append(ft.Row(actions, spacing=8))
-        body.controls.append(
-            ft.Row(
-                [ft.TextButton("حذف الفاتورة", icon=ft.Icons.DELETE_OUTLINE, on_click=do_delete)],
-                alignment=ft.MainAxisAlignment.CENTER,
+        if self._can_delete():
+            body.controls.append(
+                ft.Row(
+                    [ft.TextButton("حذف الفاتورة", icon=ft.Icons.DELETE_OUTLINE, on_click=do_delete)],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                )
             )
-        )
 
         sheet = self._bottom_sheet(
             icon=ft.Icons.TRENDING_UP if sale else ft.Icons.TRENDING_DOWN,
@@ -701,6 +720,15 @@ class InvoiceCenter:
         alert kept on top of it."""
         if initial_type not in ("sale", "purchase"):
             initial_type = "all"
+        session = self.ctx.auth.current()
+        can_sales = bool(session and session.can("invoices_sales"))
+        can_purchases = bool(session and session.can("invoices_purchases"))
+        if initial_type == "sale" and not can_sales:
+            initial_type = "all"
+        if initial_type == "purchase" and not can_purchases:
+            initial_type = "all"
+        if initial_type == "all" and can_sales != can_purchases:
+            initial_type = "sale" if can_sales else "purchase"
         if self.on_title_change:
             self.on_title_change("الفواتير", "المبيعات والمشتريات وحالات السداد")
         try:
@@ -1066,10 +1094,11 @@ class InvoiceCenter:
 
                     items.append(("دمج طلب مفتوح في هذا الطلب", ft.Icons.CALL_MERGE, _merge_open_order))
                     items.append(("تقسيم الطلب", ft.Icons.CALL_SPLIT, _split_open_order))
-                items.extend([
-                    None,
-                    ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),
-                ])
+                if self._can_delete():
+                    items.extend([
+                        None,
+                        ("حذف", ft.Icons.DELETE_OUTLINE, lambda i=invoice_id: self.confirm_delete(i)),
+                    ])
                 return items
 
             def render_bulk_bar(rows: list[dict]) -> None:
@@ -1094,6 +1123,9 @@ class InvoiceCenter:
                     pass
 
             def confirm_bulk_delete(_=None) -> None:
+                if not self._can_delete():
+                    self.notify("لا تملك صلاحية حذف الفواتير", kind="warning")
+                    return
                 rows = list(selected_state["rows"])
                 if not rows:
                     return
@@ -1259,12 +1291,15 @@ class InvoiceCenter:
                 )
 
             def render_filters() -> None:
-                type_row.controls = [
-                    chip("الكل", "type", "all", type_row),
-                    chip("مبيعات", "type", "sale", type_row),
-                    chip("مشتريات", "type", "purchase", type_row),
-                    chip("أول مدة", "type", "opening", type_row),
-                ]
+                type_controls = []
+                if can_sales and can_purchases:
+                    type_controls.append(chip("الكل", "type", "all", type_row))
+                if can_sales:
+                    type_controls.append(chip("مبيعات", "type", "sale", type_row))
+                if can_purchases:
+                    type_controls.append(chip("مشتريات", "type", "purchase", type_row))
+                    type_controls.append(chip("أول مدة", "type", "opening", type_row))
+                type_row.controls = type_controls
                 status_row.controls = [
                     chip("كل الحالات", "status", "all", status_row),
                     chip("المستحق", "status", "outstanding", status_row),
@@ -1454,6 +1489,9 @@ class InvoiceCenter:
         self.page.open(sheet)
 
     def confirm_delete(self, invoice_id: int) -> None:
+        if not self._can_delete():
+            self.notify("لا تملك صلاحية حذف الفواتير", kind="warning")
+            return
         invoice = self.ctx.invoices.get_invoice(invoice_id)
         if not invoice:
             self.notify("الفاتورة غير موجودة")
@@ -1509,6 +1547,8 @@ class InvoiceCenter:
         indistinguishable from one saved from the full page.
         """
         invoice_type = invoice_type if invoice_type in ("sale", "purchase") else "sale"
+        if self._deny_invoice_kind(invoice_type):
+            return
         self.invoice_type = invoice_type
         settings = self.ctx.settings
         rate = currency.get_effective_rate(settings)
@@ -2217,6 +2257,8 @@ class InvoiceCenter:
         invoice_type = invoice_type if invoice_type in ("sale", "purchase") else "sale"
         if existing:
             invoice_type = existing["type"]
+        if self._deny_invoice_kind(invoice_type):
+            return
         self.editing_id = invoice_id
         self.invoice_type = invoice_type
         # Which invoice the sheet is currently editing (None = a new invoice).

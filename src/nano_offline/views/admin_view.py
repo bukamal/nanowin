@@ -17,7 +17,7 @@ from nano_offline.components.buttons import danger_button, primary_button, secon
 from nano_offline.components.sections_sheet import open_sections_sheet
 from nano_offline.components.restaurant_boards import open_kitchen_board
 from nano_offline.components.tables_admin import open_tables_admin
-from nano_offline.services.auth_service import ROLE_LABELS
+from nano_offline.services.auth_service import CAPABILITIES, ROLE_LABELS, ROLE_PERMISSIONS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
 from nano_offline.core.theme import BRAND_PRESETS, Colors, Radius, Shadow, normalize_brand_accent, set_brand_accent
@@ -212,6 +212,9 @@ class AdminCenter:
         username = SelectAllTextField(label="اسم المستخدم")
         full_name = SelectAllTextField(label="الاسم الكامل")
         password = SelectAllTextField(label="كلمة المرور", password=True, can_reveal_password=True)
+        confirm_password = SelectAllTextField(
+            label="تأكيد كلمة المرور", password=True, can_reveal_password=True
+        )
         role = SearchSelect(
             label="الدور",
             value="accountant",
@@ -219,36 +222,127 @@ class AdminCenter:
             allow_clear=False,
             dropdown=True,
         )
+        must_change = ft.Switch(
+            label="إجبار المستخدم على تغيير كلمة المرور عند أول دخول",
+            value=False,
+            active_color=Colors.PRIMARY,
+        )
+        users_search = SelectAllTextField(
+            label="بحث بالاسم أو اسم المستخدم",
+            prefix_icon=ft.Icons.SEARCH_ROUNDED,
+            on_change=lambda _: refresh_users(),
+        )
+        permission_switches: dict[str, ft.Switch] = {}
+        for cap_key, (cap_label, _group) in CAPABILITIES.items():
+            permission_switches[cap_key] = ft.Switch(
+                label=cap_label, value=False, active_color=Colors.PRIMARY
+            )
+
+        def apply_role_preset(role_key: str | None = None, granted=None) -> None:
+            caps = granted if granted is not None else ROLE_PERMISSIONS.get(
+                str(role_key or role.value or "accountant"), frozenset()
+            )
+            for cap_key, switch in permission_switches.items():
+                switch.value = cap_key in caps
+
+        def role_changed(_=None) -> None:
+            apply_role_preset(role.value)
+            self.page.update()
+
+        role.on_change = role_changed
+
+        access_switches = [
+            sw for key, (_l, group) in CAPABILITIES.items()
+            if group == "access" for sw in [permission_switches[key]]
+        ]
+        sensitive_switches = [
+            sw for key, (_l, group) in CAPABILITIES.items()
+            if group == "sensitive" for sw in [permission_switches[key]]
+        ]
+
+        def permissions_panel() -> ft.Control:
+            return ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.KEY_OUTLINED, size=16, color=Colors.TEXT_SECONDARY),
+                            ft.Text("صلاحيات الوصول", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                        ],
+                        spacing=6,
+                    ),
+                    ft.ResponsiveRow(
+                        [ft.Container(sw, col={"xs": 12, "md": 6}) for sw in access_switches],
+                        spacing=4, run_spacing=0,
+                    ),
+                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.SHIELD_OUTLINED, size=16, color=Colors.WARNING_DARK),
+                            ft.Text("صلاحيات حساسة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                        ],
+                        spacing=6,
+                    ),
+                    ft.ResponsiveRow(
+                        [ft.Container(sw, col={"xs": 12, "md": 6}) for sw in sensitive_switches],
+                        spacing=4, run_spacing=0,
+                    ),
+                    ft.TextButton(
+                        "إرجاع الصلاحيات إلى الدور المحدد",
+                        icon=ft.Icons.RESTART_ALT,
+                        on_click=lambda _: (apply_role_preset(role.value), self.page.update()),
+                    ),
+                ],
+                spacing=8,
+            )
+
         users_grid = DataGrid(
             columns=[
                 GridColumn("full_name", "الاسم"),
-                GridColumn("username", "اسم المستخدم", width=170),
-                GridColumn("role_label", "الدور", width=150, align="center"),
-                GridColumn("status_label", "الحالة", width=100, align="center", kind="badge"),
+                GridColumn("username", "اسم المستخدم", width=150),
+                GridColumn("role_label", "الدور", width=130, align="center"),
+                GridColumn("status_label", "الحالة", width=90, align="center", kind="badge"),
+                GridColumn("last_login_label", "آخر دخول", width=160, align="center"),
             ],
             rows=[],
             viewport_height=340,
             boxed=True,
             center_cells=True,
-            empty_text="لا يوجد مستخدمون",
-            activate_tooltip="تفاصيل المستخدم",
+            empty_text="لا يوجد مستخدمون بعد — أضف أول مستخدم.",
+            activate_tooltip="تعديل المستخدم",
             formatter=lambda col, value, row: (
                 (str(value), Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
                 if col.key == "status_label" and value == "نشط"
-                else (str(value), Colors.TEXT_SECONDARY, Colors.BACKGROUND)
+                else (str(value), Colors.DANGER_DARK, Colors.DANGER_BG)
                 if col.key == "status_label"
                 else None
             ),
         )
-        def sort_users(key: str | None, direction: str | None):
-            rows = [
-                {
+
+        def _last_login_label(value) -> str:
+            text = str(value or "").replace("T", " ").strip()
+            return text[:16] if text else "—"
+
+        def _user_rows() -> list[dict]:
+            term = (users_search.value or "").strip().casefold()
+            rows = []
+            try:
+                users = self.ctx.auth.list_users()
+            except PermissionError:
+                return []
+            for user in users:
+                haystack = f"{user.get('full_name') or ''} {user.get('username') or ''}".casefold()
+                if term and term not in haystack:
+                    continue
+                rows.append({
                     **user,
                     "role_label": ROLE_LABELS.get(str(user["role"]), str(user["role"])),
                     "status_label": "نشط" if bool(user["is_active"]) else "موقوف",
-                }
-                for user in self.ctx.auth.list_users()
-            ]
+                    "last_login_label": _last_login_label(user.get("last_login_at")),
+                })
+            return rows
+
+        def sort_users(key: str | None, direction: str | None):
+            rows = _user_rows()
             if key:
                 rows.sort(
                     key=lambda row: str(row.get(key) or "").casefold(),
@@ -259,16 +353,179 @@ class AdminCenter:
         users_grid.on_sort = sort_users
 
         def refresh_users():
-            users = self.ctx.auth.list_users()
-            rows = [
-                {
-                    **user,
-                    "role_label": ROLE_LABELS.get(str(user["role"]), str(user["role"])),
-                    "status_label": "نشط" if bool(user["is_active"]) else "موقوف",
-                }
-                for user in users
-            ]
-            users_grid.set_rows(rows)
+            users_grid.set_rows(_user_rows())
+
+        editing_user: dict = {"user": None}
+        user_sheet: dict = {"control": None}
+
+        def open_user_sheet(user: dict | None = None):
+            from nano_offline.components import sheets
+
+            editing_user["user"] = user
+            is_edit = user is not None
+            if is_edit:
+                username.value = str(user.get("username") or "")
+                username.disabled = True
+                full_name.value = str(user.get("full_name") or "")
+                role.value = str(user.get("role") or "accountant")
+                apply_role_preset(role.value, set(user.get("permissions") or ()))
+                must_change.value = bool(user.get("must_change_password"))
+                password.label = "كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية)"
+            else:
+                username.value = ""
+                username.disabled = False
+                full_name.value = ""
+                role.value = "accountant"
+                apply_role_preset("accountant")
+                must_change.value = False
+                password.label = "كلمة المرور"
+            password.value = ""
+            confirm_password.value = ""
+
+            title = "تعديل المستخدم" if is_edit else "مستخدم جديد"
+            submit_label = "حفظ التعديلات" if is_edit else "إنشاء المستخدم"
+
+            sheet, _width = sheets.new_desktop_sheet(self.page)
+            user_sheet["control"] = sheet
+
+            def close(_=None):
+                self.page.close(sheet)
+
+            def save(_=None):
+                try:
+                    granted = [key for key, switch in permission_switches.items() if switch.value]
+                    raw_password = password.value or ""
+                    raw_confirm = confirm_password.value or ""
+                    if raw_password or raw_confirm:
+                        if raw_password != raw_confirm:
+                            raise ValueError("تأكيد كلمة المرور غير مطابق")
+                    if is_edit:
+                        self.ctx.auth.update_user(
+                            int(user["id"]),
+                            full_name=full_name.value or "",
+                            role=str(role.value or "accountant"),
+                            permissions=granted,
+                        )
+                        if raw_password:
+                            self.ctx.auth.reset_password(
+                                int(user["id"]), raw_password,
+                                force_change=bool(must_change.value),
+                            )
+                    else:
+                        if not raw_password:
+                            raise ValueError("كلمة المرور مطلوبة")
+                        self.ctx.auth.create_user(
+                            username=username.value or "",
+                            full_name=full_name.value or "",
+                            password=raw_password,
+                            role=str(role.value or "accountant"),
+                            permissions=granted,
+                            must_change_password=bool(must_change.value),
+                        )
+                    close()
+                    refresh_users()
+                    self._notify("تم حفظ المستخدم", sound_kind="save")
+                    self.page.update()
+                except Exception as exc:
+                    self._notify(str(exc), kind="error")
+
+            sheet.content = sheets.sheet_frame(
+                ft.Column(
+                    [
+                        sheets.sheet_handle(),
+                        ft.Text(title, size=18, weight=ft.FontWeight.BOLD),
+                        ft.ResponsiveRow(
+                            [
+                                ft.Container(username, col={"xs": 12, "md": 6}),
+                                ft.Container(full_name, col={"xs": 12, "md": 6}),
+                                ft.Container(role, col={"xs": 12, "md": 6}),
+                                ft.Container(password, col={"xs": 12, "md": 3}),
+                                ft.Container(confirm_password, col={"xs": 12, "md": 3}),
+                            ],
+                            spacing=10,
+                        ),
+                        must_change,
+                        ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                        permissions_panel(),
+                        ft.Row(
+                            [
+                                ft.TextButton("إلغاء", on_click=close),
+                                primary_button(
+                                    submit_label,
+                                    icon=ft.Icons.SAVE_OUTLINED if is_edit else ft.Icons.PERSON_ADD,
+                                    on_click=save,
+                                    width=None,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.END,
+                            spacing=8,
+                        ),
+                    ],
+                    spacing=12,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                width=780,
+            )
+            self.page.open(sheet)
+
+        def open_create_user_sheet(_=None):
+            open_user_sheet(None)
+
+        def reset_password_dialog(user: dict):
+            from nano_offline.components import sheets
+
+            new_field = SelectAllTextField(
+                label="كلمة المرور الجديدة", password=True, can_reveal_password=True
+            )
+            confirm_field = SelectAllTextField(
+                label="تأكيد كلمة المرور", password=True, can_reveal_password=True
+            )
+            force_switch = ft.Switch(
+                label="إجبار التغيير عند أول دخول", value=True, active_color=Colors.PRIMARY
+            )
+            sheet, _width = sheets.new_desktop_sheet(self.page)
+            user_sheet["control"] = sheet
+
+            def close(_=None):
+                self.page.close(sheet)
+
+            def reset(_=None):
+                try:
+                    if (new_field.value or "") != (confirm_field.value or ""):
+                        raise ValueError("تأكيد كلمة المرور غير مطابق")
+                    self.ctx.auth.reset_password(
+                        int(user["id"]), new_field.value or "",
+                        force_change=bool(force_switch.value),
+                    )
+                    close()
+                    refresh_users()
+                    self._notify("تم إعادة تعيين كلمة المرور")
+                    self.page.update()
+                except Exception as exc:
+                    self._notify(str(exc), kind="error")
+
+            sheet.content = sheets.sheet_frame(
+                ft.Column(
+                    [
+                        sheets.sheet_handle(),
+                        ft.Text(f"إعادة تعيين كلمة المرور — {user.get('full_name') or user.get('username')}",
+                                size=17, weight=ft.FontWeight.BOLD),
+                        new_field, confirm_field, force_switch,
+                        ft.Row(
+                            [
+                                ft.TextButton("إلغاء", on_click=close),
+                                primary_button("إعادة التعيين", icon=ft.Icons.LOCK_RESET,
+                                               on_click=reset, width=None),
+                            ],
+                            alignment=ft.MainAxisAlignment.END,
+                            spacing=8,
+                        ),
+                    ],
+                    spacing=12,
+                ),
+                width=560,
+            )
+            self.page.open(sheet)
 
         def user_row_menu(user: dict) -> list:
             user_id = int(user["id"])
@@ -283,107 +540,32 @@ class AdminCenter:
                 except Exception as exc:
                     self._notify(str(exc), kind="error")
 
-            def show_user_details():
-                from nano_offline.components import sheets
+            def unlock_user():
+                try:
+                    self.ctx.auth.unlock_user(user_id)
+                    refresh_users()
+                    self._notify("تم فكّ قفل الحساب")
+                    self.page.update()
+                except Exception as exc:
+                    self._notify(str(exc), kind="error")
 
-                sheet, _ = sheets.new_desktop_sheet(self.page)
-                sheet.content = sheets.sheet_frame(
-                    ft.Column(
-                        [
-                            sheets.sheet_handle(),
-                            ft.Text(str(user.get("full_name") or ""), size=18, weight=ft.FontWeight.BOLD),
-                            ft.Text(f"اسم المستخدم: {user.get('username') or '—'}"),
-                            ft.Text(f"الدور: {ROLE_LABELS.get(str(user.get('role')), str(user.get('role') or '—'))}"),
-                            ft.Text(f"الحالة: {'نشط' if active else 'موقوف'}"),
-                            ft.Text(f"آخر دخول: {user.get('last_login') or 'غير متوفر'}"),
-                            ft.Row(
-                                [
-                                    ft.OutlinedButton(
-                                        "إغلاق",
-                                        on_click=lambda _: self.page.close(sheet),
-                                    ),
-                                    secondary_button(
-                                        "تغيير الحالة",
-                                        icon=ft.Icons.BLOCK if active else ft.Icons.CHECK_CIRCLE_OUTLINE,
-                                        on_click=lambda _: (self.page.close(sheet), toggle_user()),
-                                    ),
-                                ],
-                                spacing=8,
-                            ),
-                        ],
-                        spacing=12,
-                    ),
-                    width=560,
-                )
-                self.page.open(sheet)
-
-            return [
-                ("تفاصيل المستخدم", ft.Icons.PERSON_OUTLINE, show_user_details),
+            items: list = [
+                ("تعديل المستخدم", ft.Icons.EDIT_OUTLINED, lambda: open_user_sheet(user)),
+                ("إعادة تعيين كلمة المرور", ft.Icons.LOCK_RESET,
+                 lambda: reset_password_dialog(user)),
+            ]
+            if user.get("locked_until"):
+                items.append(("فكّ قفل الحساب", ft.Icons.LOCK_OPEN, unlock_user))
+            items.extend([
                 None,
                 ("إيقاف المستخدم" if active else "تفعيل المستخدم",
                  ft.Icons.BLOCK if active else ft.Icons.CHECK_CIRCLE_OUTLINE, toggle_user),
-            ]
+            ])
+            return items
 
         users_grid.on_row_menu = user_row_menu
-        users_grid.on_row_activate = lambda user: user_row_menu(user)[0][2]()
-        users_grid.activate_tooltip = "تفاصيل المستخدم"
-        user_sheet = {"control": None}
-
-        def open_create_user_sheet(_=None):
-            from nano_offline.components import sheets
-
-            sheet, _width = sheets.new_desktop_sheet(self.page)
-            user_sheet["control"] = sheet
-            sheet.content = sheets.sheet_frame(
-                ft.Column(
-                    [
-                        sheets.sheet_handle(),
-                        ft.Text("إنشاء مستخدم", size=18, weight=ft.FontWeight.BOLD),
-                        ft.ResponsiveRow(
-                            [
-                                ft.Container(username, col={"xs": 12, "md": 6}),
-                                ft.Container(full_name, col={"xs": 12, "md": 6}),
-                                ft.Container(password, col={"xs": 12, "md": 6}),
-                                ft.Container(role, col={"xs": 12, "md": 6}),
-                            ],
-                            spacing=10,
-                        ),
-                        ft.Row(
-                            [
-                                ft.TextButton("إلغاء", on_click=lambda _: self.page.close(sheet)),
-                                primary_button(
-                                    "إنشاء المستخدم",
-                                    icon=ft.Icons.PERSON_ADD,
-                                    on_click=create_user,
-                                    width=None,
-                                ),
-                            ],
-                            alignment=ft.MainAxisAlignment.END,
-                            spacing=8,
-                        ),
-                    ],
-                    spacing=12,
-                ),
-                width=720,
-            )
-            self.page.open(sheet)
-
-        def create_user(_):
-            try:
-                self.ctx.auth.create_user(
-                    username=username.value or "",
-                    full_name=full_name.value or "",
-                    password=password.value or "",
-                    role=role.value or "accountant",
-                )
-                username.value = full_name.value = password.value = ""
-                if user_sheet["control"] is not None:
-                    self.page.close(user_sheet["control"])
-                refresh_users()
-                self._notify("تم إنشاء المستخدم")
-                self.page.update()
-            except Exception as exc:
-                self._notify(str(exc), kind="error")
+        users_grid.on_row_activate = lambda user: open_user_sheet(user)
+        users_grid.activate_tooltip = "تعديل المستخدم"
 
         refresh_users()
 
@@ -2003,6 +2185,10 @@ class AdminCenter:
             "update": "تعديل",
             "delete": "حذف",
             "password_reset": "إعادة تعيين كلمة المرور",
+            "password_change": "تغيير كلمة المرور",
+            "unlock": "فكّ قفل الحساب",
+            "quick_auth_set": "تفعيل الدخول السريع",
+            "quick_auth_clear": "إلغاء الدخول السريع",
             "login": "تسجيل دخول",
             "logout": "تسجيل خروج",
             "restore": "استعادة نسخة",
@@ -2199,7 +2385,10 @@ class AdminCenter:
         # at-a-glance read (users/license/backup/company) without opening
         # anything. None of the section content, handlers, or variables
         # above this point changed -- only how they're arranged and shown.
-        all_users_now = self.ctx.auth.list_users()
+        try:
+            all_users_now = self.ctx.auth.list_users()
+        except PermissionError:
+            all_users_now = []
         active_users_count = sum(1 for u in all_users_now if u["is_active"])
         total_users_count = len(all_users_now)
         license_status_now = self.ctx.license.status()
@@ -3596,7 +3785,17 @@ class AdminCenter:
             ("reports", "التقارير", ft.Icons.BAR_CHART_OUTLINED),
             ("audit", "سجل التدقيق", ft.Icons.HISTORY),
         ]
-        initial = getattr(self, "_pending_section", None) or "users"
+        session_now = self.ctx.auth.current()
+        can_users = bool(session_now and session_now.can("admin_users"))
+        can_backup = bool(session_now and session_now.can("admin_backup"))
+        TABS = [
+            tab for tab in TABS
+            if (tab[0] == "backup" and can_backup) or (tab[0] != "backup" and can_users)
+        ]
+        allowed_tab_keys = {tab[0] for tab in TABS}
+        initial = getattr(self, "_pending_section", None)
+        if initial not in allowed_tab_keys:
+            initial = TABS[0][0] if TABS else "users"
         self._pending_section = None
         tab_state = {"active": initial}
         section_nav = ft.Row(wrap=True, spacing=8, run_spacing=8)

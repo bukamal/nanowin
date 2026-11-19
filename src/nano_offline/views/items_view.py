@@ -270,6 +270,12 @@ class ItemsCenter:
         money = self.money
         qty_fmt = self._qty
         self._set_header("المواد", "إدارة المخزون والخدمات والتصنيفات والوحدات")
+        session = ctx.auth.current()
+        can_view_cost = bool(session and session.can("view_cost"))
+        item_columns = [
+            column for column in ITEM_GRID_COLUMNS
+            if can_view_cost or column.key not in {"purchase_price", "_stock_usd", "_stock_syp"}
+        ]
         categories = ctx.definitions.list_categories()
         units = ctx.definitions.list_units()
         # Late-bound: `grid` is created a few lines below; the lambda only
@@ -376,7 +382,7 @@ class ItemsCenter:
         selected_state = {"rows": []}
         export_state = {"rows": []}
         columns_visibility = ColumnVisibility(
-            columns=ITEM_GRID_COLUMNS,
+            columns=item_columns,
             settings=ctx.settings,
             preference_key="ui.items_hidden_columns",
             auto_hidden={"category_name", "unit_name"} if (page.width or 1200) < 720 else set(),
@@ -571,7 +577,7 @@ class ItemsCenter:
         bulk_bar = ft.Container(visible=False)
 
         grid = DataGrid(
-            columns=ITEM_GRID_COLUMNS,
+            columns=item_columns,
             rows=[],
             page=page,
             row_height=36 if density_state["compact"] else 48,

@@ -127,7 +127,7 @@ def register_shell_routes(
     router.register(
         "pos",
         label="نقطة البيع",
-        permission="invoices",
+        permission="invoices_sales",
         render=pos_render,
         on_leave=pos_on_leave,
     )
@@ -135,7 +135,7 @@ def register_shell_routes(
         "sale",
         label="فاتورة بيع",
         subtitle="إنشاء فاتورة بيع جديدة — النقدي افتراضيًا",
-        permission="invoices",
+        permission="invoices_sales",
         render=sale_render,
         replace_current=True,
     )
@@ -143,7 +143,7 @@ def register_shell_routes(
         "purchase",
         label="فاتورة شراء",
         subtitle="إنشاء فاتورة شراء جديدة — النقدي افتراضيًا",
-        permission="invoices",
+        permission="invoices_purchases",
         render=purchase_render,
         replace_current=True,
     )

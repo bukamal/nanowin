@@ -11,19 +11,79 @@ from datetime import datetime, timedelta, timezone
 
 from nano_offline.core.database import Database
 
+# Capability catalogue. Keys are stable (stored in permissions_json); the
+# Arabic label and group drive the users sheet. "access" keys gate screens and
+# menu entries; "sensitive" keys gate actions inside those screens.
+CAPABILITIES: dict[str, tuple[str, str]] = {
+    "dashboard": ("لوحة التحكم", "access"),
+    "invoices_sales": ("المبيعات ونقطة البيع", "access"),
+    "invoices_purchases": ("المشتريات", "access"),
+    "items": ("المواد والمخزون", "access"),
+    "customers": ("العملاء", "access"),
+    "suppliers": ("الموردون", "access"),
+    "finance": ("المالية (سندات ومصروفات وصندوق)", "access"),
+    "reports": ("التقارير", "access"),
+    "security": ("الأمان وكلمة المرور", "access"),
+    "admin_users": ("إدارة المستخدمين", "sensitive"),
+    "admin_backup": ("النسخ الاحتياطي والاستعادة", "sensitive"),
+    "view_cost": ("رؤية التكلفة والأرباح", "sensitive"),
+    "discounts": ("الخصومات", "sensitive"),
+    "delete_invoices": ("حذف/إلغاء الفواتير", "sensitive"),
+}
+
+# Backwards-compatible module keys: screens/routes still ask for "invoices" or
+# "admin", which now mean "any of these capabilities".
+DERIVED_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "invoices": ("invoices_sales", "invoices_purchases"),
+    "admin": ("admin_users", "admin_backup"),
+}
+
+_ALL_CAPABILITIES = frozenset(CAPABILITIES)
+
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    "admin": frozenset({"dashboard", "customers", "suppliers", "items", "invoices", "finance", "reports", "security", "admin"}),
-    "accountant": frozenset({"dashboard", "customers", "suppliers", "items", "invoices", "finance", "reports", "security"}),
-    "sales": frozenset({"dashboard", "customers", "items", "invoices", "security"}),
+    "admin": _ALL_CAPABILITIES,
+    "accountant": _ALL_CAPABILITIES - {"admin_users", "admin_backup"},
+    "sales": frozenset({"dashboard", "invoices_sales", "customers", "security"}),
+    "warehouse": frozenset({"dashboard", "invoices_purchases", "items", "suppliers", "reports", "security"}),
     "viewer": frozenset({"dashboard", "reports", "security"}),
 }
 
 ROLE_LABELS = {
     "admin": "مدير",
     "accountant": "محاسب",
-    "sales": "مبيعات",
+    "sales": "كاشير",
+    "warehouse": "أمين مخزن",
     "viewer": "مشاهدة فقط",
 }
+
+
+def effective_permissions(role: str, permissions_json: str | None) -> frozenset[str]:
+    """Role preset minus revoked capabilities plus granted ones."""
+    base = set(ROLE_PERMISSIONS.get(role, frozenset()))
+    if not permissions_json:
+        return frozenset(base)
+    try:
+        overrides = json.loads(permissions_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return frozenset(base)
+    if not isinstance(overrides, dict):
+        return frozenset(base)
+    grant = {str(key) for key in overrides.get("grant") or ()}
+    revoke = {str(key) for key in overrides.get("revoke") or ()}
+    return frozenset((base - revoke) | (grant & _ALL_CAPABILITIES))
+
+
+def overrides_json(role: str, granted: frozenset[str] | set[str] | None) -> str | None:
+    """Serialize the difference between ``granted`` and the role preset."""
+    if granted is None:
+        return None
+    base = set(ROLE_PERMISSIONS.get(role, frozenset()))
+    wanted = {key for key in granted if key in _ALL_CAPABILITIES}
+    grant = sorted(wanted - base)
+    revoke = sorted(base - wanted)
+    if not grant and not revoke:
+        return None
+    return json.dumps({"grant": grant, "revoke": revoke}, ensure_ascii=False)
 
 
 @dataclass(slots=True, frozen=True)
@@ -32,9 +92,14 @@ class UserSession:
     username: str
     full_name: str
     role: str
+    permissions: frozenset[str] = frozenset()
+    must_change_password: bool = False
 
     def can(self, permission: str) -> bool:
-        return permission in ROLE_PERMISSIONS.get(self.role, frozenset())
+        derived = DERIVED_PERMISSIONS.get(permission)
+        if derived is not None:
+            return any(key in self.permissions for key in derived)
+        return permission in self.permissions
 
 
 class AuthService:
@@ -195,9 +260,19 @@ class AuthService:
             raise ValueError("تم إنشاء المستخدم الأول مسبقًا")
         return self.create_user(username=username, full_name=full_name, password=password, role="admin", _bootstrap=True)
 
-    def create_user(self, *, username: str, full_name: str, password: str, role: str, _bootstrap: bool = False) -> int:
+    def create_user(
+        self,
+        *,
+        username: str,
+        full_name: str,
+        password: str,
+        role: str,
+        permissions=None,
+        must_change_password: bool = False,
+        _bootstrap: bool = False,
+    ) -> int:
         if not _bootstrap:
-            self.require("admin")
+            self.require("admin_users")
         username = self._normalize_username(username)
         full_name = (full_name or "").strip()
         if not full_name:
@@ -206,11 +281,25 @@ class AuthService:
             raise ValueError("الدور غير صحيح")
         self._validate_password(password)
         password_hash, salt = self._hash_password(password)
+        granted = None
+        if permissions is not None:
+            granted = {str(key) for key in permissions}
+        overrides = overrides_json(role, granted)
         with self.db.transaction() as conn:
             cur = conn.execute(
-                """INSERT INTO users(username,full_name,password_hash,password_salt,role)
-                   VALUES(?,?,?,?,?)""",
-                (username, full_name, password_hash, salt, role),
+                """INSERT INTO users(username,full_name,password_hash,password_salt,role,
+                                     permissions_json,must_change_password,password_changed_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    username,
+                    full_name,
+                    password_hash,
+                    salt,
+                    role,
+                    overrides,
+                    1 if must_change_password else 0,
+                    self._iso(self._now()),
+                ),
             )
             user_id = int(cur.lastrowid)
             conn.execute(
@@ -218,6 +307,41 @@ class AuthService:
                 (user_id, f"role={role}", self._session.id if self._session else user_id, self._session.username if self._session else username),
             )
             return user_id
+
+    @staticmethod
+    def _session_from_row(row) -> UserSession:
+        keys = set(row.keys())
+        raw = row["permissions_json"] if "permissions_json" in keys else None
+        must_change = bool(row["must_change_password"]) if "must_change_password" in keys else False
+        return UserSession(
+            int(row["id"]),
+            str(row["username"]),
+            str(row["full_name"]),
+            str(row["role"]),
+            effective_permissions(str(row["role"]), raw),
+            must_change,
+        )
+
+    def _active_admin_count(self, conn, *, replace_id: int | None = None, replacement: UserSession | None = None) -> int:
+        """Count active users that can still administer users.
+
+        ``replacement`` lets an update/deactivation count the edited user's
+        prospective state instead of its stored one, so "last admin" can never
+        be removed by a combined role+permission change.
+        """
+        count = 0
+        for row in conn.execute(
+            "SELECT id,username,full_name,role,is_active,permissions_json,must_change_password FROM users"
+        ).fetchall():
+            if int(row["id"]) == replace_id:
+                if replacement is not None and replacement.can("admin_users"):
+                    count += 1
+                continue
+            if not int(row["is_active"]):
+                continue
+            if self._session_from_row(row).can("admin_users"):
+                count += 1
+        return count
 
     def _checked_user(self, conn, username: str):
         row = conn.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
@@ -243,7 +367,7 @@ class AuthService:
         conn.commit()
 
     def _establish_session(self, row, action: str) -> UserSession:
-        session = UserSession(int(row["id"]), str(row["username"]), str(row["full_name"]), str(row["role"]))
+        session = self._session_from_row(row)
         self._session = session
         self.db.set_actor(session.id, session.username)
         with self.db.transaction() as conn:
@@ -287,7 +411,7 @@ class AuthService:
             conn.close()
         session = self._establish_session(row, "login")
         self.set_remembered_username(session.username if (remember_username or remember_login) else None)
-        self._set_saved_login(session, remember_login)
+        self._set_saved_login(session, bool(remember_login) and not session.must_change_password)
         return session
 
     def verify_credentials(self, username: str, password: str) -> UserSession | None:
@@ -315,7 +439,7 @@ class AuthService:
                 (self._iso(self._now()), row["id"]),
             )
             conn.commit()
-            return UserSession(int(row["id"]), str(row["username"]), str(row["full_name"]), str(row["role"]))
+            return self._session_from_row(row)
         finally:
             conn.close()
 
@@ -331,6 +455,12 @@ class AuthService:
             expected = str(row["remember_token_hash"] or "")
             actual = hashlib.sha256(token.encode("utf-8")).hexdigest()
             if not expected or not hmac.compare_digest(expected, actual):
+                return None
+            # A forced password change must never be bypassed by a saved
+            # session: drop the token and require the full login form.
+            if bool(row["must_change_password"]):
+                conn.execute("UPDATE users SET remember_token_hash=NULL WHERE id=?", (row["id"],))
+                conn.commit()
                 return None
             conn.execute(
                 "UPDATE users SET failed_attempts=0,locked_until=NULL,last_login_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -444,32 +574,140 @@ class AuthService:
         self.db.set_actor(None, None)
 
     def list_users(self) -> list[dict]:
-        self.require("admin")
+        self.require("admin_users")
         with self.db.connect() as conn:
-            return [dict(r) for r in conn.execute(
-                "SELECT id,username,full_name,role,is_active,last_login_at,created_at FROM users ORDER BY id"
-            ).fetchall()]
+            rows = []
+            for row in conn.execute(
+                """SELECT id,username,full_name,role,is_active,last_login_at,created_at,
+                          permissions_json,must_change_password,password_changed_at,locked_until
+                   FROM users ORDER BY id"""
+            ).fetchall():
+                item = dict(row)
+                item["permissions"] = sorted(
+                    effective_permissions(str(row["role"]), row["permissions_json"])
+                )
+                item["role_label"] = ROLE_LABELS.get(str(row["role"]), str(row["role"]))
+                rows.append(item)
+            return rows
 
     def set_active(self, user_id: int, active: bool) -> None:
-        actor = self.require("admin")
+        actor = self.require("admin_users")
         if actor.id == int(user_id) and not active:
             raise ValueError("لا يمكنك تعطيل المستخدم الحالي")
         with self.db.transaction() as conn:
-            row = conn.execute("SELECT username,role FROM users WHERE id=?", (user_id,)).fetchone()
+            row = conn.execute(
+                "SELECT id,username,role,is_active,permissions_json,must_change_password FROM users WHERE id=?",
+                (user_id,),
+            ).fetchone()
             if row is None:
                 raise ValueError("المستخدم غير موجود")
-            if row["role"] == "admin" and not active:
-                admins = int(conn.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1").fetchone()[0])
-                if admins <= 1:
-                    raise ValueError("لا يمكن تعطيل آخر مدير نشط")
+            if not active and self._active_admin_count(conn, replace_id=int(user_id)) <= 0:
+                raise ValueError("لا يمكن تعطيل آخر مدير لديه صلاحية إدارة المستخدمين")
             conn.execute("UPDATE users SET is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (1 if active else 0, user_id))
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','user',?,?)",
                 (user_id, f"is_active={1 if active else 0}"),
             )
 
-    def reset_password(self, user_id: int, new_password: str) -> None:
-        self.require("admin")
+    def update_user(
+        self,
+        user_id: int,
+        *,
+        full_name: str | None = None,
+        role: str | None = None,
+        active: bool | None = None,
+        permissions=None,
+    ) -> None:
+        """Edit a user's identity/role/status and (optionally) permissions atomically.
+
+        ``permissions`` may be omitted to keep the stored overrides, or passed
+        as an explicit capability set so a role change plus its new switches
+        are validated against the *final* state (important for "last admin").
+        """
+        actor = self.require("admin_users")
+        user_id = int(user_id)
+        if actor.id == user_id and active is False:
+            raise ValueError("لا يمكنك تعطيل المستخدم الحالي")
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT id,username,full_name,role,is_active,permissions_json,must_change_password "
+                "FROM users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("المستخدم غير موجود")
+            old_role = str(row["role"])
+            new_role = old_role if role is None else str(role)
+            if new_role not in ROLE_PERMISSIONS:
+                raise ValueError("الدور غير صحيح")
+            new_name = str(row["full_name"]) if full_name is None else (full_name or "").strip()
+            if not new_name:
+                raise ValueError("الاسم الكامل مطلوب")
+            new_active = int(row["is_active"]) if active is None else (1 if active else 0)
+            if permissions is None:
+                new_permissions_json = row["permissions_json"]
+            else:
+                new_permissions_json = overrides_json(new_role, set(permissions))
+            replacement = self._session_from_row(
+                {
+                    "id": user_id,
+                    "username": row["username"],
+                    "full_name": new_name,
+                    "role": new_role,
+                    "is_active": new_active,
+                    "permissions_json": new_permissions_json,
+                    "must_change_password": row["must_change_password"],
+                }
+            )
+            remaining = self._active_admin_count(
+                conn, replace_id=user_id, replacement=replacement if new_active else None
+            )
+            if remaining <= 0:
+                raise ValueError("يجب أن يبقى مدير واحد على الأقل لديه صلاحية إدارة المستخدمين")
+            conn.execute(
+                "UPDATE users SET full_name=?,role=?,is_active=?,permissions_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (new_name, new_role, new_active, new_permissions_json, user_id),
+            )
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','user',?,?)",
+                (user_id, f"full_name={new_name};role={new_role};is_active={new_active}"),
+            )
+
+    def set_permissions(self, user_id: int, granted) -> None:
+        """Replace a user's effective capability set (stored as overrides)."""
+        self.require("admin_users")
+        user_id = int(user_id)
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT id,username,full_name,role,is_active,permissions_json,must_change_password "
+                "FROM users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("المستخدم غير موجود")
+            wanted = frozenset(str(key) for key in (granted or ()) if str(key) in CAPABILITIES)
+            replacement = UserSession(
+                user_id,
+                str(row["username"]),
+                str(row["full_name"]),
+                str(row["role"]),
+                wanted,
+                bool(row["must_change_password"]),
+            )
+            if int(row["is_active"]) and self._active_admin_count(conn, replace_id=user_id, replacement=replacement) <= 0:
+                raise ValueError("يجب أن يبقى مدير واحد على الأقل لديه صلاحية إدارة المستخدمين")
+            payload = overrides_json(str(row["role"]), wanted)
+            conn.execute(
+                "UPDATE users SET permissions_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (payload, user_id),
+            )
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','user',?,?)",
+                (user_id, "permissions=" + ",".join(sorted(wanted))),
+            )
+
+    def reset_password(self, user_id: int, new_password: str, *, force_change: bool = True) -> None:
+        self.require("admin_users")
         self._validate_password(new_password)
         password_hash, salt = self._hash_password(new_password)
         with self.db.transaction() as conn:
@@ -478,16 +716,63 @@ class AuthService:
             conn.execute(
                 """UPDATE users SET password_hash=?,password_salt=?,failed_attempts=0,locked_until=NULL,
                    quick_auth_type=NULL,quick_auth_hash=NULL,quick_auth_salt=NULL,quick_auth_key_id=NULL,remember_token_hash=NULL,
-                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                (password_hash, salt, user_id),
+                   must_change_password=?,password_changed_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (password_hash, salt, 1 if force_change else 0, self._iso(self._now()), user_id),
             )
             conn.execute(
-                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('password_reset','user',?,'admin reset')",
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('password_reset','user',?,?)",
+                (user_id, f"forced={1 if force_change else 0}"),
+            )
+
+    def change_own_password(self, current_password: str, new_password: str) -> None:
+        session = self.current()
+        if session is None:
+            raise PermissionError("يجب تسجيل الدخول")
+        self.verify_current_password(current_password)
+        self._validate_password(new_password)
+        if hmac.compare_digest(current_password or "", new_password or ""):
+            raise ValueError("كلمة المرور الجديدة يجب أن تختلف عن الحالية")
+        password_hash, salt = self._hash_password(new_password)
+        with self.db.transaction() as conn:
+            conn.execute(
+                """UPDATE users SET password_hash=?,password_salt=?,failed_attempts=0,locked_until=NULL,
+                   quick_auth_type=NULL,quick_auth_hash=NULL,quick_auth_salt=NULL,quick_auth_key_id=NULL,
+                   remember_token_hash=NULL,must_change_password=0,password_changed_at=?,updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (password_hash, salt, self._iso(self._now()), session.id),
+            )
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('password_change','user',?,'self')",
+                (session.id,),
+            )
+        prefs = self._load_prefs()
+        prefs.pop("saved_username", None)
+        prefs.pop("saved_token", None)
+        self._save_prefs(prefs)
+        # Keep the in-memory session usable but clear the one-shot flag.
+        self._session = UserSession(
+            session.id, session.username, session.full_name, session.role,
+            session.permissions, False,
+        )
+        self.db.set_actor(self._session.id, self._session.username)
+
+    def unlock_user(self, user_id: int) -> None:
+        self.require("admin_users")
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone()
+            if row is None:
+                raise ValueError("المستخدم غير موجود")
+            conn.execute(
+                "UPDATE users SET failed_attempts=0,locked_until=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (user_id,),
+            )
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('unlock','user',?,'')",
                 (user_id,),
             )
 
     def audit_entries(self, limit: int = 200, offset: int = 0) -> list[dict]:
-        self.require("admin")
+        self.require("admin_users")
         page_size = max(1, min(int(limit), 1000))
         page_offset = max(0, int(offset))
         with self.db.connect() as conn:

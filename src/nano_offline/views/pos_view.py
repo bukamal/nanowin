@@ -959,6 +959,10 @@ class POSCenter:
                 self.customer_id = None
 
         def edit_cart_discount(_=None):
+            session = self.ctx.auth.current()
+            if not (session and session.can("discounts")):
+                self.notify("لا تملك صلاحية الخصومات", kind="warning")
+                return
             if not self.cart_order:
                 self.notify("السلة فارغة", kind="warning")
                 return
@@ -2084,6 +2088,7 @@ class POSCenter:
             tooltip="خصم على كل الفاتورة %",
             on_click=edit_cart_discount,
             icon_size=IconSize.HEADER,
+            visible=bool(self.ctx.auth.current() and self.ctx.auth.current().can("discounts")),
         )
         price_check_btn = ft.IconButton(
             icon=ft.Icons.PRICE_CHECK,
@@ -3191,6 +3196,10 @@ class POSCenter:
 
         def edit_discount(_=None) -> None:
             """Per-line discount percent (0-100); reduces the effective price."""
+            session = self.ctx.auth.current()
+            if not (session and session.can("discounts")):
+                self.notify("لا تملك صلاحية الخصومات", kind="warning")
+                return
             field = SelectAllTextField(
                 label="نسبة الخصم %",
                 value=self._qty(discount_pct),

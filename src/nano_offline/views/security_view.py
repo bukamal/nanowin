@@ -129,6 +129,36 @@ class SecurityCenter:
             ])
             page.update()
 
+        def password_dialog(_=None):
+            current_password = self._styled_field(label="كلمة المرور الحالية", password=True, can_reveal_password=True, prefix_icon=ft.Icons.LOCK_OUTLINE_ROUNDED)
+            new_password = self._styled_field(label="كلمة المرور الجديدة (8 أحرف على الأقل)", password=True, can_reveal_password=True, prefix_icon=ft.Icons.PASSWORD_ROUNDED)
+            confirm_password = self._styled_field(label="تأكيد كلمة المرور الجديدة", password=True, can_reveal_password=True, prefix_icon=ft.Icons.PASSWORD_ROUNDED)
+
+            def save(_=None):
+                try:
+                    if (new_password.value or "") != (confirm_password.value or ""):
+                        raise ValueError("تأكيد كلمة المرور غير مطابق")
+                    ctx.auth.change_own_password(current_password.value or "", new_password.value or "")
+                    self.page.close(sheet)
+                    self.notify("تم تغيير كلمة المرور", sound_kind="save")
+                    refresh_security()
+                    self.page.update()
+                except Exception as exc:
+                    self.notify(str(exc), kind="error")
+
+            sheet = self._open_sheet(
+                icon=ft.Icons.PASSWORD_ROUNDED,
+                icon_color=Colors.PRIMARY,
+                icon_bg=Colors.PRIMARY_BG,
+                title="تغيير كلمة المرور",
+                subtitle="سيُبطل الدخول التلقائي و PIN/النمط بعد التغيير",
+                body=ft.Column([current_password, new_password, confirm_password], spacing=10, tight=True),
+                actions=[
+                    ft.TextButton("إلغاء", on_click=lambda _: self.page.close(sheet)),
+                    ft.FilledButton("حفظ كلمة المرور", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                ],
+            )
+
         def pin_dialog(_=None):
             current_password = self._styled_field(label="كلمة المرور الحالية", password=True, can_reveal_password=True, prefix_icon=ft.Icons.LOCK_OUTLINE_ROUNDED)
             pin = self._styled_field(
@@ -372,6 +402,14 @@ class SecurityCenter:
                 hero_card,
                 summary,
                 section_header,
+                action_tile(
+                    icon=ft.Icons.PASSWORD_ROUNDED,
+                    color=Colors.PRIMARY,
+                    bg=Colors.PRIMARY_BG,
+                    title="تغيير كلمة المرور",
+                    subtitle="حدّث كلمة مرورك الحالية بأمان دون الحاجة إلى المدير",
+                    on_click=password_dialog,
+                ),
                 action_tile(
                     icon=ft.Icons.PIN_ROUNDED,
                     color=Colors.PRIMARY,

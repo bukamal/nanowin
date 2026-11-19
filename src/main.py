@@ -1148,7 +1148,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 ("كشوف الحسابات", ft.Icons.DESCRIPTION_OUTLINED, lambda: open_statement("supplier")),
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
             ]))
-        if session.can("invoices"):
+        if session.can("invoices_purchases"):
             out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART, [
                 "المشتريات",
                 ("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
@@ -1156,6 +1156,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 "السداد",
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
             ]))
+        if session.can("invoices_sales"):
             out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, [
                 "المبيعات",
                 ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),

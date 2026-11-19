@@ -36,9 +36,11 @@ def test_shell_route_registration_preserves_permissions_and_aliases():
 
     assert router.get("dashboard").render is dashboard
     assert router.get("dashboard").permission == "dashboard"
-    assert router.get("pos").permission == "invoices"
+    assert router.get("pos").permission == "invoices_sales"
     assert router.get("pos").on_leave is leave
+    assert router.get("sale").permission == "invoices_sales"
     assert router.get("sale").replace_current is True
+    assert router.get("purchase").permission == "invoices_purchases"
     assert router.get("purchase").replace_current is True
     assert router.get("stocktake").permission == "items"
     assert ROUTE_ALIASES["بيع سريع"] == "pos"

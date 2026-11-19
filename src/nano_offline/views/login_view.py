@@ -433,17 +433,76 @@ class LoginGate:
                 if (self.password.value or "") != (self.confirm.value or ""):
                     raise ValueError("تأكيد كلمة المرور غير مطابق")
                 self.ctx.auth.create_initial_admin(self.username.value or "", self.full_name.value or "", self.password.value or "")
-            self.ctx.auth.login(
+            session = self.ctx.auth.login(
                 self.username.value or "",
                 self.password.value or "",
                 remember_login=bool(self.stay_signed_switch.value),
                 remember_username=bool(self.remember_name_switch.value),
             )
+            if session.must_change_password:
+                self._force_password_change(session, self.password.value or "")
+                return
             sound_engine.play(self.page, "login")
             self.on_success()
         except Exception as exc:
             self._set_busy(False)
             self._set_status("error", str(exc))
+
+    def _force_password_change(self, session, current_password: str) -> None:
+        style = self._field_style()
+        new_password = SelectAllTextField(
+            label="كلمة المرور الجديدة (8 أحرف على الأقل)", password=True,
+            can_reveal_password=True, prefix_icon=ft.Icons.PASSWORD_ROUNDED, **style,
+        )
+        confirm_password = SelectAllTextField(
+            label="تأكيد كلمة المرور الجديدة", password=True,
+            can_reveal_password=True, prefix_icon=ft.Icons.PASSWORD_ROUNDED, **style,
+        )
+        message = ft.Text("", size=11, color=Colors.DANGER_DARK)
+
+        def submit(_=None):
+            try:
+                if (new_password.value or "") != (confirm_password.value or ""):
+                    raise ValueError("تأكيد كلمة المرور غير مطابق")
+                self.ctx.auth.change_own_password(current_password, new_password.value or "")
+                self.page.close(dialog)
+                sound_engine.play(self.page, "login")
+                self.on_success()
+            except Exception as exc:
+                message.value = str(exc)
+                self.page.update()
+
+        def leave(_=None):
+            self.ctx.auth.logout()
+            self.page.close(dialog)
+            self._set_busy(False)
+            self._set_status("error", "يجب تغيير كلمة المرور قبل المتابعة")
+            self.password.value = ""
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("تغيير كلمة المرور مطلوب"),
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "هذا الحساب مُعدّ لإجبار تغيير كلمة المرور عند أول دخول. "
+                        "اختر كلمة مرور جديدة للمتابعة.",
+                        size=12, color=Colors.TEXT_SECONDARY,
+                    ),
+                    new_password,
+                    confirm_password,
+                    message,
+                ],
+                spacing=10, tight=True, width=340,
+            ),
+            actions=[
+                ft.TextButton("تسجيل الخروج", on_click=leave),
+                ft.FilledButton("حفظ ومتابعة", icon=ft.Icons.SAVE_OUTLINED, on_click=submit),
+            ],
+        )
+        self.page.open(dialog)
+        self.page.update()
 
     # -- entry point ----------------------------------------------------------
 

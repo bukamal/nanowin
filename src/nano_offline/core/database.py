@@ -11,7 +11,7 @@ from nano_offline.core import default_brand
 from nano_offline.core import search_index
 
 # PHASE10 wave2 (B4): expense receipt photo columns (receipt_image/receipt_name) live in the expenses table schema + migration.
-SCHEMA_VERSION = 26  # parties: opening balance/date, currency, credit limit, notes
+SCHEMA_VERSION = 27  # users: per-user permission overrides + forced password change + 5th role
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -390,7 +390,7 @@ CREATE TABLE IF NOT EXISTS users (
     full_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('admin','accountant','sales','viewer')),
+    role TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
     failed_attempts INTEGER NOT NULL DEFAULT 0,
     locked_until TEXT,
@@ -400,6 +400,12 @@ CREATE TABLE IF NOT EXISTS users (
     quick_auth_salt TEXT,
     quick_auth_key_id TEXT,
     remember_token_hash TEXT,
+    -- Per-user overrides on top of the role preset: {"grant":[],"revoke":[]}.
+    -- NULL/empty means "inherit the role exactly" (all legacy accounts).
+    permissions_json TEXT,
+    must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+    password_changed_at TEXT,
+    last_seen_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -804,6 +810,23 @@ class Database:
             for column in ("quick_auth_type", "quick_auth_hash", "quick_auth_salt", "quick_auth_key_id", "remember_token_hash"):
                 if not self._has_column(conn, "users", column):
                     conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
+            # Schema 27: per-user permission overrides + forced password change.
+            if not self._has_column(conn, "users", "permissions_json"):
+                conn.execute("ALTER TABLE users ADD COLUMN permissions_json TEXT")
+            if not self._has_column(conn, "users", "must_change_password"):
+                conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+            if not self._has_column(conn, "users", "password_changed_at"):
+                conn.execute("ALTER TABLE users ADD COLUMN password_changed_at TEXT")
+            if not self._has_column(conn, "users", "last_seen_at"):
+                conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
+            # Schema 27 also adds the fifth role (warehouse). Older databases
+            # carry a hard CHECK that only lists the original four, so the
+            # table has to be rebuilt once to drop it.
+            users_sql_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+            ).fetchone()
+            if users_sql_row and "CHECK(role IN" in str(users_sql_row[0] or ""):
+                self._rebuild_users_table(conn)
 
         if self._table_exists(conn, "items") and not self._has_column(conn, "items", "barcode"):
             # Must happen here (pre-schema), not in _migrate(), because
@@ -835,6 +858,67 @@ class Database:
                 conn.execute("ALTER TABLE expenses ADD COLUMN receipt_image BLOB")
             if not self._has_column(conn, "expenses", "receipt_name"):
                 conn.execute("ALTER TABLE expenses ADD COLUMN receipt_name TEXT")
+
+    @staticmethod
+    def _users_table_ddl(table: str) -> str:
+        return f"""
+        CREATE TABLE {table} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            full_name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            role TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_until TEXT,
+            last_login_at TEXT,
+            quick_auth_type TEXT,
+            quick_auth_hash TEXT,
+            quick_auth_salt TEXT,
+            quick_auth_key_id TEXT,
+            remember_token_hash TEXT,
+            permissions_json TEXT,
+            must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+            password_changed_at TEXT,
+            last_seen_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+
+    def _rebuild_users_table(self, conn: sqlite3.Connection) -> None:
+        """One-off rebuild that drops the legacy four-role CHECK constraint.
+
+        SQLite cannot ALTER a CHECK, so the table is recreated with the exact
+        same columns/ids and ``audit_log``'s foreign key keeps pointing at the
+        restored ``users`` table. A fresh temporary name is used (never
+        renaming ``users`` itself) so SQLite cannot rewrite the FK in
+        ``audit_log`` to point at the temporary table.
+        """
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            old_columns = {str(r[1]) for r in conn.execute("PRAGMA table_info(users)")}
+            target = [
+                "id", "username", "full_name", "password_hash", "password_salt", "role",
+                "is_active", "failed_attempts", "locked_until", "last_login_at",
+                "quick_auth_type", "quick_auth_hash", "quick_auth_salt", "quick_auth_key_id",
+                "remember_token_hash", "permissions_json", "must_change_password",
+                "password_changed_at", "last_seen_at", "created_at", "updated_at",
+            ]
+            common = [column for column in target if column in old_columns]
+            columns = ",".join(common)
+            conn.execute("DROP TABLE IF EXISTS users_new")
+            conn.execute(self._users_table_ddl("users_new"))
+            conn.execute(f"INSERT INTO users_new({columns}) SELECT {columns} FROM users")
+            conn.execute("DROP TABLE users")
+            conn.execute("ALTER TABLE users_new RENAME TO users")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            conn.commit()
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Non-destructive migrations from phases 1 and 2."""

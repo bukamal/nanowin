@@ -120,9 +120,13 @@ WRITE_METHODS: dict[str, str] = {
     "stocktake.remove_line": "items",
     "stocktake.commit": "items",
     "stocktake.discard_session": "items",
-    "auth.create_user": "admin",
-    "auth.set_active": "admin",
-    "auth.reset_password": "admin",
+    "auth.create_user": "admin_users",
+    "auth.update_user": "admin_users",
+    "auth.set_permissions": "admin_users",
+    "auth.set_active": "admin_users",
+    "auth.reset_password": "admin_users",
+    "auth.unlock_user": "admin_users",
+    "auth.change_password": "security",
     "notifications.mark_read": "dashboard",
     "notifications.mark_all_read": "dashboard",
     "notifications.save_config": "admin",
@@ -132,8 +136,8 @@ WRITE_METHODS: dict[str, str] = {
 
 #: Reads that additionally require a permission (all other READ_METHODS are open).
 READ_PERMISSIONS: dict[str, str] = {
-    "auth.list_users": "admin",
-    "auth.audit_entries": "admin",
+    "auth.list_users": "admin_users",
+    "auth.audit_entries": "admin_users",
     "notifications.history": "admin",
     "external_notifications.get_config": "admin",
     "external_notifications.delivery_log": "admin",
@@ -480,6 +484,8 @@ class LanApiServer:
             "username": session.username,
             "full_name": session.full_name,
             "role": session.role,
+            "permissions": sorted(session.permissions),
+            "must_change_password": session.must_change_password,
         }
 
     def logout(self, token: str) -> None:
