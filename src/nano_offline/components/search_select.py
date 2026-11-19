@@ -7,6 +7,7 @@ from typing import Callable, Iterable
 import flet as ft
 
 from .text_field import SelectAllTextField
+from nano_offline.core.theme import Colors
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,9 +67,9 @@ class SearchSelect(ft.Column):
             content=self.results,
             visible=False,
             padding=4,
-            border=ft.border.all(1, "#E2E8F0"),
+            border=ft.border.all(1, Colors.BORDER),
             border_radius=10,
-            bgcolor="#FFFFFF",
+            bgcolor=Colors.WHITE,
         )
         # Cache the last rendered query so we skip redundant rebuilds.
         self._last_render_query: str = ""
@@ -198,13 +199,13 @@ class SearchSelect(ft.Column):
         for choice in matches:
             controls.append(
                 ft.ListTile(
-                    title=ft.Text(choice.label, size=14),
+                    title=ft.Text(choice.label, size=14, color=Colors.TEXT_PRIMARY),
                     dense=True,
                     on_click=lambda _, c=choice: self._choose(c),
                 )
             )
         if q and not matches:
-            controls.append(ft.Container(ft.Text("لا توجد نتائج", size=12, color="#64748B"), padding=8))
+            controls.append(ft.Container(ft.Text("لا توجد نتائج", size=12, color=Colors.TEXT_SECONDARY), padding=8))
         # Skip rebuild when nothing changed (avoids focus loss on arrow‑key nav).
         if controls == self._last_render_controls:
             return

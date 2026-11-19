@@ -1284,7 +1284,7 @@ class AdminCenter:
             for w, is_bar in bars:
                 px_w = max(0.4, w * unit)
                 bar_controls.append(
-                    ft.Container(width=px_w, height=bar_h, bgcolor="#0F172A" if is_bar else "transparent")
+                    ft.Container(width=px_w, height=bar_h, bgcolor=Colors.TEXT_PRIMARY if is_bar else "transparent")
                 )
             column_children: list[ft.Control] = [ft.Row(bar_controls, spacing=0, tight=True)]
             if show_text:

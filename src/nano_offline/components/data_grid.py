@@ -1555,6 +1555,7 @@ class DataGrid(ft.Column):
             value=edit_text,
             dense=True,
             text_size=12,
+            color=Colors.TEXT_PRIMARY,
             autofocus=True,
             border_radius=Radius.SM,
             border=ft.border.all(2, Colors.PRIMARY),

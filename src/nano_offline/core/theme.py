@@ -179,7 +179,7 @@ class _LightTokens:
 
     # Text
     TEXT_PRIMARY = "#0F172A"
-    TEXT_SECONDARY = "#64748B"
+    TEXT_SECONDARY = "#5B6B7F"
     TEXT_MUTED = "#475569"
     TEXT_MUTED_DARK = "#334155"
     TEXT_FAINT = "#94A3B8"

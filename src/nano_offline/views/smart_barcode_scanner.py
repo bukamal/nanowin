@@ -37,7 +37,7 @@ from __future__ import annotations
   (build/shell/header) دون كسر توقيع الصف.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable, Optional
 
@@ -141,12 +141,6 @@ class _CornerBracket(ft.Container):
     """زاوية إطار نابضة — يرث اللون من الإطار الأصلي لـ Nano."""
 
     def __init__(self, corner: str, size: int = 26, thickness: int = 4):
-        align_map = {
-            "tl": ft.alignment.top_left,
-            "tr": ft.alignment.top_right,
-            "bl": ft.alignment.bottom_left,
-            "br": ft.alignment.bottom_right,
-        }
         rotate_map = {
             "tl": ft.Rotate(0, alignment=ft.alignment.top_left),
             "tr": ft.Rotate(0, alignment=ft.alignment.top_right),
@@ -419,12 +413,6 @@ class SmartBarcodeScanner:
         )
 
         # الكبسولة العائمة السفلية (الأزرار الأربعة).
-        dock_btn_style = ft.ButtonStyle(
-            shape=ft.CircleBorder(),
-            padding=ft.Padding(14, 14, 14, 14),
-            bgcolor=ft.Colors.with_opacity(0.22, "#0F172A"),
-        )
-
         self.dock = ft.Container(
             content=ft.Row(
                 [
@@ -474,7 +462,9 @@ class SmartBarcodeScanner:
 
         # الجذر: شاشة كاملة قابلة للعرض في أي Center.
         self.root = ft.Container(
-            bgcolor="#0F172A",
+            # Camera-overlay surface stays dark in both modes (white chrome on
+            # it), so use Flutter's fixed black rather than a mode token.
+            bgcolor=ft.Colors.BLACK,
             expand=True,
             content=ft.SafeArea(
                 content=ft.Column(

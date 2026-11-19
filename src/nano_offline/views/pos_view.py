@@ -2737,7 +2737,7 @@ class POSCenter:
         success_overlay = ft.Container(
             visible=False,
             expand=True,
-            bgcolor="#CC0F172A",  # dim scrim
+            bgcolor=ft.Colors.with_opacity(0.8, ft.Colors.BLACK),  # dim scrim
             alignment=ft.alignment.center,
             content=ft.Container(),
         )

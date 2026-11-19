@@ -28,15 +28,15 @@ def build_page_theme(settings, *, family: str | None = None, is_dark: bool | Non
         return max(8, round(base * scale))
 
     text_theme = ft.TextTheme(
-        body_large=ft.TextStyle(size=_px(16)),
-        body_medium=ft.TextStyle(size=_px(14)),
-        body_small=ft.TextStyle(size=_px(12)),
-        label_large=ft.TextStyle(size=_px(14)),
-        label_medium=ft.TextStyle(size=_px(12)),
-        label_small=ft.TextStyle(size=_px(11)),
-        title_large=ft.TextStyle(size=_px(22)),
-        title_medium=ft.TextStyle(size=_px(16)),
-        title_small=ft.TextStyle(size=_px(14)),
+        body_large=ft.TextStyle(size=_px(16), color=theme.Colors.TEXT_PRIMARY),
+        body_medium=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY),
+        body_small=ft.TextStyle(size=_px(12), color=theme.Colors.TEXT_PRIMARY),
+        label_large=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY),
+        label_medium=ft.TextStyle(size=_px(12), color=theme.Colors.TEXT_PRIMARY),
+        label_small=ft.TextStyle(size=_px(11), color=theme.Colors.TEXT_PRIMARY),
+        title_large=ft.TextStyle(size=_px(22), color=theme.Colors.TEXT_PRIMARY),
+        title_medium=ft.TextStyle(size=_px(16), color=theme.Colors.TEXT_PRIMARY),
+        title_small=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY),
     )
     page_theme = ft.Theme(
         color_scheme_seed=theme.Colors.PRIMARY,
