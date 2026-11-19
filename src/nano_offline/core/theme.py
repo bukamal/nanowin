@@ -96,7 +96,7 @@ def _brand_tokens(accent: str) -> tuple[dict[str, str], dict[str, str]]:
         "BRAND_CYAN": _blend_color(accent, "#FFFFFF", 0.20),
     }
     dark = {
-        "PRIMARY": _blend_color(accent, "#FFFFFF", 0.28),
+        "PRIMARY": _blend_color(accent, "#FFFFFF", 0.32),
         "PRIMARY_DARK": _blend_color(accent, "#FFFFFF", 0.46),
         "PRIMARY_BG": _blend_color(accent, "#000000", 0.82),
         "PRIMARY_BORDER": _blend_color(accent, "#000000", 0.52),

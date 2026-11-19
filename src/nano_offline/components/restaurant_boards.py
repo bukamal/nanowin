@@ -218,7 +218,7 @@ def tables_workspace(
                         [
                             ft.Text(entry["name"], size=title_sz, weight=ft.FontWeight.BOLD, expand=True),
                             ft.Container(
-                                ft.Text(entry["label"], size=max(8, meta_sz - 1), color="#FFFFFF"),
+                                ft.Text(entry["label"], size=max(8, meta_sz - 1), color=ft.Colors.WHITE),
                                 padding=ft.padding.symmetric(horizontal=7, vertical=2),
                                 bgcolor=color, border_radius=8,
                             ),
@@ -487,7 +487,7 @@ def kitchen_workspace(ctx, notify, *, sizes: dict | None = None) -> tuple[ft.Con
                     [
                         ft.Text(label, size=title_sz, weight=ft.FontWeight.BOLD, expand=True),
                         ft.Container(
-                            ft.Text(status_text, size=max(9, meta_sz - 1), color="#FFFFFF"),
+                            ft.Text(status_text, size=max(9, meta_sz - 1), color=ft.Colors.WHITE),
                             padding=ft.padding.symmetric(horizontal=max(6, card_pad - 4), vertical=3),
                             bgcolor=Colors.SUCCESS_DARK if ready else _age_color(elapsed),
                             border_radius=10,

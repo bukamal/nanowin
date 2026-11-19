@@ -1,10 +1,11 @@
-"""Contract: no hard-coded hex surface colours in components/views.
+"""Contract: no hard-coded hex colours in components/views.
 
-A literal ``bgcolor="#FFFFFF"`` does not follow dark mode, so text rendered
-with mode-aware tokens (light in dark mode) can vanish on it. Surfaces must use
-``theme.Colors.*`` tokens; brand/auth and print CSS are exempt (not scanned
-here). This catches the class of bug behind the "names/amounts disappeared"
-report.
+A literal ``color="#RRGGBB"`` / ``bgcolor="#RRGGBB"`` does not follow dark
+mode, so text or surfaces rendered with mode-aware tokens can vanish on it.
+Surfaces and text should use ``theme.Colors.*`` tokens. A few files own a
+deliberately fixed palette (drawing a scene / a camera overlay) and are
+allow-listed. Print CSS, LAN web pages and branding gradients live outside
+components/views and are not scanned here.
 """
 
 from __future__ import annotations
@@ -15,18 +16,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "nano_offline"
 
-_PATTERN = re.compile(r"""bgcolor\s*=\s*["']#[0-9A-Fa-f]{3,8}["']""")
+#: Files with a deliberate, mode-independent fixed palette.
+_ALLOWED = {
+    "store_scene.py",          # home scene drawing (own dark/light branches)
+    "smart_barcode_scanner.py",  # camera overlay: always-dark chrome
+}
+
+_HEX = re.compile(r"#[0-9A-Fa-f]{6}")
+# Attributes that actually paint a surface or text (gradient stops etc. too).
+_ATTR = re.compile(r"""(?:color|bgcolor|border_color|shadow_color|fill|stroke|colors?)\s*[=(]""")
 
 offenders: list[str] = []
 scanned = 0
 for base in (SRC / "components", SRC / "views"):
     for path in base.rglob("*.py"):
-        if "__pycache__" in path.parts:
+        if "__pycache__" in path.parts or path.name in _ALLOWED:
             continue
         scanned += 1
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            if _PATTERN.search(line):
+            if _HEX.search(line) and _ATTR.search(line):
                 offenders.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
 
-assert not offenders, "hard-coded hex surface colours (use theme.Colors):\n" + "\n".join(offenders)
+assert not offenders, "hard-coded hex colours found (use theme.Colors tokens):\n" + "\n".join(offenders)
 print(f"literal_surface_hex_contract passed ({scanned} files scanned)")

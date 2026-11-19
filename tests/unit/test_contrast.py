@@ -42,6 +42,15 @@ PAIRS = [
     ("TEXT_MUTED", "BACKGROUND_ALT"),
     ("PRIMARY_DARK", "WHITE"),
     ("PRIMARY_DARK", "PRIMARY_BG"),
+    # On-accent text (buttons / tinted status surfaces).
+    ("WHITE", "PRIMARY"),
+    ("TEXT_PRIMARY", "SUCCESS_BG"),
+    ("TEXT_PRIMARY", "DANGER_BG"),
+    ("TEXT_PRIMARY", "WARNING_BG"),
+    ("TEXT_PRIMARY", "PURPLE_BG"),
+    ("SUCCESS_DARKER", "SUCCESS_BG"),
+    ("DANGER_DARKER", "DANGER_BG"),
+    ("WARNING_DARKER", "WARNING_BG"),
 ]
 
 

@@ -6,8 +6,7 @@ from typing import Callable
 
 import flet as ft
 
-from nano_offline.core.theme import Colors, Radius, Shadow, SEVERITY_STYLE
-from nano_offline.core import currency
+from nano_offline.core.theme import Colors, Shadow, SEVERITY_STYLE
 
 
 def build_owner_pulse_card(
@@ -61,7 +60,7 @@ def build_owner_pulse_card(
                 spacing=6,
             ),
             padding=ft.padding.symmetric(horizontal=10, vertical=6),
-            bgcolor=Colors.DANGER_BG if hasattr(Colors, "DANGER_BG") else "#FEE2E2",
+            bgcolor=Colors.DANGER_BG,
             border_radius=10,
             on_click=(lambda e: on_crisis_tap()) if on_crisis_tap else None,
             ink=True if on_crisis_tap else False,
