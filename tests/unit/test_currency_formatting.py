@@ -101,6 +101,18 @@ def test_format_display_input_rounds_to_display_decimals_without_separators():
     assert currency.format_display_input(1234.5, usd) == "1234.5"
     assert currency.format_display_input(126.0, usd) == "126"
     assert currency.format_display_input(1701000, syp) == "1701000"
-    # a fraction of a pound rounds to a whole pound (SYP -> 0 decimals)
-    assert currency.format_display_input(1099999.6, syp) == "1100000"
+    # a fraction of a pound keeps its meaningful decimal now
+    assert currency.format_display_input(1099999.6, syp) == "1099999.6"
     assert "," not in currency.format_display_input(1099999.6, syp)
+
+
+def test_small_rate_keeps_fractional_syp_prices():
+    s = _with(_settings("SYP"), **{currency.EXCHANGE_RATE_KEY: "1.5"})
+
+    # 0.2333 USD * 1.5 = 0.35 ل.س -- must not collapse to 0.
+    assert currency.format_amount(0.2333333, s, field="price") == "0.35 ل.س"
+    assert currency.format_amount(0.5, s, field="price") == "0.75 ل.س"
+    # Totals keep their cents too, while whole values stay clean.
+    assert currency.format_amount(10.966666, s) == "16.45 ل.س"
+    assert currency.format_display_value(16.45, s) == "16.45 ل.س"
+    assert currency.format_amount(10.0, s) == "15 ل.س"

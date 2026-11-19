@@ -19,9 +19,10 @@ and takes effect immediately everywhere.
 
 When the display currency is SYP, amounts are multiplied by the exchange
 rate exactly as before. When it is USD, the display currency *is* the
-stored currency, so conversion is the identity (rate=1) -- what you see is
-exactly what is stored, just formatted with 2 decimal places instead of 0
-(cents matter for dollars; they never did for pounds).
+stored currency, so conversion is the identity (rate=1). Formatting is
+value-aware: whole SYP figures stay clean ("13,500") while a small rate
+that produces fractional pounds ("0.35") keeps the meaningful decimals
+instead of rounding to zero. USD always shows two decimals.
 """
 
 from __future__ import annotations
@@ -43,7 +44,11 @@ _DEFAULT_SYMBOL_BY_CURRENCY = {
     DISPLAY_CURRENCY_USD: DEFAULT_USD_DISPLAY_SYMBOL,
 }
 _DEFAULT_DECIMALS_BY_CURRENCY = {
-    DISPLAY_CURRENCY_SYP: 0,
+    # Arithmetic/rounding keeps cents for SYP too; the display helpers below
+    # still trim trailing zeros so a whole-pound figure reads "13,500", not
+    # "13,500.00". This matters when the configured rate makes prices
+    # fractional (e.g. rate 1.5 -> a 0.35 ل.س price must not round to 0).
+    DISPLAY_CURRENCY_SYP: 2,
     DISPLAY_CURRENCY_USD: 2,
 }
 
@@ -189,14 +194,37 @@ def invoice_settings(invoice: dict | None, settings=None):
 
 
 def _default_decimals(settings) -> int:
-    return _DEFAULT_DECIMALS_BY_CURRENCY.get(get_display_currency(settings), 0)
+    return _DEFAULT_DECIMALS_BY_CURRENCY.get(get_display_currency(settings), 2)
+
+
+def _auto_decimals(code: str, value: float) -> int:
+    """Decimals for an *auto* setting, based on the value actually shown.
+
+    USD always shows cents. SYP usually shows whole pounds, but when the
+    current rate makes a figure fractional (very common once the rate is a
+    small number like 1.5) it must keep the meaningful decimals instead of
+    rounding 0.35 down to 0.
+    """
+    if str(code or "").upper() == DISPLAY_CURRENCY_USD:
+        return 2
+    amount = abs(float(value or 0))
+    if abs(amount - round(amount)) < 1e-9:
+        return 0
+    return 2 if amount >= 0.01 else 4
+
+
+def _trim_trailing_zeros(text: str) -> str:
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
 
 
 def decimals_for(settings, field: str = "total") -> int:
-    """Decimal places to show for ``field`` ("price"/"qty"/"total").
+    """Decimal places used for arithmetic rounding for ``field``.
 
     The admin precision setting wins; ``auto`` falls back to the display
-    currency's own convention (0 for SYP, 2 for USD).
+    currency's own convention (2 for both currencies). Display helpers use a
+    value-aware variant so whole SYP figures still render without ".00".
     """
     explicit = precision_settings.decimals(settings, field)
     return _default_decimals(settings) if explicit is None else explicit
@@ -293,21 +321,36 @@ def format_amount(
     with_symbol: bool = True,
     decimals: int | None = None,
     field: str = "total",
+    code: str | None = None,
 ) -> str:
     """Format a *stored* USD amount as text in the currently displayed currency.
 
     ``decimals`` defaults to the admin precision setting for ``field``
-    ("price"/"qty"/"total"); an ``auto`` setting falls back to 0 for SYP and
-    2 for USD. Pass an explicit number to override either way.
+    ("price"/"qty"/"total"); an ``auto`` setting keeps meaningful decimals
+    for the shown value and trims trailing zeros (whole SYP = "13,500",
+    fractional = "0.35"). Pass an explicit number to override either way.
+    ``code`` names the target currency when ``rate``/``symbol`` are pinned to
+    a currency other than the global display currency.
     """
     if rate is None:
         rate = get_effective_rate(settings)
     if symbol is None:
         symbol = get_display_symbol(settings)
-    if decimals is None:
-        decimals = decimals_for(settings, field)
+    target_code = str(code or "").upper() if code else (
+        get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
+    )
     value = to_display(amount_usd, rate)
+    explicit = precision_settings.decimals(settings, field) if settings is not None else None
+    trim = False
+    if decimals is None:
+        if explicit is None:
+            decimals = _auto_decimals(target_code, value)
+            trim = target_code == DISPLAY_CURRENCY_SYP
+        else:
+            decimals = explicit
     text = f"{value:,.{decimals}f}"
+    if trim:
+        text = _trim_trailing_zeros(text)
     return _amount_with_symbol(text, symbol) if with_symbol else text
 
 
@@ -333,10 +376,18 @@ def format_display_input(value: float | int | None, settings=None, *, field: str
     the value can be read back with ``float(...)``. Keeps wide-denomination
     figures like a SYP total whole so the paid field matches the shown total.
     """
+    numeric = float(value or 0)
+    explicit = precision_settings.decimals(settings, field) if settings is not None else None
     if decimals is None:
-        decimals = decimals_for(settings, field)
-    text = f"{float(value or 0):.{decimals}f}"
-    if decimals:
+        if explicit is None:
+            decimals = _auto_decimals(
+                get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY,
+                numeric,
+            )
+        else:
+            decimals = explicit
+    text = f"{numeric:.{decimals}f}"
+    if explicit is None and decimals:
         text = text.rstrip("0").rstrip(".")
     return text or "0"
 
@@ -368,9 +419,19 @@ def format_display_value(value: float | int | None, settings=None, *, symbol: st
     """
     if symbol is None:
         symbol = get_display_symbol(settings)
+    target_code = get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
+    numeric = float(value or 0)
+    explicit = precision_settings.decimals(settings, field) if settings is not None else None
+    trim = False
     if decimals is None:
-        decimals = decimals_for(settings, field)
-    text = f"{float(value or 0):,.{decimals}f}"
+        if explicit is None:
+            decimals = _auto_decimals(target_code, numeric)
+            trim = target_code == DISPLAY_CURRENCY_SYP
+        else:
+            decimals = explicit
+    text = f"{numeric:,.{decimals}f}"
+    if trim:
+        text = _trim_trailing_zeros(text)
     return _amount_with_symbol(text, symbol) if with_symbol else text
 
 

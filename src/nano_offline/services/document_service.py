@@ -46,20 +46,9 @@ class DocumentService:
         rate/symbol applies (see :meth:`_money`), with no formatting glue between
         them -- the caller decides how to lay the two out.
         """
-        if inv is not None and inv.get("invoice_exchange_rate") is not None:
-            code = str(inv.get("invoice_currency_code") or "").strip().upper()
-            stored_rate = float(inv["invoice_exchange_rate"] or 0)
-            # The snapshot stores the real SYP-per-USD rate, but a USD invoice
-            # is displayed in USD (display == stored), so formatting must not
-            # multiply by it.
-            rate = 1.0 if code == currency.DISPLAY_CURRENCY_USD else (stored_rate if stored_rate > 0 else 1.0)
-            symbol = inv.get("invoice_currency_symbol") or currency.DEFAULT_DISPLAY_SYMBOL
-            decimals = currency.decimals_for(self._settings(), "total")
-            amount_text = currency.format_amount(value, rate=rate, symbol=symbol, decimals=decimals, with_symbol=False)
-        else:
-            settings = self._settings()
-            symbol = currency.get_display_symbol(settings)
-            amount_text = currency.format_amount(value, settings, with_symbol=False)
+        settings_view = currency.invoice_settings(inv, self._settings())
+        symbol = currency.get_display_symbol(settings_view)
+        amount_text = currency.format_amount(value, settings_view, with_symbol=False)
         return amount_text, symbol
 
     def _money_text(self, value: float | int | None, inv: dict | None = None) -> str:

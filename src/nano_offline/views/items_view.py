@@ -340,7 +340,10 @@ class ItemsCenter:
                     return currency.format_amount(stock_value, rate=1.0, symbol=sym, decimals=2)
                 rate = currency.get_exchange_rate(ctx.settings)
                 sym = str(ctx.settings.get(currency.DISPLAY_SYMBOL_KEY) or currency.DEFAULT_DISPLAY_SYMBOL)
-                return currency.format_amount(stock_value, rate=rate, symbol=sym, decimals=0)
+                return currency.format_amount(
+                    stock_value, rate=rate, symbol=sym,
+                    code=currency.DISPLAY_CURRENCY_SYP,
+                )
             if col.key == "purchase_price":
                 # Purchase price is sensitive cost data -> masked in safe mode.
                 return self.private_money(value, field="price")
@@ -4074,6 +4077,32 @@ class ItemsCenter:
             grid.set_hidden_keys(columns_visibility.hidden_keys)
             shown = filtered[: render_limit["n"]]
             grid.set_rows(shown)
+            if filtered:
+                stock_rows = [
+                    i for i in filtered
+                    if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0)
+                ]
+                total_qty = sum(float(i.get("quantity") or 0) for i in stock_rows)
+                footer = {
+                    "name": f"{len(filtered)} مادة",
+                    "quantity": qty_fmt(total_qty),
+                }
+                if can_view_cost:
+                    total_value = sum(
+                        float(i.get("quantity") or 0) * float(i.get("average_cost") or 0)
+                        for i in stock_rows
+                    )
+                    usd_symbol = str(
+                        ctx.settings.get(currency.USD_DISPLAY_SYMBOL_KEY)
+                        or currency.DEFAULT_USD_DISPLAY_SYMBOL
+                    )
+                    footer["_stock_usd"] = currency.format_amount(
+                        total_value, rate=1.0, symbol=usd_symbol, decimals=2
+                    )
+                    footer["_stock_syp"] = money(total_value)
+                grid.set_footer(footer)
+            else:
+                grid.set_footer(None)
             remaining = len(filtered) - len(shown)
             if remaining > 0:
                 grid_more.content = ft.Row(

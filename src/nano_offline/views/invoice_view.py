@@ -2339,7 +2339,10 @@ class InvoiceCenter:
             return currency.format_amount(amount_usd, rate=1.0, symbol=usd_symbol, decimals=2)
 
         def _syp_text(amount_usd: float) -> str:
-            return currency.format_amount(amount_usd, rate=configured_rate, symbol=syp_symbol, decimals=0)
+            return currency.format_amount(
+                amount_usd, rate=configured_rate, symbol=syp_symbol,
+                code=currency.DISPLAY_CURRENCY_SYP,
+            )
 
         # The extra cost/total columns are shown in the *complementary*
         # currency (opposite to the display currency, which the primary
@@ -2498,8 +2501,13 @@ class InvoiceCenter:
         def _extra_plain(amount_usd: float) -> str:
             """The extra-currency amount as plain numeric text (no symbol)."""
             if extra_currency["value"] == currency.DISPLAY_CURRENCY_SYP:
-                return currency.format_amount(amount_usd, rate=currency.get_exchange_rate(settings), with_symbol=False, decimals=0)
-            return currency.format_amount(amount_usd, rate=1.0, with_symbol=False, decimals=2)
+                return currency.format_amount(
+                    amount_usd, rate=currency.get_exchange_rate(settings),
+                    with_symbol=False, code=currency.DISPLAY_CURRENCY_SYP,
+                )
+            return currency.format_amount(
+                amount_usd, rate=1.0, with_symbol=False, code=currency.DISPLAY_CURRENCY_USD,
+            )
 
         def _edit_cell_text(col, value, row):
             # Prefill the editable computed totals with their current figure.
