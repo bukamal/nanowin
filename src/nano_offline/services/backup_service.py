@@ -15,7 +15,13 @@ from datetime import datetime
 from pathlib import Path
 
 from nano_offline.core.database import Database, SCHEMA_VERSION
+from nano_offline.core.cancellation import OperationCancelled, check_cancel
 from nano_offline.core.fsutil import replace_retry, unlink_retry
+
+#: Progress callback signature used across backup/restore/rebuild:
+#: ``progress(stage, done, total, unit, detail)``. ``total <= 0`` means
+#: "indeterminate". ``unit`` is one of bytes/pages/lines/invoices/payments/items.
+ProgressFn = "Callable[[str, float, float, str, str], None] | None"
 
 BACKUP_FORMAT = 1
 PRIMARY_BACKUP_EXT = ".nanobackup"
@@ -67,12 +73,68 @@ class BackupService:
         return self.db.path.parent / "backups"
 
     @staticmethod
-    def _sha256(path: Path) -> str:
+    def _sha256(path: Path, progress=None, cancel=None, *, stage: str = "hash") -> str:
+        try:
+            size = float(path.stat().st_size)
+        except OSError:
+            size = 0.0
         h = hashlib.sha256()
+        read = 0
         with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            while True:
+                check_cancel(cancel)
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
                 h.update(chunk)
+                read += len(chunk)
+                if progress:
+                    progress(stage, read, size, "bytes", path.name)
         return h.hexdigest()
+
+    @staticmethod
+    def _copy_file(source: Path, target: Path, progress=None, cancel=None, *, stage: str = "copy") -> None:
+        size = float(source.stat().st_size) if source.exists() else 0.0
+        done = 0
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as src, target.open("wb") as dst:
+            while True:
+                check_cancel(cancel)
+                chunk = src.read(1024 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(stage, done, size, "bytes", target.name)
+
+    def _validate_extracted(self, db_file: Path, manifest: dict, progress=None, cancel=None) -> BackupValidation:
+        """Check an already-extracted plain DB against its manifest."""
+        if progress:
+            progress("integrity", 0, 1, "", "فحص سلامة قاعدة البيانات")
+        if int(manifest.get("format", 0)) != BACKUP_FORMAT:
+            raise ValueError("إصدار تنسيق النسخة غير مدعوم")
+        expected = str(manifest.get("db_sha256", ""))
+        actual = self._sha256(db_file, progress=progress, cancel=cancel, stage="hash")
+        if not expected or not hmac.compare_digest(expected, actual):
+            raise ValueError("بصمة قاعدة البيانات لا تطابق النسخة")
+        integrity = self._integrity(db_file)
+        if integrity.lower() != "ok":
+            raise ValueError(f"قاعدة النسخة غير سليمة: {integrity}")
+        schema = self._schema_version(db_file)
+        if schema != int(manifest.get("schema_version", -1)):
+            raise ValueError("إصدار قاعدة البيانات لا يطابق بيان النسخة")
+        if schema > SCHEMA_VERSION:
+            raise ValueError("النسخة أُنشئت بإصدار أحدث من التطبيق")
+        if progress:
+            progress("integrity", 1, 1, "", "قاعدة البيانات سليمة")
+        return BackupValidation(
+            True,
+            schema,
+            str(manifest.get("created_at", "")),
+            actual,
+            encrypted=bool(manifest.get("encrypted", False)),
+        )
 
     @staticmethod
     def _schema_version(path: Path) -> int:
@@ -91,7 +153,14 @@ class BackupService:
         finally:
             conn.close()
 
-    def create_backup(self, destination: str | Path, password: str | None = None) -> Path:
+    def create_backup(
+        self,
+        destination: str | Path,
+        password: str | None = None,
+        *,
+        progress=None,
+        cancel=None,
+    ) -> Path:
         """Create a verified backup; pass ``password`` to encrypt it (AES-256-GCM,
         key derived via PBKDF2-HMAC-SHA256)."""
         destination = Path(destination)
@@ -104,18 +173,30 @@ class BackupService:
             temp_db = Path(td) / PRIMARY_DB_ARCNAME
             source = self.db.connect()
             target = sqlite3.connect(temp_db)
+
+            def _backup_step(_status, remaining, total):
+                check_cancel(cancel)
+                if progress and total:
+                    progress(
+                        "safety_backup", float(total - remaining), float(total),
+                        "pages", "نسخ قاعدة البيانات الحالية",
+                    )
+
             try:
-                source.backup(target)
+                source.backup(target, progress=_backup_step)
                 target.execute("DELETE FROM license_state")
                 target.commit()
             finally:
                 target.close()
                 source.close()
 
+            if progress:
+                progress("safety_backup", 1, 1, "", "تم نسخ قاعدة البيانات الحالية")
+                progress("integrity", 0, 1, "", "فحص سلامة النسخة")
             integrity = self._integrity(temp_db)
             if integrity.lower() != "ok":
                 raise RuntimeError(f"فشل فحص سلامة النسخة: {integrity}")
-            db_hash = self._sha256(temp_db)
+            db_hash = self._sha256(temp_db, progress=progress, cancel=cancel, stage="backup_hash")
             created_at = datetime.now().astimezone().isoformat(timespec="seconds")
             manifest: dict = {
                 "format": BACKUP_FORMAT,
@@ -147,7 +228,18 @@ class BackupService:
                 if password:
                     zf.writestr(payload_arc, ciphertext)
                 else:
-                    zf.write(temp_db, arcname=payload_arc)
+                    total = float(temp_db.stat().st_size)
+                    done = 0
+                    with temp_db.open("rb") as src, zf.open(payload_arc, "w") as dst:
+                        while True:
+                            check_cancel(cancel)
+                            chunk = src.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                            done += len(chunk)
+                            if progress:
+                                progress("backup_zip", done, total, "bytes", "ضغط قاعدة البيانات")
                 zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             shutil.copy2(temp_zip, destination)
         return destination
@@ -182,7 +274,13 @@ class BackupService:
         return deleted
 
     def _extract_plain_db(
-        self, backup_path: Path, out_dir: Path, password: str | None = None
+        self,
+        backup_path: Path,
+        out_dir: Path,
+        password: str | None = None,
+        *,
+        progress=None,
+        cancel=None,
     ) -> tuple[Path, dict]:
         """Open a backup, decrypt if needed, and place the plain SQLite file in
         ``out_dir``. Returns ``(db_path, manifest)``. Never writes into the
@@ -204,7 +302,20 @@ class BackupService:
                         nonce = bytes.fromhex(str(manifest["nonce"]))
                         iterations = int(manifest.get("kdf_iterations", 200_000))
                         key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-                        plain = _aes_gcm_decrypt(key, nonce, zf.read(ENCRYPTED_DB_ARCNAME))
+                        info = zf.getinfo(ENCRYPTED_DB_ARCNAME)
+                        buf = bytearray()
+                        with zf.open(ENCRYPTED_DB_ARCNAME) as src:
+                            while True:
+                                check_cancel(cancel)
+                                chunk = src.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                buf.extend(chunk)
+                                if progress:
+                                    progress("extract", len(buf), float(info.file_size), "bytes", "فك تشفير النسخة")
+                        plain = _aes_gcm_decrypt(key, nonce, bytes(buf))
+                    except OperationCancelled:
+                        raise
                     except Exception as exc:
                         raise ValueError("كلمة المرور غير صحيحة أو النسخة تالفة") from exc
                     db_file = out_dir / PRIMARY_DB_ARCNAME
@@ -219,65 +330,79 @@ class BackupService:
                     )
                     if not db_arcname:
                         raise ValueError("تنسيق النسخة الاحتياطية غير صحيح")
-                    zf.extract(db_arcname, out_dir)
+                    info = zf.getinfo(db_arcname)
+                    total = float(info.file_size)
+                    done = 0
                     db_file = out_dir / db_arcname
+                    with zf.open(db_arcname) as src, db_file.open("wb") as dst:
+                        while True:
+                            check_cancel(cancel)
+                            chunk = src.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                            done += len(chunk)
+                            if progress:
+                                progress("extract", done, total, "bytes", "استخراج قاعدة البيانات")
         except (zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("ملف النسخة الاحتياطية تالف") from exc
         return db_file, manifest
 
     def validate_backup(
-        self, backup_path: str | Path, password: str | None = None
+        self,
+        backup_path: str | Path,
+        password: str | None = None,
+        *,
+        progress=None,
+        cancel=None,
     ) -> BackupValidation:
         backup_path = Path(backup_path)
         if not backup_path.is_file():
             raise FileNotFoundError("ملف النسخة الاحتياطية غير موجود")
         with tempfile.TemporaryDirectory(prefix="nano_validate_") as td:
             out = Path(td)
-            db_file, manifest = self._extract_plain_db(backup_path, out, password=password)
-            if int(manifest.get("format", 0)) != BACKUP_FORMAT:
-                raise ValueError("إصدار تنسيق النسخة غير مدعوم")
-            expected = str(manifest.get("db_sha256", ""))
-            actual = self._sha256(db_file)
-            if not expected or not hmac.compare_digest(expected, actual):
-                raise ValueError("بصمة قاعدة البيانات لا تطابق النسخة")
-            integrity = self._integrity(db_file)
-            if integrity.lower() != "ok":
-                raise ValueError(f"قاعدة النسخة غير سليمة: {integrity}")
-            schema = self._schema_version(db_file)
-            if schema != int(manifest.get("schema_version", -1)):
-                raise ValueError("إصدار قاعدة البيانات لا يطابق بيان النسخة")
-            if schema > SCHEMA_VERSION:
-                raise ValueError("النسخة أُنشئت بإصدار أحدث من التطبيق")
-            return BackupValidation(
-                True,
-                schema,
-                str(manifest.get("created_at", "")),
-                actual,
-                encrypted=bool(manifest.get("encrypted", False)),
+            db_file, manifest = self._extract_plain_db(
+                backup_path, out, password=password, progress=progress, cancel=cancel
             )
+            return self._validate_extracted(db_file, manifest, progress=progress, cancel=cancel)
 
     def restore_backup(
-        self, backup_path: str | Path, password: str | None = None
+        self,
+        backup_path: str | Path,
+        password: str | None = None,
+        *,
+        progress=None,
+        cancel=None,
     ) -> Path:
-        self.validate_backup(backup_path, password=password)
+        backup_path = Path(backup_path)
         self.db.checkpoint()
 
         with self.db.connect() as conn:
             current_license = conn.execute("SELECT * FROM license_state WHERE id=1").fetchone()
             current_license_dict = dict(current_license) if current_license else None
 
-        safety_dir = self.db.path.parent / "backups"
-        safety_dir.mkdir(parents=True, exist_ok=True)
-        safety_path = safety_dir / f"pre_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}{PRIMARY_BACKUP_EXT}"
-        self.create_backup(safety_path)
-
+        # Validate the archive first (extract + hash + integrity) so an invalid
+        # file fails before a safety backup is created.
         with tempfile.TemporaryDirectory(prefix="nano_restore_") as td:
             out = Path(td)
-            source_db, _manifest = self._extract_plain_db(
-                Path(backup_path), out, password=password
+            source_db, manifest = self._extract_plain_db(
+                backup_path, out, password=password, progress=progress, cancel=cancel
             )
+            self._validate_extracted(source_db, manifest, progress=progress, cancel=cancel)
+            check_cancel(cancel)
+
+            safety_dir = self.db.path.parent / "backups"
+            safety_dir.mkdir(parents=True, exist_ok=True)
+            safety_path = safety_dir / f"pre_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}{PRIMARY_BACKUP_EXT}"
+            self.create_backup(safety_path, progress=progress, cancel=cancel)
+            check_cancel(cancel)
+
             temp_target = self.db.path.with_suffix(self.db.path.suffix + ".restore")
-            shutil.copy2(source_db, temp_target)
+            self._copy_file(
+                source_db, temp_target, progress=progress, cancel=cancel, stage="prepare"
+            )
+            if progress:
+                progress("candidate_migrate", 0, 1, "", "ترحيل بنية قاعدة البيانات")
 
             # Migrate and validate the candidate before touching the live database.
             candidate = Database(temp_target)
@@ -298,13 +423,21 @@ class BackupService:
                 if p.exists():
                     unlink_retry(p)
 
+            # Last safe cancellation point: after this the live DB is swapped.
+            check_cancel(cancel)
+            if progress:
+                progress("swap", 0, 1, "", "تبديل قاعدة البيانات")
             for suffix in ("-wal", "-shm"):
                 p = Path(str(self.db.path) + suffix)
                 if p.exists():
                     unlink_retry(p)
             replace_retry(temp_target, self.db.path)
+            if progress:
+                progress("swap", 1, 1, "", "تم تبديل قاعدة البيانات")
 
         # Candidate is already migrated. Restore the device-bound license.
+        if progress:
+            progress("finalize", 0, 1, "", "تجهيز قاعدة البيانات والترخيص")
         self.db.initialize()
         if current_license_dict:
             columns = [
@@ -320,6 +453,8 @@ class BackupService:
                 )
         if self.db.integrity_check().lower() != "ok":
             raise RuntimeError("فشل فحص قاعدة البيانات بعد الاسترجاع")
+        if progress:
+            progress("finalize", 1, 1, "", "تم الاسترجاع")
         return safety_path
 
     def initialize_fresh_database(self) -> Path:

@@ -9,7 +9,7 @@ admin = (root / "src/nano_offline/views/admin_view.py").read_text(encoding="utf-
 shell = main + "\n" + login
 for needle in ["إنشاء المدير الأول", "تسجيل الدخول المحلي", "actions = {", "allowed_keys", "session.can(k)", "AdminCenter"]:
     assert needle in shell, needle
-for needle in ["المستخدمون المحليون", "النسخ الاحتياطي والاسترجاع", "سجل التدقيق", "create_backup", "restore_backup"]:
+for needle in ["المستخدمون المحليون", "النسخ الاحتياطي والاسترجاع", "سجل التدقيق", "create_backup", "open_restore_dialog", "import_external_backup", "RestoreFlow"]:
     assert needle in admin, needle
 assert "ترخيص كاشير" in admin
 assert "audit_rows_view = DataGrid(" in admin

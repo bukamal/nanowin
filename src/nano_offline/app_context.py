@@ -72,14 +72,14 @@ class AppContext:
     voice_learning: object
 
     @classmethod
-    def create(cls, db_path: str | Path) -> "AppContext":
+    def create(cls, db_path: str | Path, *, progress=None, cancel=None) -> "AppContext":
         db = Database(db_path)
         db.initialize()
         invoices = InvoiceService(db)
         expenses = ExpenseService(db)
         # Required after phase-2 -> phase-3 migration: initial invoice payments
         # become explicit payment/allocation rows and all balances are reconciled.
-        invoices.rebuild_derived_state()
+        invoices.rebuild_derived_state(progress=progress, cancel=cancel)
         expenses.rebuild_ledger()
         # Print stations: sale invoices fan out to each section's network
         # ESC/POS printer (see SectionPrintService).
@@ -181,7 +181,7 @@ class AppContext:
         """Path of this context's SQLite file (local installs only)."""
         return self.db.path
 
-    def reload(self, db_path: str | Path) -> None:
+    def reload(self, db_path: str | Path, *, progress=None, cancel=None) -> None:
         """Rebuild every repository/service against a freshly-opened ``Database``.
 
         ``Database.connect()`` already opens a new sqlite3 connection by path
@@ -206,6 +206,6 @@ class AppContext:
         against the restored data instead of showing stale, already-rendered
         rows from before the restore.
         """
-        fresh = AppContext.create(db_path)
+        fresh = AppContext.create(db_path, progress=progress, cancel=cancel)
         for field_name in self.__dataclass_fields__:
             setattr(self, field_name, getattr(fresh, field_name))

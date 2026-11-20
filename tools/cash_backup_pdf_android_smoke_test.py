@@ -67,7 +67,7 @@ for needle in ["shareXFiles", "XFile"]:
 assert "Printing.sharePdf" not in native_dart
 
 # Android backup import opens FileType.any (extensions=None) then validates and persists locally.
-for needle in ["extensions=None", "validate_backup, source", "shutil.copy2", "validate_backup, target", "إنشاء ومشاركة نسخة"]:
+for needle in ["extensions=None", "pick_file(", "self._restore_flow.open", "copy_source=True", "إنشاء ومشاركة نسخة"]:
     assert needle in admin, needle
 assert "FileType.any" in native_dart
 

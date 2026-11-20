@@ -819,10 +819,10 @@ class InvoiceService:
                     [(line_id, int(cid), float(base_qty)) for cid, base_qty in components.items()],
                 )
 
-    def rebuild_derived_state(self) -> None:
+    def rebuild_derived_state(self, progress=None, cancel=None) -> None:
         """Reconcile migrated databases and all derived balances/ledger rows."""
         with self.db.transaction() as conn:
-            AccountingRebuilder.rebuild(conn)
+            AccountingRebuilder.rebuild(conn, progress=progress, cancel=cancel)
 
     def open_invoices_for_party(self, party_type: str, party_id: int) -> list[dict]:
         if party_type not in {"customer", "supplier"}:

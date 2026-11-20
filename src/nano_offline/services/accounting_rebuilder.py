@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from nano_offline.core import money
+from nano_offline.core.cancellation import check_cancel
 
 EPSILON = 1e-9
 
@@ -36,13 +37,13 @@ class AccountingRebuilder:
     """
 
     @classmethod
-    def rebuild(cls, conn, *, inventory: bool = True) -> None:
+    def rebuild(cls, conn, *, inventory: bool = True, progress=None, cancel=None) -> None:
         if inventory:
-            cls.rebuild_inventory(conn)
-        cls.rebuild_financials(conn)
+            cls.rebuild_inventory(conn, progress=progress, cancel=cancel)
+        cls.rebuild_financials(conn, progress=progress, cancel=cancel)
 
     @staticmethod
-    def rebuild_inventory(conn) -> None:
+    def rebuild_inventory(conn, progress=None, cancel=None) -> None:
         conn.execute("DELETE FROM inventory_movements WHERE invoice_id IS NOT NULL")
         conn.execute("""UPDATE invoice_lines SET unit_cost=0,cost_amount=0
                        WHERE item_id IN (SELECT id FROM items WHERE item_type='مخزون')""")
@@ -86,8 +87,14 @@ class AccountingRebuilder:
             ORDER BY inv.invoice_date, inv.created_at, inv.id, il.id
             """
         ).fetchall()
+        total_rows = len(rows)
+        if progress:
+            progress("rebuild_inventory", 0, float(total_rows or 1), "lines", "إعادة بناء حركات المخزون")
 
-        for raw in rows:
+        for index, raw in enumerate(rows, start=1):
+            check_cancel(cancel)
+            if progress and index % 2000 == 0:
+                progress("rebuild_inventory", index, float(total_rows), "lines", "إعادة بناء حركات المخزون")
             row = dict(raw)
             item_id = int(row["item_id"])
             base_qty = float(row["quantity_in_base"])
@@ -198,14 +205,14 @@ class AccountingRebuilder:
             )
 
     @classmethod
-    def rebuild_financials(cls, conn) -> None:
-        cls._sync_initial_invoice_payments(conn)
+    def rebuild_financials(cls, conn, progress=None, cancel=None) -> None:
+        cls._sync_initial_invoice_payments(conn, progress=progress, cancel=cancel)
         cls._validate_allocations(conn)
         cls._refresh_invoice_paid_amounts(conn)
-        cls._rebuild_ledger_and_party_balances(conn)
+        cls._rebuild_ledger_and_party_balances(conn, progress=progress, cancel=cancel)
 
     @staticmethod
-    def _sync_initial_invoice_payments(conn) -> None:
+    def _sync_initial_invoice_payments(conn, progress=None, cancel=None) -> None:
         # Initial payments are source-document fields on invoices. Regenerate
         # their cash rows and allocations deterministically on every rebuild.
         conn.execute("DELETE FROM payments WHERE source_type='invoice_initial'")
@@ -213,7 +220,13 @@ class AccountingRebuilder:
         invoices = conn.execute(
             "SELECT * FROM invoices ORDER BY invoice_date, created_at, id"
         ).fetchall()
-        for inv in invoices:
+        total_invoices = len(invoices)
+        if progress:
+            progress("rebuild_initial_payments", 0, float(total_invoices or 1), "invoices", "مزامنة الدفعات الأولية")
+        for inv_index, inv in enumerate(invoices, start=1):
+            check_cancel(cancel)
+            if progress and inv_index % 2000 == 0:
+                progress("rebuild_initial_payments", inv_index, float(total_invoices), "invoices", "مزامنة الدفعات الأولية")
             if _is_opening_invoice(inv):
                 # Opening stock is not a purchased-in-period document: skip
                 # its derived initial payment entirely.
@@ -334,7 +347,7 @@ class AccountingRebuilder:
         )
 
     @classmethod
-    def _rebuild_ledger_and_party_balances(cls, conn) -> None:
+    def _rebuild_ledger_and_party_balances(cls, conn, progress=None, cancel=None) -> None:
         conn.execute("DELETE FROM ledger_entries WHERE source_type IN ('invoice','payment','opening')")
         conn.execute("UPDATE customers SET balance=0,updated_at=CURRENT_TIMESTAMP")
         conn.execute("UPDATE suppliers SET balance=0,updated_at=CURRENT_TIMESTAMP")
@@ -342,7 +355,13 @@ class AccountingRebuilder:
         invoices = conn.execute(
             "SELECT * FROM invoices ORDER BY invoice_date, created_at, id"
         ).fetchall()
-        for inv in invoices:
+        total_invoices = len(invoices)
+        if progress:
+            progress("rebuild_ledger_invoices", 0, float(total_invoices or 1), "invoices", "ترحيل قيود الفواتير")
+        for inv_index, inv in enumerate(invoices, start=1):
+            check_cancel(cancel)
+            if progress and inv_index % 2000 == 0:
+                progress("rebuild_ledger_invoices", inv_index, float(total_invoices), "invoices", "ترحيل قيود الفواتير")
             if _is_opening_invoice(inv):
                 # Inventory-only: the opening invoice already seeded stock in
                 # rebuild_inventory; posting PURCHASES/AP or moving cash here
@@ -398,7 +417,14 @@ class AccountingRebuilder:
                 if inv["supplier_id"]:
                     conn.execute("UPDATE suppliers SET balance=balance+? WHERE id=?", (money.quantized(total), inv["supplier_id"]))
 
-        for p in conn.execute("SELECT * FROM payments ORDER BY payment_date, created_at, id").fetchall():
+        payments = conn.execute("SELECT * FROM payments ORDER BY payment_date, created_at, id").fetchall()
+        total_payments = len(payments)
+        if progress:
+            progress("rebuild_ledger_payments", 0, float(total_payments or 1), "payments", "ترحيل قيود الدفعات والسندات")
+        for pay_index, p in enumerate(payments, start=1):
+            check_cancel(cancel)
+            if progress and pay_index % 2000 == 0:
+                progress("rebuild_ledger_payments", pay_index, float(total_payments), "payments", "ترحيل قيود الدفعات والسندات")
             amount = money.quantized(p["amount"])
             cls._write_payment_ledger(
                 conn, int(p["id"]), str(p["direction"]), amount,

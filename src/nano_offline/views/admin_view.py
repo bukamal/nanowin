@@ -18,6 +18,7 @@ from nano_offline.components.sections_sheet import open_sections_sheet
 from nano_offline.components.restaurant_boards import open_kitchen_board
 from nano_offline.components.tables_admin import open_tables_admin
 from nano_offline.components.column_visibility import ColumnVisibility
+from nano_offline.components.restore_flow import RestoreFlow
 from nano_offline.services.auth_service import CAPABILITIES, ROLE_LABELS, ROLE_PERMISSIONS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -62,6 +63,12 @@ class AdminCenter:
         # away (see main.py's build_shell/open_shell) -- optional purely so
         # this view stays constructible in isolation (e.g. future tests).
         self.on_theme_changed = on_theme_changed or (lambda: None)
+        # Single, guarded restore/import window (never opens a second one).
+        self._restore_flow = RestoreFlow(
+            page, ctx, native_files,
+            notify=self._notify,
+            on_logout=self.on_logout,
+        )
 
     def _notify(self, text: str, kind: str | None = None, sound_kind: str | None = None):
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
@@ -984,167 +991,21 @@ class AdminCenter:
                 self._notify(str(exc), kind="error")
 
         def open_restore_dialog(path: str | Path, *, external_name: str | None = None):
-            # ROOT-CAUSE NOTE (read before touching this function again):
-            # the previous version closed this confirm `dialog` and, in the
-            # very same synchronous handler tick, opened a *second*,
-            # brand-new AlertDialog (success_dialog / an error dialog from
-            # _notify_error) to replace it. A user reported that pressing
-            # "استرجاع" then confirming produced literally no visible
-            # reaction at all -- not an error, not success, nothing. That
-            # symptom is consistent with two different failure points we
-            # cannot fully tell apart without an on-device log, and this
-            # rewrite removes both at once instead of guessing which one it
-            # is:
-            #   1. Flet closing one modal and opening a different modal
-            #      instance back-to-back, with no render in between, is a
-            #      known source of the second dialog never actually
-            #      reaching the screen (a close-then-open race).
-            #   2. Any exception raised inside a plain `def` on_click
-            #      handler before it reaches a UI call can be swallowed by
-            #      Flet with nothing printed anywhere the user can see --
-            #      this exact failure mode is what turned out to be the
-            #      real bug behind the pattern-drawing screen in this app
-            #      (see PATTERN_BACKUP_BARCODE_FIXES_AR.md, section 1).
-            #
-            # The fix for (1): never open a second AlertDialog. Keep a
-            # single dialog instance alive for the whole flow and mutate
-            # its own title/content/actions in place, then call
-            # dialog.update() -- the same "update a control that is
-            # already part of the open dialog's tree" approach already
-            # used for the barcode scan status line in items_view.py,
-            # which does not depend on any open/close transition timing.
-            #
-            # The fix for (2): every step below is wrapped so it cannot
-            # fail silently -- each stage prints a `[nano-restore]` line
-            # (visible via `adb logcat` / `flet build` run logs) *before*
-            # doing anything that could raise, and the outermost except
-            # both prints the traceback and still forces something onto
-            # the screen. If this still shows "nothing happens" after this
-            # change, the logcat output tells us exactly which of the
-            # numbered steps was last reached instead of us guessing again.
-            import traceback
-
-            def log(step: str) -> None:
-                print(f"[nano-restore] {step}", flush=True)
-
-            try:
-                log("0: fetching state for restore dialog")
-                path = Path(path)
-                validation = self.ctx.backup.validate_backup(path)
-                source_label = external_name or path.name
-
-                def set_dialog(*, title: str, content: ft.Control, actions: list[ft.Control]) -> None:
-                    dialog.title = ft.Text(title)
-                    dialog.content = content
-                    dialog.actions = actions
-                    dialog.update()
-
-                def confirm(_):
-                    try:
-                        log("1: confirm pressed")
-                        # Disable both buttons and swap the content to a
-                        # "working" state immediately, before doing any
-                        # file I/O. This alone proves (or disproves) that
-                        # the click reached Python at all: if this message
-                        # never appears, the problem is upstream of this
-                        # function entirely (button wiring / Flet event
-                        # delivery), not inside restore_backup().
-                        set_dialog(
-                            title="جارٍ الاسترجاع…",
-                            content=ft.Row(
-                                [ft.ProgressRing(width=18, height=18, stroke_width=2), ft.Text("يرجى الانتظار")],
-                                spacing=10,
-                            ),
-                            actions=[],
-                        )
-                        log("2: calling backup.restore_backup")
-                        safety = self.ctx.backup.restore_backup(path)
-                        log("3: restore_backup returned, reloading context")
-                        # restore_backup() only swaps the .db file on disk. Every
-                        # view already holds Python objects it fetched before the
-                        # restore, and a couple of services (invoices/expenses)
-                        # compute derived state once at startup rather than per
-                        # query -- so without this, the restored data silently
-                        # never reaches the screen and it looks like "restore does
-                        # nothing" even though the file on disk is correct.
-                        self.ctx.reload(self.ctx.database_path())
-                        log("4: context reloaded, syncing home widget with restored DB")
-                        # FIX_0.9.2: without this step the widget keeps showing
-                        # the LAST-PUSH snapshot (or the first-run hint seen in
-                        # the bug screenshot) because the widget's own
-                        # SharedPreferences live outside the swapped .db file.
-                        # core/home_widget.py can clear → force_refresh → push
-                        # in one call, sourcing sales_today/cash_balance from
-                        # DashboardService post-reload (same source as the
-                        # in-app dashboard, so the two cannot disagree).
-                        try:
-                            from nano_offline.core.home_widget import (
-                                refresh_home_widget_after_restore,
-                            )
-                            refresh_home_widget_after_restore(
-                                self.page, self.native_files, self.ctx.dashboard, self.ctx.settings
-                            )
-                        except Exception as widget_exc:
-                            # Never let a widget-side failure abort a
-                            # successful restore -- the DB swap already
-                            # succeeded, the user-visible data is correct,
-                            # and the next sale or periodic pass will update
-                            # the widget on its own. Just make it loud.
-                            print(
-                                f"[nano-restore] widget resync skipped: {widget_exc!r}",
-                                flush=True,
-                            )
-                        log("5: home widget synced, showing success state")
-                        # Every view currently on screen was built from
-                        # pre-restore data, so the user still needs to go back to
-                        # login and let the shell rebuild from scratch against the
-                        # restored database -- also re-establishes the session
-                        # cleanly if users/roles changed in the restored copy.
-                        set_dialog(
-                            title="تم الاسترجاع بنجاح",
-                            content=ft.Text(f"نسخة الأمان: {Path(safety).name}"),
-                            actions=[
-                                primary_button("متابعة", on_click=lambda _: (self.page.close(dialog), self.on_logout()), width=None, size="md"),
-                            ],
-                        )
-                        log("5: success state shown, waiting for user to continue")
-                    except Exception as exc:
-                        log(f"ERROR during confirm: {exc!r}")
-                        traceback.print_exc()
-                        set_dialog(
-                            title="تعذّر تنفيذ الاسترجاع",
-                            content=ft.Text(str(exc), color=Colors.DANGER),
-                            actions=[primary_button("حسنًا", on_click=lambda _: self.page.close(dialog), width=None, size="md")],
-                        )
-
-                dialog = ft.AlertDialog(
-                    modal=True,
-                    title=ft.Text("تأكيد الاسترجاع"),
-                    content=ft.Text(
-                        f"سيتم استرجاع {source_label} (schema {validation.schema_version}). "
-                        "سيُنشأ Backup أمان تلقائيًا، ولن يتم نقل ترخيص جهاز آخر."
-                    ),
-                    actions=[
-                        ft.TextButton("إلغاء", on_click=lambda _: self.page.close(dialog)),
-                        primary_button("استرجاع", icon=ft.Icons.RESTORE, on_click=confirm, width=None, size="md"),
-                    ],
-                )
-                log("dialog built, opening")
-                self.page.open(dialog)
-                log("page.open(dialog) returned")
-            except Exception as exc:
-                log(f"ERROR before dialog open: {exc!r}")
-                traceback.print_exc()
-                self._notify_error(str(exc))
+            # The unified flow window handles validation, the safety backup,
+            # the swap and the accounting rebuild with live progress.
+            self._restore_flow.open(path, external_name=external_name)
 
         async def import_external_backup(_):
+            if self._restore_flow.active:
+                self._notify("يوجد استيراد/استرجاع قيد التنفيذ بالفعل", kind="warning")
+                return
             if self.native_files is None:
                 self._notify("استيراد الملفات الأصلي غير مهيأ في هذا البناء")
                 return
             try:
                 # Android document providers are inconsistent with custom file
-                # extensions, so open all files and validate Cashir's container
-                # ourselves before copying it into persistent local storage.
+                # extensions, so open all files and let the flow validate the
+                # container itself while copying it into local storage.
                 picked = await self.native_files.pick_file(
                     extensions=None,
                     dialog_title=f"اختر النسخة الاحتياطية لـ {branding.APP_NAME_AR}",
@@ -1152,23 +1013,10 @@ class AdminCenter:
                 if not picked:
                     return
                 source = Path(str(picked["path"]))
-                validation = await asyncio.to_thread(self.ctx.backup.validate_backup, source)
                 original_name = str(picked.get("name") or source.name or "imported_backup")
-                safe_stem = Path(original_name).stem.replace("/", "_").replace("\\", "_") or "imported_backup"
-                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                target = backups_dir / f"{safe_stem}_{stamp}.nanobackup"
-                await asyncio.to_thread(shutil.copy2, source, target)
-                # Validate the persisted copy too; restore never depends on the
-                # transient Android picker cache path.
-                await asyncio.to_thread(self.ctx.backup.validate_backup, target)
-                refresh_backups()
-                backup_info.value = f"تم استيراد {target.name} • schema {validation.schema_version}"
-                self.page.update()
-                open_restore_dialog(target, external_name=original_name)
+                self._restore_flow.open(source, external_name=original_name, copy_source=True)
             except Exception as exc:
                 self._notify_error(str(exc))
-
-        refresh_backups()
 
         # License details are private and masked by default. The key stays
         # hidden, and the full device ID is only shown on explicit reveal.
