@@ -38,11 +38,13 @@ def test_role_presets_cover_the_five_roles():
 def test_derived_module_keys():
     cashier = UserSession(1, "c", "C", "sales", ROLE_PERMISSIONS["sales"])
     assert cashier.can("invoices") is True
+    assert cashier.can("sales") is True and cashier.can("purchases") is False
     assert cashier.can("admin") is False
     warehouse = UserSession(2, "w", "W", "warehouse", ROLE_PERMISSIONS["warehouse"])
     assert warehouse.can("invoices") is True
     assert warehouse.can("invoices_purchases") is True
     assert warehouse.can("invoices_sales") is False
+    assert warehouse.can("purchases") is True and warehouse.can("sales") is False
 
 
 def test_overrides_round_trip():

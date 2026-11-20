@@ -102,6 +102,9 @@ class InvoiceCenter:
     """Responsive invoice center/editor for Flet 0.28.x."""
 
     def __init__(self, page: ft.Page, ctx, content: ft.Container, on_saved=None, native_files=None, on_title_change=None):
+        # Dedicated list mode: None (combined), "sale", or "purchase". Set by
+        # the shell's sales/purchases tabs; internal refreshes keep it.
+        self._list_mode: str | None = None
         # The exact control tree this center last painted into ``content``.
         # Used after a sheet closes to decide whether the invoices list is
         # actually the surface underneath (then refresh it) or whether the
@@ -744,24 +747,41 @@ class InvoiceCenter:
         render_form_sheet(self.page, sheet, title=title, fields=[name_field, phone_field], on_close=close, on_save=save)
         self.page.open(sheet)
 
-    def show_center(self, initial_type: str | None = None) -> None:
+    def show_center(self, initial_type: str | None = None, *, locked: bool = False) -> None:
         """Reference-style invoice browser: the same table language as the
         materials screen (round clipped grid, centred cells, tinted pinned
         header, zebra rows), with chip filters, KPI cards and the overdue
-        alert kept on top of it."""
-        if initial_type not in ("sale", "purchase"):
-            initial_type = "all"
+        alert kept on top of it.
+
+        ``locked`` is used by the dedicated Sales/Purchases tabs: the list is
+        pinned to one type, its type chips disappear, and the title/KPIs match
+        that surface. Internal refreshes (``show_center()``) keep the mode.
+        """
+        if locked:
+            self._list_mode = initial_type if initial_type in ("sale", "purchase") else None
+        elif initial_type in ("sale", "purchase"):
+            self._list_mode = None
+        mode = self._list_mode
         session = self.ctx.auth.current()
         can_sales = bool(session and session.can("invoices_sales"))
         can_purchases = bool(session and session.can("invoices_purchases"))
-        if initial_type == "sale" and not can_sales:
+        if mode == "sale" and not can_sales:
+            mode = self._list_mode = None
+        if mode == "purchase" and not can_purchases:
+            mode = self._list_mode = None
+        if initial_type not in ("sale", "purchase"):
             initial_type = "all"
-        if initial_type == "purchase" and not can_purchases:
-            initial_type = "all"
-        if initial_type == "all" and can_sales != can_purchases:
+        if mode:
+            initial_type = mode
+        if not mode and initial_type == "all" and can_sales != can_purchases:
             initial_type = "sale" if can_sales else "purchase"
         if self.on_title_change:
-            self.on_title_change("الفواتير", "المبيعات والمشتريات وحالات السداد")
+            if mode == "sale":
+                self.on_title_change("المبيعات", "فواتير البيع وحالات السداد")
+            elif mode == "purchase":
+                self.on_title_change("المشتريات", "فواتير الشراء وحالات السداد")
+            else:
+                self.on_title_change("الفواتير", "المبيعات والمشتريات وحالات السداد")
         try:
             invoices = self.ctx.invoices.list_invoices(limit=250)
             search = SelectAllTextField(
@@ -782,6 +802,11 @@ class InvoiceCenter:
             outstanding = sum(max(0.0, float(i.get("remaining_amount") or 0)) for i in invoices)
             open_count = sum(1 for i in invoices if i.get("payment_status") != "paid")
             sales_total = sum(float(i.get("total") or 0) for i in invoices if i.get("type") == "sale")
+            purchases_total = sum(float(i.get("total") or 0) for i in invoices if i.get("type") == "purchase")
+            # Sales profit = sum(total - COGS) over the sale invoices.
+            profits_total = sum(
+                float(i.get("profit_amount") or 0) for i in invoices if i.get("type") == "sale"
+            )
 
             def days_since(invoice_date_str) -> int | None:
                 if not invoice_date_str:
@@ -861,8 +886,22 @@ class InvoiceCenter:
             selected_state = {"rows": []}
             grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
             export_state = {"rows": []}
+            profit_column = GridColumn(
+                "profit_amount", "الربح", width=110, align="end", kind="money",
+                color_role="signed",
+                tooltip="الإجمالي − تكلفة البضاعة المباعة (COGS)",
+            )
+            if mode == "sale":
+                _base_cols = list(INVOICE_GRID_COLUMNS)
+                _profit_at = next(
+                    (i for i, c in enumerate(_base_cols) if c.key == "payment_status"),
+                    len(_base_cols),
+                )
+                invoice_columns = _base_cols[:_profit_at] + [profit_column] + _base_cols[_profit_at:]
+            else:
+                invoice_columns = list(INVOICE_GRID_COLUMNS)
             invoice_visibility = ColumnVisibility(
-                columns=INVOICE_GRID_COLUMNS,
+                columns=invoice_columns,
                 settings=self.ctx.settings,
                 preference_key="ui.invoices_hidden_columns",
                 auto_hidden={"invoice_date"} if (self.page.width or 1200) < 720 else set(),
@@ -1214,7 +1253,7 @@ class InvoiceCenter:
             # edit/delete. The bounded viewport keeps the header pinned even
             # though the invoice screen itself scrolls as one page.
             invoice_grid = DataGrid(
-                columns=INVOICE_GRID_COLUMNS,
+                columns=invoice_columns,
                 rows=[],
                 page=self.page,
                 row_height=36 if density_state["compact"] else 48,
@@ -1288,11 +1327,16 @@ class InvoiceCenter:
                 # Totals cover the whole filtered set, not just the first
                 # page of 60 -- so the footer answers "how much is open in
                 # what I'm looking at" without paging through 250 rows.
-                invoice_grid.set_footer({
+                footer_values = {
                     "type": f"{len(matched)} فاتورة",
                     "total": self.money(sum(float(i.get("total") or 0) for i in matched)),
                     "remaining_amount": self.money(sum(max(0.0, float(i.get("remaining_amount") or 0)) for i in matched)),
-                })
+                }
+                if mode == "sale":
+                    footer_values["profit_amount"] = self.money(
+                        sum(float(i.get("profit_amount") or 0) for i in matched)
+                    )
+                invoice_grid.set_footer(footer_values)
                 remaining = len(matched) - len(shown)
                 if remaining > 0:
                     grid_more.content = ft.Row(
@@ -1323,13 +1367,16 @@ class InvoiceCenter:
 
             def render_filters() -> None:
                 type_controls = []
-                if can_sales and can_purchases:
-                    type_controls.append(chip("الكل", "type", "all", type_row))
-                if can_sales:
-                    type_controls.append(chip("مبيعات", "type", "sale", type_row))
-                if can_purchases:
-                    type_controls.append(chip("مشتريات", "type", "purchase", type_row))
-                    type_controls.append(chip("أول مدة", "type", "opening", type_row))
+                # A dedicated Sales/Purchases tab has its type pinned, so the
+                # type chips are hidden there (status chips remain).
+                if mode is None:
+                    if can_sales and can_purchases:
+                        type_controls.append(chip("الكل", "type", "all", type_row))
+                    if can_sales:
+                        type_controls.append(chip("مبيعات", "type", "sale", type_row))
+                    if can_purchases:
+                        type_controls.append(chip("مشتريات", "type", "purchase", type_row))
+                        type_controls.append(chip("أول مدة", "type", "opening", type_row))
                 type_row.controls = type_controls
                 status_row.controls = [
                     chip("كل الحالات", "status", "all", status_row),
@@ -1354,7 +1401,7 @@ class InvoiceCenter:
             # invoice list. ---
             type_label = ft.Text("النوع", size=10, color=Colors.TEXT_SECONDARY)
             status_label = ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY)
-            type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
+            type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True, visible=mode is None)
             status_filter_row = ft.Row([status_label, status_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             # Single compact toolbar: fixed-width search, the type/status chip
             # groups, then an expand spacer and the actions. No outer wrap=True
@@ -1380,11 +1427,25 @@ class InvoiceCenter:
             )
 
             # --- Scrollable middle: KPI cards (collapsible), overdue alert, invoice list. ---
-            kpi_cards = metric_row([
-                kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
-                kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
-                kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
-            ], spacing=8)
+            if mode == "purchase":
+                kpi_cards = metric_row([
+                    kpi_card("إجمالي المشتريات", self.money(purchases_total), ft.Icons.TRENDING_DOWN, Colors.PURPLE, on_tap=lambda _: set_filter("type", "purchase")),
+                    kpi_card("المستحق على الموردين", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
+                    kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                ], spacing=8)
+            elif mode == "sale":
+                kpi_cards = metric_row([
+                    kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
+                    kpi_card("إجمالي الربح", self.money(profits_total), ft.Icons.SAVINGS_OUTLINED, Colors.PURPLE),
+                    kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
+                    kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                ], spacing=8)
+            else:
+                kpi_cards = metric_row([
+                    kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
+                    kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
+                    kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                ], spacing=8)
             kpi_collapsed = {
                 "v": self.ctx.settings.get("ui.invoices_kpi_collapsed", "true").strip().lower()
                 in ("1", "true", "yes", "on")
@@ -2581,6 +2642,27 @@ class InvoiceCenter:
                 except (TypeError, ValueError):
                     total = 0.0
                 return currency.format_display_value(round(total, 2), settings, with_symbol=False) if total else ""
+            if col.key == "_profit":
+                if (type_dd.value or "sale") != "sale":
+                    return ""
+                if privacy.hidden(self.ctx):
+                    return privacy.MASK_TEXT
+                try:
+                    qty = float(row.get("qty") or 0)
+                    price_disp = float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    qty = price_disp = 0.0
+                item_row = item_map.get(int(row["item"])) if row.get("item") else None
+                cost_usd = float(
+                    (item_row or {}).get("average_cost")
+                    or (item_row or {}).get("purchase_price")
+                    or 0
+                )
+                price_usd = (price_disp / rate) if rate else price_disp
+                profit_disp = (price_usd - cost_usd) * qty * rate
+                if abs(profit_disp) < 1e-9:
+                    return ""
+                return currency.format_display_value(round(profit_disp, 2), settings, with_symbol=False)
             if col.key == "_status":
                 if not row.get("item") and not str(row.get("description") or "").strip():
                     return ("بلا مادة", Colors.TEXT_FAINT, Colors.BACKGROUND_ALT)
@@ -2615,6 +2697,15 @@ class InvoiceCenter:
             GridColumn("_extra_total", "الإجمالي", width=140, align="end", kind="money", editable=edit_total_qty, sortable=False, tooltip="إجمالي البند بالعملة الإضافية — عند التفعيل: تعديله يغيّر الكمية ويثبّت السعر"),
             GridColumn("_status", "الحالة", width=130, align="center", sortable=False, tooltip="جاهز للحفظ / بلا مادة / كمية أو سعر غير صالح"),
         ]
+        if invoice_type == "sale":
+            # Profit per sales line: (unit price - weighted average cost) × qty,
+            # shown in the display currency. Purchases have no profit.
+            _profit_col = GridColumn(
+                "_profit", "الربح", width=120, align="end", sortable=False,
+                tooltip="(السعر − التكلفة الوسطية) × الكمية",
+            )
+            _at = next((i for i, c in enumerate(line_columns) if c.key == "_total"), len(line_columns) - 1)
+            line_columns.insert(_at + 1, _profit_col)
         line_visibility = ColumnVisibility(
             columns=line_columns,
             settings=settings,
@@ -3005,6 +3096,29 @@ class InvoiceCenter:
                     continue
             return total
 
+        def rows_profit_display() -> float:
+            """Estimated profit (display currency) of the current sales lines."""
+            if (type_dd.value or "sale") != "sale":
+                return 0.0
+            profit = 0.0
+            for row in lines_grid.rows:
+                if not row.get("item"):
+                    continue
+                try:
+                    qty = float(row.get("qty") or 0)
+                    price_disp = float(row.get("price") or 0)
+                except (TypeError, ValueError):
+                    continue
+                item_row = item_map.get(int(row["item"]))
+                cost_usd = float(
+                    (item_row or {}).get("average_cost")
+                    or (item_row or {}).get("purchase_price")
+                    or 0
+                )
+                price_usd = (price_disp / rate) if rate else price_disp
+                profit += (price_usd - cost_usd) * qty * rate
+            return profit
+
         def refresh_summary(_=None) -> None:
             total = rows_total_display()
             invoice_rows = [
@@ -3019,11 +3133,16 @@ class InvoiceCenter:
                 except (TypeError, ValueError):
                     continue
             if count:
-                lines_grid.set_footer({
+                footer = {
                     "item": f"{count} بند",
                     "qty": self._qty(qty_total),
                     "_total": currency.format_display_value(total, settings, with_symbol=False),
-                })
+                }
+                if (type_dd.value or "sale") == "sale":
+                    footer["_profit"] = currency.format_display_value(
+                        round(rows_profit_display(), 2), settings, with_symbol=False
+                    )
+                lines_grid.set_footer(footer)
             else:
                 lines_grid.set_footer(None)
             # Anonymous invoices are cash by definition (same rule the wizard

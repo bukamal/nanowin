@@ -18,9 +18,12 @@ class ShellRouteCoordinator:
     """Coordinate route rendering with the desktop shell's UI callbacks."""
 
     _DENY_MESSAGES = {
-        "pos": "لا تملك صلاحية الفواتير",
-        "sale": "لا تملك صلاحية الفواتير",
-        "purchase": "لا تملك صلاحية الفواتير",
+        "pos": "لا تملك صلاحية المبيعات",
+        "sale": "لا تملك صلاحية المبيعات",
+        "purchase": "لا تملك صلاحية المشتريات",
+        "sales": "لا تملك صلاحية المبيعات",
+        "purchases": "لا تملك صلاحية المشتريات",
+        "invoices": "لا تملك صلاحية الفواتير",
         "stocktake": "لا تملك صلاحية المواد/الجرد",
     }
 

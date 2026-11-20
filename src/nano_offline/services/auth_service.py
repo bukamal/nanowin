@@ -35,6 +35,10 @@ CAPABILITIES: dict[str, tuple[str, str]] = {
 # "admin", which now mean "any of these capabilities".
 DERIVED_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "invoices": ("invoices_sales", "invoices_purchases"),
+    # Dedicated sales/purchases screens: each maps to its own capability so a
+    # cashier only sees the sales surface and a warehouse only purchases.
+    "sales": ("invoices_sales",),
+    "purchases": ("invoices_purchases",),
     "admin": ("admin_users", "admin_backup"),
 }
 

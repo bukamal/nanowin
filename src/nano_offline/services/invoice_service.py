@@ -74,7 +74,9 @@ class InvoiceService:
                c.name AS customer_name,
                s.name AS supplier_name,
                CASE WHEN i.type='sale' THEN c.name ELSE s.name END AS party_name,
-               (i.total-i.paid_amount) AS remaining_amount
+               (i.total-i.paid_amount) AS remaining_amount,
+               (SELECT COALESCE(SUM(il.cost_amount),0) FROM invoice_lines il
+                 WHERE il.invoice_id=i.id) AS cogs_amount
         FROM invoices i
         LEFT JOIN customers c ON c.id=i.customer_id
         LEFT JOIN suppliers s ON s.id=i.supplier_id
@@ -89,6 +91,13 @@ class InvoiceService:
             rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
         for row in rows:
             row["payment_status"] = self._payment_status(float(row["total"]), float(row["paid_amount"]))
+            # Sales profit = total - cost of goods sold (snapshotted per line).
+            # Purchases have no profit; the key is always present so callers
+            # don't have to special-case it.
+            if str(row.get("type")) == "sale":
+                row["profit_amount"] = float(row["total"]) - float(row.get("cogs_amount") or 0)
+            else:
+                row["profit_amount"] = 0.0
         return rows
 
     def get_invoice(self, invoice_id: int) -> dict | None:

@@ -159,7 +159,7 @@ def test_route_coordinator_only_notifies_permission_denials():
     coordinator.on_denied(RouteDenied("no permission for route: pos"), "pos", {})
     coordinator.on_denied(RouteDenied("route not registered: unknown"), "unknown", {})
 
-    assert messages == ["لا تملك صلاحية الفواتير"]
+    assert messages == ["لا تملك صلاحية المبيعات"]
 
 
 def test_route_coordinator_skip_render_keeps_chrome_without_rebuilding():

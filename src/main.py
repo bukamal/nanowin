@@ -315,8 +315,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # resolve those names at click-time, once the whole shell is built — the
     # same late-binding the previous inline closures relied on.
     def open_purchase_draft(lines=None, supplier_id=None):
-        # Navigate to invoices shell then open purchase editor with suggested lines.
-        navigate("invoices")
+        # Open the dedicated purchases surface, then the purchase editor with
+        # the suggested lines.
+        navigate("purchases")
         prefill = []
         for line in lines or []:
             prefill.append(
@@ -392,7 +393,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         "items": ("المواد", "إدارة المخزون والخدمات والتصنيفات والوحدات"),
         "customers": ("العملاء", "إدارة العملاء والذمم المدينة"),
         "suppliers": ("الموردون", "إدارة الموردين والذمم الدائنة"),
-        "invoices": ("الفواتير", "المبيعات والمشتريات وحالات السداد"),
+        "sales": ("المبيعات", "فواتير البيع وحالات السداد"),
+        "purchases": ("المشتريات", "فواتير الشراء وحالات السداد"),
         "finance": ("المالية", "السندات والمصروفات والحركات المالية"),
         "reports": ("التقارير", "التقارير المالية والمخزون والربحية"),
         "security": ("الأمان والدخول", "PIN والنمط والجلسات المحفوظة"),
@@ -404,7 +406,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         "items": items_center.show_center,
         "customers": lambda: party_center.show_center(ctx.customers, "العملاء"),
         "suppliers": lambda: party_center.show_center(ctx.suppliers, "الموردون"),
-        "invoices": invoice_center.show_center,
+        "sales": lambda: invoice_center.show_center(initial_type="sale", locked=True),
+        "purchases": lambda: invoice_center.show_center(initial_type="purchase", locked=True),
         "finance": finance_center.show_center,
         "reports": reports_center.show_center,
         "security": security_center.show_center,
@@ -416,7 +419,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         "items": ft.Icons.INVENTORY_2_OUTLINED,
         "customers": ft.Icons.PEOPLE_OUTLINE,
         "suppliers": ft.Icons.LOCAL_SHIPPING_OUTLINED,
-        "invoices": ft.Icons.RECEIPT_LONG_OUTLINED,
+        "sales": ft.Icons.SHOPPING_CART_CHECKOUT,
+        "purchases": ft.Icons.ADD_SHOPPING_CART,
         "finance": ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED,
         "reports": ft.Icons.QUERY_STATS_OUTLINED,
         "security": ft.Icons.LOCK_OUTLINE,
@@ -841,7 +845,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             if key == "pos":
                 open_pos()
             elif key == "purchase":
-                navigate("invoices", initial_type="purchase")
+                navigate("purchases")
             else:
                 navigate(key)
 
@@ -849,7 +853,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             if action_id == "new_sale":
                 open_table_invoice("sale")
             elif action_id == "last_sales":
-                navigate("invoices", initial_type="sale")
+                navigate("sales")
             elif action_id == "stocktake":
                 navigate("stocktake")
             elif action_id == "new_purchase":
@@ -986,6 +990,10 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # closes or POS is left (i.e. whenever data may have changed). Toggle with
     # the ``ui.tab_cache`` setting (default on).
     section_keys = set(page_meta)
+    # Sales/Purchases (and the legacy combined invoices fallback) pin the list
+    # to one type via a render argument, so they must never be served from the
+    # surface cache with a stale mode -- always rebuild them on entry.
+    uncached_sections = {"sales", "purchases", "invoices"}
     tab_cache: dict[str, tuple] = {}
 
     def _tab_cache_enabled() -> bool:
@@ -1003,7 +1011,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     def render_route(key: str, kwargs: dict) -> None:
         enabled = _tab_cache_enabled()
         prev = selected_key["value"]
-        if enabled and prev in section_keys and prev != key and content.content is not None:
+        if enabled and prev in section_keys and prev != key and prev not in uncached_sections and content.content is not None:
             # Snapshot the surface plus the chrome the view published (header +
             # contextual ribbon actions), since a cache hit skips rendering.
             tab_cache[prev] = (
@@ -1013,7 +1021,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 header_title.value,
                 header_subtitle.value,
             )
-        if enabled and key in section_keys and not kwargs:
+        if enabled and key in section_keys and key not in uncached_sections and not kwargs:
             hit = tab_cache.get(key)
             if hit is not None and hit[1] == _data_version():
                 content.content = hit[0]
@@ -1048,6 +1056,16 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         purchase_render=render_purchase,
         stocktake_render=stocktake_center.show_center,
         pos_on_leave=pos_chrome_restore,
+    )
+    # Legacy combined "invoices" route kept for internal links (dashboard
+    # "الفواتير" / notifications / purchase-draft flows) without showing a
+    # third tab: the dedicated Sales and Purchases screens are the tabs now.
+    router.register(
+        "invoices",
+        label="الفواتير",
+        subtitle="المبيعات والمشتريات وحالات السداد",
+        permission="invoices",
+        render=lambda: invoice_center.show_center(initial_type=None, locked=True),
     )
 
     shell_navigation = ShellNavigation(
@@ -1098,7 +1116,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             return [
                 RibbonAction("pos", "نقطة البيع", ft.Icons.POINT_OF_SALE, on_click=lambda _=None: open_pos()),
             ] + invoice_actions
-        if key in ("invoices", "sale", "purchase", "pos"):
+        if key in ("invoices", "sales", "purchases", "sale", "purchase", "pos"):
             return invoice_actions
         if key == "finance":
             return [
@@ -1151,7 +1169,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         if session.can("invoices_purchases"):
             out.append(RibbonMenu("purchases", "المشتريات", ft.Icons.ADD_SHOPPING_CART, [
                 "المشتريات",
-                ("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
+                ("فتح المشتريات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("purchases")),
                 ("فاتورة مشتريات جديدة", ft.Icons.ADD_SHOPPING_CART, lambda: open_table_invoice("purchase")),
                 "السداد",
                 ("سند صرف", ft.Icons.REQUEST_QUOTE_OUTLINED, lambda: open_supplier_payment()),
@@ -1159,7 +1177,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         if session.can("invoices_sales"):
             out.append(RibbonMenu("sales", "المبيعات", ft.Icons.SHOPPING_CART_CHECKOUT, [
                 "المبيعات",
-                ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
+                ("فتح المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("sales")),
                 ("فاتورة مبيعات جديدة", ft.Icons.SHOPPING_CART_CHECKOUT, lambda: open_table_invoice("sale")),
                 "التحصيل",
                 ("سند قبض", ft.Icons.PAYMENTS_OUTLINED, lambda: open_receipt()),
