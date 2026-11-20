@@ -2381,6 +2381,9 @@ class InvoiceCenter:
                 on_confirm=confirm,
                 on_cancel=cancel,
                 surface="invoice",
+                page=self.page,
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width, iid=invoice_id: self.ctx.documents.invoice_html(iid),
             )
             overlay.visible = True
             try:
@@ -3746,6 +3749,9 @@ class InvoiceCenter:
                 on_confirm=confirm,
                 on_cancel=cancel,
                 surface="invoice",
+                page=self.page,
+                native_files=self.native_files,
+                preview_builder=lambda _layout, _width, iid=invoice_id: self.ctx.documents.invoice_html(iid),
             )
             overlay.visible = True
             try:

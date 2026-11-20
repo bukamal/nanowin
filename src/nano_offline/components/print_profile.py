@@ -170,6 +170,9 @@ def build_print_profile_panel(
     title: str = "إعدادات الطباعة",
     subtitle: str = "اختر نوع الورق قبل إرسال الفاتورة للطابعة",
     width: int = 520,
+    page=None,
+    native_files=None,
+    preview_builder: PreviewHtml | None = None,
 ) -> ft.Container:
     """An IN-SHEET print-settings window (no dialog/sheet of its own).
 
@@ -198,6 +201,14 @@ def build_print_profile_panel(
         visible=layout.value == "roll",
     )
     hint = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+    status = ft.Text("", size=10.5, color=Colors.TEXT_SECONDARY)
+
+    def _update() -> None:
+        if page is not None:
+            try:
+                page.update()
+            except Exception:
+                pass
 
     def refresh() -> None:
         is_roll = layout.value == "roll"
@@ -224,9 +235,72 @@ def build_print_profile_panel(
             pass
         on_confirm(selected_layout, roll_width_mm)
 
+    async def preview(_=None) -> None:
+        if native_files is None or preview_builder is None:
+            return
+        selected_layout, _, roll_width_mm = selection()
+        status.value = "جارٍ تجهيز المعاينة..."
+        status.color = Colors.TEXT_SECONDARY
+        _update()
+        try:
+            html = preview_builder(selected_layout, roll_width_mm)
+            if inspect.isawaitable(html):
+                html = await html
+            result = await preview_document(
+                native_files,
+                str(html),
+                name=f"nano-preview-{surface}",
+                layout=selected_layout,
+                roll_width_mm=roll_width_mm,
+            )
+            status.value = (
+                "تم فتح المعاينة في المتصفح."
+                if result == "browser"
+                else "تم تجهيز ملف المعاينة."
+            )
+            status.color = Colors.SUCCESS_DARK
+        except Exception as exc:
+            status.value = f"تعذرت المعاينة: {exc}"
+            status.color = Colors.DANGER
+        _update()
+
+    async def test_print(_=None) -> None:
+        if native_files is None:
+            return
+        selected_layout, _, roll_width_mm = selection()
+        status.value = "جارٍ إرسال صفحة الاختبار..."
+        status.color = Colors.TEXT_SECONDARY
+        _update()
+        try:
+            await native_files.print_html(
+                apply_print_profile(_test_page_html(), selected_layout, roll_width_mm),
+                name="nano-test-print",
+                paper_layout=selected_layout,
+                roll_width_mm=roll_width_mm,
+            )
+            status.value = "تم إرسال صفحة الاختبار إلى الطابعة."
+            status.color = Colors.SUCCESS_DARK
+        except Exception as exc:
+            status.value = f"تعذرت الطباعة التجريبية: {exc}"
+            status.color = Colors.DANGER
+        _update()
+
     layout.on_change = lambda _: refresh()
     width_toggle.on_change = lambda _: refresh()
     refresh()
+
+    actions: list[ft.Control] = [
+        ft.TextButton("إلغاء", on_click=lambda _: on_cancel()),
+    ]
+    if native_files is not None and preview_builder is not None:
+        actions.append(
+            ft.TextButton("معاينة", icon=ft.Icons.VISIBILITY_OUTLINED, on_click=preview)
+        )
+    if native_files is not None:
+        actions.append(
+            ft.TextButton("اختبار الطابعة", icon=ft.Icons.PRINT_OUTLINED, on_click=test_print)
+        )
+    actions.append(ft.FilledButton("طباعة", icon=ft.Icons.PRINT, on_click=confirm))
 
     return ft.Container(
         ft.Column(
@@ -254,16 +328,18 @@ def build_print_profile_panel(
                         layout,
                         width_row,
                         hint,
+                        ft.Text(
+                            "يُحفظ الاختيار لهذه الواجهة فقط، ويُستخدم تلقائيًا في المرة القادمة.",
+                            size=10.5, color=Colors.TEXT_FAINT,
+                        ),
+                        status,
                     ],
                     spacing=8, tight=True,
                 ),
                 ft.Row(
-                    [
-                        ft.TextButton("إلغاء", on_click=lambda _: on_cancel()),
-                        ft.FilledButton("طباعة", icon=ft.Icons.PRINT, on_click=confirm),
-                    ],
+                    actions,
                     alignment=ft.MainAxisAlignment.END,
-                    spacing=10,
+                    spacing=8, run_spacing=8, wrap=True,
                 ),
             ],
             spacing=14,
