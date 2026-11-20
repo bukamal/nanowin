@@ -68,3 +68,21 @@ def test_closing_last_active_tab_returns_to_home_callback():
     assert bar._docs_wrap.visible is False
     assert opened == []
     assert closed == ["reports"]
+
+
+def test_activating_the_open_tab_does_not_navigate_again():
+    opened: list[str] = []
+    bar = SimpleNamespace(
+        _active={"key": "items"},
+        _docs={"items": object(), "reports": object()},
+        open_tab=lambda key: None,
+        on_open=opened.append,
+    )
+
+    # Tapping the already-open tab is a no-op (no rebuild / reload).
+    CommandBar._activate(bar, "items")
+    assert opened == []
+
+    # Tapping a different tab still navigates.
+    CommandBar._activate(bar, "reports")
+    assert opened == ["reports"]

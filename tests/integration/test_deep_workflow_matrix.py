@@ -732,12 +732,32 @@ def _find_tab_strip(root):
 
 
 def _tab_labels(strip) -> list[str]:
+    """Invoice tab labels, ignoring the trailing «جديدة» add chip.
+
+    Tab chips wrap a Row of (icon, label, close) inside a Container; older
+    revisions wrapped (label-container, close). Both shapes are handled so
+    this helper tracks the UI rather than a single control tree layout.
+    """
+    def _first_text(control):
+        if isinstance(control, ft.Text):
+            return control.value
+        for child in getattr(control, "controls", None) or []:
+            found = _first_text(child)
+            if found is not None:
+                return found
+        inner = getattr(control, "content", None)
+        if inner is not None and not isinstance(inner, (str, bytes)):
+            return _first_text(inner)
+        return None
+
     labels: list[str] = []
     for child in strip.controls:
-        if isinstance(child, ft.Container) and isinstance(getattr(child, "content", None), ft.Row):
-            body = child.content.controls[0]
-            text = getattr(body, "content", None)
-            labels.append(text.value if isinstance(text, ft.Text) else "")
+        if not isinstance(child, ft.Container):
+            continue
+        label = _first_text(child)
+        if not label or label == "جديدة":
+            continue
+        labels.append(str(label).rstrip(" •").strip())
     return labels
 
 

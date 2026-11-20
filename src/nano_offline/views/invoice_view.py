@@ -102,6 +102,11 @@ class InvoiceCenter:
     """Responsive invoice center/editor for Flet 0.28.x."""
 
     def __init__(self, page: ft.Page, ctx, content: ft.Container, on_saved=None, native_files=None, on_title_change=None):
+        # The exact control tree this center last painted into ``content``.
+        # Used after a sheet closes to decide whether the invoices list is
+        # actually the surface underneath (then refresh it) or whether the
+        # sheet was opened from another section (then leave navigation alone).
+        self._invoice_surface = None
         self.page = page
         self.ctx = ctx
         self.content = content
@@ -1425,6 +1430,7 @@ class InvoiceCenter:
             # (فاتورة بيع / فاتورة شراء); the old floating speed-dial was
             # mobile chrome.
             self.content.content = ft.Column([sticky_header, scroll_body], spacing=0, expand=True)
+            self._invoice_surface = self.content.content
             self.page.update()
         except Exception as exc:
             self._show_center_error(exc)
@@ -1558,6 +1564,7 @@ class InvoiceCenter:
         item_map = {int(i["id"]): i for i in items}
         previous_key_handler = getattr(self.page, "on_keyboard_event", None)
         step = {"idx": 0, "opened": False}
+        wizard_state = {"list_dirty": False}
 
         def _safe_update(control) -> None:
             # A control may not be attached to the page yet on the first
@@ -1997,15 +2004,31 @@ class InvoiceCenter:
                 )
                 draft_saved["saved"] = True
                 clear_draft()
-                close()
                 self.notify(f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}", sound_kind="save")
-                self.show_center()
+                # Keep the sheet open and reset the wizard in place so the
+                # cashier can start the next invoice immediately -- no jump to
+                # the invoices list under the sheet.
+                lines_grid.set_rows([{"qty": 1}])
+                party_dd.value = None
+                reference.value = ""
+                notes.value = ""
+                paid.value = "0"
+                invoice_date.value = date.today().isoformat()
+                step["idx"] = 0
+                draft_saved["saved"] = False
+                update_party_insight()
+                refresh_summary()
+                render_step()
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+                wizard_state["list_dirty"] = True
 
                 async def open_print_after_close() -> None:
-                    # Let the sheet's dismiss animation finish before opening
-                    # the print-settings window; opening a dialog in the same
-                    # tick races Flutter's pop route and it never renders.
-                    await asyncio.sleep(0.15)
+                    # Raise the print-settings dialog ABOVE the still-open
+                    # sheet; a short yield lets the reset paint first.
+                    await asyncio.sleep(0.05)
                     try:
                         print_handler = self._print_handler(saved_id)
                         if print_handler is not None:
@@ -2131,7 +2154,45 @@ class InvoiceCenter:
         icon_bubble = ft.Container(ft.Icon(ft.Icons.TRENDING_UP, color=Colors.SUCCESS, size=22), width=44, height=44, alignment=ft.alignment.center, bgcolor=Colors.SUCCESS_BG, border_radius=14)
         body_holder = ft.Column([], spacing=14, tight=True)
         footer_holder = ft.Row([], spacing=10, alignment=ft.MainAxisAlignment.END)
-        dots = ft.Row([], spacing=6, alignment=ft.MainAxisAlignment.CENTER)
+        step_tabs = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, wrap=False)
+        step_tab_defs = [
+            ("بيانات", ft.Icons.DESCRIPTION_OUTLINED),
+            ("البنود", ft.Icons.FORMAT_LIST_BULLETED),
+            ("الدفع", ft.Icons.PAYMENTS_OUTLINED),
+        ]
+
+        def render_step_tabs() -> None:
+            controls = []
+            for i, (label, icon) in enumerate(step_tab_defs):
+                active = i == step["idx"]
+                controls.append(
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(icon, size=15, color=Colors.PRIMARY if active else Colors.TEXT_SECONDARY),
+                                ft.Text(
+                                    f"{i + 1}. {label}", size=11,
+                                    color=Colors.PRIMARY if active else Colors.TEXT_MUTED_DARK,
+                                    weight=ft.FontWeight.BOLD if active else ft.FontWeight.W_600,
+                                ),
+                            ],
+                            spacing=6, tight=True,
+                        ),
+                        padding=ft.padding.only(left=12, right=12, top=8, bottom=8),
+                        bgcolor=Colors.WHITE if active else Colors.BACKGROUND_ALT,
+                        border=ft.border.all(1, Colors.BORDER if active else Colors.BORDER_ALT),
+                        border_radius=ft.border_radius.only(top_left=10, top_right=10),
+                        ink=True,
+                        on_click=lambda _e, i=i: jump(i),
+                    )
+                )
+            step_tabs.controls = controls
+
+        def jump(index: int) -> None:
+            step["idx"] = max(0, min(len(steps) - 1, index))
+            render_step()
+            if step["opened"]:
+                self.page.update()
 
         def render_step() -> None:
             idx = step["idx"]
@@ -2141,10 +2202,7 @@ class InvoiceCenter:
             icon_bubble.bgcolor = Colors.SUCCESS_BG if is_sale else Colors.PURPLE_BG
             subtitle_text.value = f"الخطوة {['١', '٢', '٣'][idx]} من ٣ — {step_titles[idx]}"
             body_holder.controls = [steps[idx]]
-            dots.controls = [
-                ft.Container(width=7, height=7, border_radius=4, bgcolor=Colors.PRIMARY if i == idx else Colors.BORDER_STRONG)
-                for i in range(len(steps))
-            ]
+            render_step_tabs()
             if idx == 0:
                 footer_holder.controls = [
                     secondary_button("إلغاء", on_click=close, size="md"),
@@ -2169,15 +2227,35 @@ class InvoiceCenter:
 
         sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
 
+        def _dismiss_refresh() -> None:
+            if not wizard_state["list_dirty"]:
+                return
+            wizard_state["list_dirty"] = False
+            if self._invoice_surface is not self.content.content:
+                return
+
+            async def _refresh_list_after_close() -> None:
+                await asyncio.sleep(0.1)
+                try:
+                    self.show_center()
+                except Exception:
+                    pass
+
+            try:
+                self.page.run_task(_refresh_list_after_close)
+            except Exception:
+                self.show_center()
+
         def close(_=None) -> None:
             # The grid took over the page's keyboard handler when built;
             # hand it back so the shell's shortcuts (and the list grid's
             # arrow/Enter navigation) keep working.
             persist_draft()
-            self.page.close(sheet)
             self.page.on_keyboard_event = previous_key_handler
+            self.page.close(sheet)
+            _dismiss_refresh()
 
-        sheet.on_dismiss = lambda e: (persist_draft(), setattr(self.page, "on_keyboard_event", previous_key_handler))
+        sheet.on_dismiss = lambda e: (persist_draft(), setattr(self.page, "on_keyboard_event", previous_key_handler), _dismiss_refresh())
 
         # ----------------------------------------------------------- initial
         party_options()
@@ -2221,7 +2299,7 @@ class InvoiceCenter:
                         [icon_bubble, ft.Column([title_text, subtitle_text], spacing=1, expand=True), header_close_button(close)],
                         spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    dots,
+                    step_tabs,
                     ft.Divider(height=1, color=Colors.BORDER_ALT),
                     body_holder,
                     footer_holder,
@@ -2264,6 +2342,10 @@ class InvoiceCenter:
         # Which invoice the sheet is currently editing (None = a new invoice).
         # Mutable because the in-sheet tabs switch between drafts/invoices.
         active = {"invoice_id": invoice_id}
+        # Deferred invoices-list refresh: saving keeps the sheet open, so we
+        # must not navigate to the list underneath; we flag it and refresh
+        # once the sheet is actually dismissed.
+        sheet_state = {"list_dirty": False}
         settings = self.ctx.settings
         rate = currency.get_effective_rate(settings)
         customers = self.ctx.customers.list()
@@ -2993,10 +3075,20 @@ class InvoiceCenter:
             controls = [_tab_chip(i) for i in range(len(tabs_state["items"]))]
             controls.append(
                 ft.Container(
-                    ft.Icon(ft.Icons.ADD, size=16, color=Colors.PRIMARY),
-                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
-                    border=ft.border.all(1, Colors.PRIMARY), border_radius=14, ink=True,
-                    on_click=_add_tab, tooltip="فاتورة جديدة في تبويب جديد",
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.ADD, size=15, color=Colors.PRIMARY),
+                            ft.Text("جديدة", size=11, color=Colors.PRIMARY, weight=ft.FontWeight.W_600),
+                        ],
+                        spacing=5, tight=True,
+                    ),
+                    padding=ft.padding.only(left=12, right=12, top=8, bottom=8),
+                    bgcolor=Colors.WHITE,
+                    border=ft.border.all(1, Colors.PRIMARY_BORDER),
+                    border_radius=ft.border_radius.only(top_left=10, top_right=10),
+                    ink=True,
+                    on_click=_add_tab,
+                    tooltip="فاتورة جديدة في تبويب جديد",
                 )
             )
             tab_strip.controls = controls
@@ -3008,25 +3100,37 @@ class InvoiceCenter:
         def _tab_chip(index: int) -> ft.Control:
             tab = tabs_state["items"][index]
             is_active = index == tabs_state["active"]
-            label = _tab_title(tab)
+            is_purchase = (tab.get("type") or "sale") == "purchase"
+            label_text = _tab_title(tab)
             if tab.get("lines"):
-                label = f"{label} •"
-            body = ft.Container(
-                ft.Text(label, size=11, color=Colors.WHITE if is_active else Colors.TEXT_MUTED,
-                        weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.W_500),
-                padding=ft.padding.only(left=12, right=6, top=7, bottom=7),
-                ink=True, on_click=lambda _e, i=index: _switch_to(i),
+                label_text = f"{label_text} •"
+            icon = ft.Icon(
+                ft.Icons.TRENDING_DOWN if is_purchase else ft.Icons.TRENDING_UP,
+                size=14,
+                color=Colors.PRIMARY if is_active else Colors.TEXT_SECONDARY,
+            )
+            label = ft.Text(
+                label_text, size=11,
+                color=Colors.PRIMARY if is_active else Colors.TEXT_MUTED_DARK,
+                weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.W_600,
             )
             close_btn = ft.Container(
-                ft.Icon(ft.Icons.CLOSE, size=13, color=Colors.WHITE if is_active else Colors.TEXT_FAINT),
-                padding=ft.padding.only(left=2, right=8, top=7, bottom=7),
-                ink=True, on_click=lambda _e, i=index: _close_tab(i),
+                ft.Icon(ft.Icons.CLOSE, size=12, color=Colors.PRIMARY),
+                width=18, height=18, alignment=ft.alignment.center,
+                border_radius=9, ink=True, visible=is_active,
+                on_click=lambda _e, i=index: _close_tab(i),
+            )
+            body = ft.Container(
+                ft.Row([icon, label, close_btn], spacing=6, tight=True),
+                padding=ft.padding.only(left=12, right=8, top=8, bottom=8),
+                ink=True, on_click=lambda _e, i=index: _switch_to(i),
             )
             return ft.Container(
-                ft.Row([body, close_btn], spacing=0, tight=True),
-                bgcolor=Colors.PRIMARY if is_active else Colors.WHITE,
-                border=ft.border.all(1, Colors.PRIMARY if is_active else Colors.BORDER),
-                border_radius=14,
+                body,
+                bgcolor=Colors.WHITE if is_active else Colors.BACKGROUND_ALT,
+                border=ft.border.all(1, Colors.BORDER if is_active else Colors.BORDER_ALT),
+                border_radius=ft.border_radius.only(top_left=10, top_right=10),
+                tooltip="تعديل فاتورة محفوظة" if tab.get("invoice_id") else ("فاتورة شراء" if is_purchase else "فاتورة بيع"),
             )
 
         def _load_tab(index: int) -> None:
@@ -3205,23 +3309,23 @@ class InvoiceCenter:
                     saved_id = self.ctx.invoices.create_invoice(**common)
                     message = f"تم حفظ الفاتورة #{self._display_invoice_number(saved_id)}"
 
-                # Close the saved tab. If more tabs remain, keep the sheet open
-                # on the next one (multi-invoice workflow); otherwise dismiss it.
+                # Close the saved tab but KEEP the sheet open (multi-invoice
+                # workflow). If it was the last tab, start a fresh blank one
+                # so the cashier can continue immediately.
                 tabs_state["items"].pop(tabs_state["active"])
-                sheet_closed = not tabs_state["items"]
-                if sheet_closed:
-                    close()
-                else:
-                    _load_tab(min(tabs_state["active"], len(tabs_state["items"]) - 1))
+                if not tabs_state["items"]:
+                    tabs_state["items"].append(_blank_tab(type_dd.value or "sale"))
+                _load_tab(min(tabs_state["active"], len(tabs_state["items"]) - 1))
                 _persist_tabs()
+                sheet_state["list_dirty"] = True
                 self.notify(message, sound_kind="save")
-                self.show_center()
 
                 async def open_print_after() -> None:
-                    # Let any dismiss animation finish before opening the
-                    # print-settings window; opening a dialog in the same tick
-                    # races Flutter's pop route and it never renders.
-                    await asyncio.sleep(0.15 if sheet_closed else 0.05)
+                    # Keep the sheet open and raise the print-settings dialog
+                    # ABOVE it. A short yield lets the freshly-opened tab paint
+                    # first; the dialog is appended after the bottom sheet in
+                    # the overlay, so it stacks on top instead of behind it.
+                    await asyncio.sleep(0.05)
                     try:
                         print_handler = self._print_handler(saved_id)
                         if print_handler is not None:
@@ -3309,14 +3413,39 @@ class InvoiceCenter:
             size_constraints=ft.BoxConstraints(min_width=sheet_w, max_width=sheet_w),
         )
 
+        def _dismiss_refresh() -> None:
+            if not sheet_state["list_dirty"]:
+                return
+            sheet_state["list_dirty"] = False
+            # Only refresh when the invoices list is the surface underneath;
+            # if the sheet was opened from another section, refreshing would
+            # yank the user to invoices, which is exactly what we avoid.
+            if self._invoice_surface is not self.content.content:
+                return
+
+            async def _refresh_list_after_close() -> None:
+                # Let the sheet's dismiss animation finish before the
+                # list rebuilds underneath it.
+                await asyncio.sleep(0.1)
+                try:
+                    self.show_center()
+                except Exception:
+                    pass
+
+            try:
+                self.page.run_task(_refresh_list_after_close)
+            except Exception:
+                self.show_center()
+
         def close(_=None) -> None:
             # The grid took over the page's keyboard handler when built;
             # hand it back so the shell's shortcuts (and the list grid's
             # arrow/Enter navigation) keep working.
-            self.page.close(sheet)
             self.page.on_keyboard_event = previous_key_handler
+            self.page.close(sheet)
+            _dismiss_refresh()
 
-        sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
+        sheet.on_dismiss = lambda e: (setattr(self.page, "on_keyboard_event", previous_key_handler), _dismiss_refresh())
 
         # ----------------------------------------------------------- initial
         party_options()

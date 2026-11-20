@@ -374,7 +374,13 @@ class CommandBar(ft.Container):
         self._safe_update(self)
 
     def _activate(self, key: str) -> None:
+        # Tapping the tab that is already open must not re-render (and
+        # re-build) the section -- matching the Materials tab, which just
+        # stays put. Only an actual tab change triggers navigation.
+        already_active = self._active.get("key") == key and key in self._docs
         self.open_tab(key)
+        if already_active:
+            return
         if self.on_open:
             try:
                 self.on_open(key)

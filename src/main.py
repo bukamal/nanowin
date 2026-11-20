@@ -1403,6 +1403,20 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 currency_btn.update()
             except Exception:
                 pass
+            # A rate/currency change alters every displayed amount, so -- like
+            # toggling safe mode -- it must invalidate each cached section and
+            # bump the data version. The surface that changed the rate then
+            # re-renders (dashboard home, shell popover, theme rebuild), and
+            # every other tab rebuilds on next visit instead of serving a
+            # stale snapshot.
+            try:
+                tab_cache.clear()
+            except Exception:
+                pass
+            try:
+                page._nano_data_version = int(getattr(page, "_nano_data_version", 0)) + 1
+            except Exception:
+                pass
 
         currency_btn = ft.Container(
             ft.Row(
