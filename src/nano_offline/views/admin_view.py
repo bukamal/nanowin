@@ -69,6 +69,11 @@ class AdminCenter:
             notify=self._notify,
             on_logout=self.on_logout,
         )
+        # Backup-list validation runs lazily in the background and is cached
+        # per (size, mtime) so opening the backup section never blocks on a
+        # large archive.
+        self._backup_validation_cache: dict[str, tuple[tuple[float, float], str]] = {}
+        self._backup_validation_inflight: set[str] = set()
 
     def _notify(self, text: str, kind: str | None = None, sound_kind: str | None = None):
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
@@ -123,6 +128,14 @@ class AdminCenter:
             border=ft.border.all(1, Colors.BORDER_ALT),
             border_radius=Radius.MD,
         )
+
+    def _validate_backup_status(self, path: Path) -> str:
+        """Blocking validation helper (runs on a worker thread)."""
+        try:
+            self.ctx.backup.validate_backup(path)
+            return "سليمة"
+        except Exception:
+            return "تالفة"
 
     def _notify_error(self, text: str):
         # A SnackBar is easy to miss: it auto-dismisses on its own timer and
@@ -736,7 +749,7 @@ class AdminCenter:
                 GridColumn("name", "اسم النسخة"),
                 GridColumn("modified", "آخر تحديث", width=190),
                 GridColumn("size", "الحجم", width=110, align="end"),
-                GridColumn("status", "سلامة النسخة", width=110, align="center", kind="badge"),
+                GridColumn("status", "سلامة النسخة", width=120, align="center", kind="badge"),
             ],
             rows=[],
             viewport_height=330,
@@ -744,6 +757,23 @@ class AdminCenter:
             center_cells=True,
             empty_text="لا توجد نسخ احتياطية بعد",
             activate_tooltip="إجراءات النسخة",
+            # Constructor args (not post-assignment): DataGrid only reads its
+            # handlers from __init__, so assigning attributes later silently
+            # did nothing.
+            on_sort=lambda key, direction: sort_backup_rows(key, direction),
+            on_row_menu=lambda row: backup_row_menu(row),
+            on_row_activate=lambda row: (
+                backup_row_menu(row)[0][2]() if backup_row_menu(row) else None
+            ),
+            formatter=lambda col, value, row: (
+                (str(value), Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
+                if col.key == "status" and value == "سليمة"
+                else (str(value), Colors.DANGER_DARK, Colors.DANGER_BG)
+                if col.key == "status" and value == "تالفة"
+                else (str(value), Colors.WARNING_DARK, Colors.WARNING_BG_ALT)
+                if col.key == "status"
+                else None
+            ),
         )
         backup_paths: dict[str, Path] = {}
         backup_rows_data: list[dict] = []
@@ -782,13 +812,14 @@ class AdminCenter:
             path = backup_paths.get(str(row.get("name") or ""))
             if path is None:
                 return []
-            verified = row.get("status") == "سليمة"
 
             def restore():
-                if verified:
-                    open_restore_dialog(path)
-                else:
-                    self._notify("لا يمكن استعادة نسخة لم تجتز التحقق", kind="error")
+                # A file still being validated in the background is fine to
+                # restore: the descriptor validates it fully before any swap.
+                if row.get("status") == "تالفة":
+                    self._notify("لا يمكن استعادة نسخة تالفة", kind="error")
+                    return
+                open_restore_dialog(path)
 
             async def share():
                 if self.native_files is None:
@@ -836,9 +867,44 @@ class AdminCenter:
                 ("حذف", ft.Icons.DELETE_OUTLINE, delete),
             ]
 
-        backup_grid.on_row_menu = backup_row_menu
-        backup_grid.on_row_activate = lambda row: backup_row_menu(row)[0][2]()
         backup_grid.activate_tooltip = "استعادة النسخة"
+
+        def _schedule_backup_validation(pending: list[tuple[Path, tuple]]) -> None:
+            """Validate new/changed backups off the UI thread, one at a time."""
+            pending = [
+                (path, key) for path, key in pending
+                if path.name not in self._backup_validation_inflight
+            ]
+            if not pending:
+                return
+            for path, _key in pending:
+                self._backup_validation_inflight.add(path.name)
+
+            async def _validate_all() -> None:
+                try:
+                    for path, key in pending:
+                        status = await asyncio.to_thread(self._validate_backup_status, path)
+                        self._backup_validation_cache[path.name] = (key, status)
+                        if len(self._backup_validation_cache) > 40:
+                            for name in list(self._backup_validation_cache)[:-40]:
+                                self._backup_validation_cache.pop(name, None)
+                        for entry in backup_rows_data:
+                            if entry.get("name") == path.name:
+                                entry["status"] = status
+                        try:
+                            backup_grid.set_rows(list(backup_rows_data))
+                            self.page.update()
+                        except Exception:
+                            pass
+                finally:
+                    for path, _key in pending:
+                        self._backup_validation_inflight.discard(path.name)
+
+            try:
+                self.page.run_task(_validate_all)
+            except Exception:
+                for path, _key in pending:
+                    self._backup_validation_inflight.discard(path.name)
 
         def refresh_backups():
             files = sorted(
@@ -848,16 +914,19 @@ class AdminCenter:
             )
             backup_paths.clear()
             rows = []
+            pending: list[tuple[Path, tuple]] = []
             for path in files:
                 try:
                     stat = path.stat()
                 except FileNotFoundError:
                     continue
-                try:
-                    self.ctx.backup.validate_backup(path)
-                    status = "سليمة"
-                except Exception:
-                    status = "تالفة"
+                key = (float(stat.st_size), float(int(stat.st_mtime)))
+                cached = self._backup_validation_cache.get(path.name)
+                if cached is not None and cached[0] == key:
+                    status = cached[1]
+                else:
+                    status = "قيد الفحص"
+                    pending.append((path, key))
                 backup_paths[path.name] = path
                 rows.append({
                     "name": path.name,
@@ -867,6 +936,7 @@ class AdminCenter:
                 })
             backup_rows_data[:] = rows
             backup_grid.set_rows(rows)
+            _schedule_backup_validation(pending)
 
             cfg = self.ctx.notifications.get_config()
             backup_cfg = cfg.get("backup", {})
