@@ -8,7 +8,7 @@ import flet as ft
 
 from nano_offline.components import SegmentOption, SegmentedToggle
 from nano_offline.core import barcode_settings
-from nano_offline.core.theme import Colors
+from nano_offline.core.theme import Colors, Shadow
 
 PrintAction = Callable[[str, int], Awaitable[None]]
 PreviewHtml = Callable[[str, int], str | Awaitable[str]]
@@ -159,6 +159,123 @@ async def preview_document(
         subject="معاينة المستند",
     )
     return "shared"
+
+
+def build_print_profile_panel(
+    settings,
+    *,
+    on_confirm: "Callable[[str, int], None]",
+    on_cancel: "Callable[[], None]",
+    surface: str = "default",
+    title: str = "إعدادات الطباعة",
+    subtitle: str = "اختر نوع الورق قبل إرسال الفاتورة للطابعة",
+    width: int = 520,
+) -> ft.Container:
+    """An IN-SHEET print-settings window (no dialog/sheet of its own).
+
+    Built for flows that must stay inside an already-open bottom sheet --
+    opening an ``AlertDialog`` over a ``BottomSheet`` makes Flutter dismiss
+    the sheet. The caller drops this panel into a ``Stack`` overlay inside its
+    own sheet, exactly like the item sheet's recipe/extra-units windows.
+    ``on_confirm(layout, roll_width_mm)`` runs after the choice is persisted.
+    """
+    saved_layout, saved_width = saved_print_profile(settings, surface)
+    layout = SegmentedToggle(
+        options=[
+            SegmentOption("sheet", "ورق A4", ft.Icons.DESCRIPTION_OUTLINED),
+            SegmentOption("roll", "طابعة حرارية", ft.Icons.RECEIPT_LONG_OUTLINED),
+        ],
+        value=saved_layout,
+    )
+    width_toggle = SegmentedToggle(
+        options=[SegmentOption(key, label) for key, label in barcode_settings.LABEL_ROLL_WIDTH_LABELS.items()],
+        value=str(saved_width),
+    )
+    width_row = ft.Row(
+        [ft.Text("عرض اللفة", size=12, color=Colors.TEXT_SECONDARY), width_toggle],
+        spacing=10,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        visible=layout.value == "roll",
+    )
+    hint = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+
+    def refresh() -> None:
+        is_roll = layout.value == "roll"
+        width_row.visible = is_roll
+        hint.value = (
+            f"تخطيط مناسب للفة بعرض {width_toggle.value} مم."
+            if is_roll else "تخطيط صفحة A4 للطباعة المكتبية."
+        )
+
+    def selection() -> tuple[str, str, int]:
+        selected_layout = layout.value or DEFAULT_PRINT_LAYOUT
+        width_key = width_toggle.value or barcode_settings.DEFAULT_LABEL_ROLL_WIDTH
+        roll_width_mm = barcode_settings.LABEL_ROLL_WIDTH_MM.get(
+            width_key,
+            barcode_settings.LABEL_ROLL_WIDTH_MM[barcode_settings.DEFAULT_LABEL_ROLL_WIDTH],
+        )
+        return selected_layout, width_key, roll_width_mm
+
+    def confirm(_=None) -> None:
+        selected_layout, width_key, roll_width_mm = selection()
+        try:
+            _save_print_profile(settings, surface, selected_layout, width_key)
+        except Exception:
+            pass
+        on_confirm(selected_layout, roll_width_mm)
+
+    layout.on_change = lambda _: refresh()
+    width_toggle.on_change = lambda _: refresh()
+    refresh()
+
+    return ft.Container(
+        ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Container(
+                            ft.Icon(ft.Icons.PRINT_OUTLINED, color=Colors.PRIMARY, size=22),
+                            width=44, height=44, alignment=ft.alignment.center,
+                            bgcolor=Colors.PRIMARY_BG, border_radius=14,
+                        ),
+                        ft.Column(
+                            [
+                                ft.Text(title, size=17, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                                ft.Text(subtitle, size=11, color=Colors.TEXT_SECONDARY),
+                            ],
+                            spacing=1, expand=True,
+                        ),
+                    ],
+                    spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Column(
+                    [
+                        ft.Text("نوع الورق", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                        layout,
+                        width_row,
+                        hint,
+                    ],
+                    spacing=8, tight=True,
+                ),
+                ft.Row(
+                    [
+                        ft.TextButton("إلغاء", on_click=lambda _: on_cancel()),
+                        ft.FilledButton("طباعة", icon=ft.Icons.PRINT, on_click=confirm),
+                    ],
+                    alignment=ft.MainAxisAlignment.END,
+                    spacing=10,
+                ),
+            ],
+            spacing=14,
+            tight=True,
+        ),
+        width=width,
+        padding=18,
+        bgcolor=Colors.WHITE,
+        border_radius=18,
+        shadow=Shadow.LG,
+        rtl=True,
+    )
 
 
 def open_print_profile_dialog(

@@ -35,7 +35,7 @@ from nano_offline.components.buttons import stepper_icon_button, header_close_bu
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
 from nano_offline.components.money_text import money_row
-from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
+from nano_offline.components.print_profile import apply_print_profile, build_print_profile_panel, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
 from nano_offline.core import privacy
@@ -208,6 +208,32 @@ class InvoiceCenter:
                 preview_builder=lambda _layout, _width: invoice_document_html(),
             )
         return handler
+
+    async def _print_invoice_now(self, invoice_id: int, layout: str, roll_width_mm: int) -> None:
+        """Print directly with a confirmed profile (no dialog of its own).
+
+        Used by the in-sheet print window so the invoice sheet stays open
+        while the A4/thermal settings appear above it.
+        """
+        if self.native_files is None:
+            self.notify("الطباعة الأصلية غير مهيأة في هذا البناء")
+            return
+        self.notify("جارٍ تحضير الطباعة...")
+        try:
+            html = apply_print_profile(
+                self.ctx.documents.invoice_html(invoice_id), layout, roll_width_mm
+            )
+            await self.native_files.print_html(
+                html,
+                name=f"nano-invoice-{invoice_id}",
+                paper_layout=layout,
+                roll_width_mm=roll_width_mm,
+            )
+            count = self._log_invoice_print(invoice_id, channel="print")
+            if count and count > 1:
+                self.notify(f"طُبعت الفاتورة (مرة رقم {count})")
+        except Exception as exc:
+            self.notify(str(exc), kind="error")
 
     def _pdf_handler(self, invoice_id: int):
         def handler(_):
@@ -2026,13 +2052,11 @@ class InvoiceCenter:
                 wizard_state["list_dirty"] = True
 
                 async def open_print_after_close() -> None:
-                    # Raise the print-settings dialog ABOVE the still-open
-                    # sheet; a short yield lets the reset paint first.
+                    # Show the print settings INSIDE the still-open sheet; the
+                    # invoice prints on confirm and the sheet never closes.
                     await asyncio.sleep(0.05)
                     try:
-                        print_handler = self._print_handler(saved_id)
-                        if print_handler is not None:
-                            print_handler(None)
+                        show_wizard_print_window(saved_id)
                     except Exception:
                         pass
 
@@ -2226,6 +2250,10 @@ class InvoiceCenter:
                 self.page.update()
 
         sheet = ft.BottomSheet(content=ft.Container(), is_scroll_controlled=True, enable_drag=True, maintain_bottom_view_insets_padding=True)
+        wizard_sheet_w = sheets.sheet_width(self.page)
+        wizard_sheet_h = sheets.sheet_height(self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=480, max_height=760)
+        sheets.constrain_width(sheet, wizard_sheet_w)
+        wizard_print_overlay_ref: list = []
 
         def _dismiss_refresh() -> None:
             if not wizard_state["list_dirty"]:
@@ -2291,7 +2319,7 @@ class InvoiceCenter:
             show_draft_banner(draft)
 
         render_step()
-        sheet.content = ft.Container(
+        base = ft.Container(
             ft.Column(
                 [
                     ft.Row([ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10)], alignment=ft.MainAxisAlignment.CENTER),
@@ -2306,11 +2334,61 @@ class InvoiceCenter:
                 ],
                 spacing=14, tight=True, scroll=ft.ScrollMode.AUTO,
             ),
+            width=wizard_sheet_w,
+            height=wizard_sheet_h,
             padding=ft.padding.only(left=20, right=20, top=12, bottom=24),
             bgcolor=Colors.WHITE,
             border_radius=ft.border_radius.only(top_left=28, top_right=28),
             shadow=Shadow.LG,
         )
+        wizard_print_overlay = ft.Container(
+            visible=False,
+            width=wizard_sheet_w,
+            height=wizard_sheet_h,
+            bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+            alignment=ft.alignment.center,
+            on_click=lambda _=None: None,
+        )
+        wizard_print_overlay_ref.append(wizard_print_overlay)
+
+        def show_wizard_print_window(invoice_id: int) -> None:
+            overlay = wizard_print_overlay_ref[0]
+
+            def confirm(layout: str, roll_width_mm: int) -> None:
+                overlay.visible = False
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+                async def _run() -> None:
+                    await self._print_invoice_now(invoice_id, layout, roll_width_mm)
+
+                try:
+                    self.page.run_task(_run)
+                except Exception:
+                    pass
+
+            def cancel() -> None:
+                overlay.visible = False
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+            overlay.content = build_print_profile_panel(
+                self.ctx.settings,
+                on_confirm=confirm,
+                on_cancel=cancel,
+                surface="invoice",
+            )
+            overlay.visible = True
+            try:
+                overlay.update()
+            except Exception:
+                pass
+
+        sheet.content = ft.Stack([base, wizard_print_overlay], width=wizard_sheet_w, height=wizard_sheet_h)
         self.page.open(sheet)
         step["opened"] = True
 
@@ -3321,15 +3399,12 @@ class InvoiceCenter:
                 self.notify(message, sound_kind="save")
 
                 async def open_print_after() -> None:
-                    # Keep the sheet open and raise the print-settings dialog
-                    # ABOVE it. A short yield lets the freshly-opened tab paint
-                    # first; the dialog is appended after the bottom sheet in
-                    # the overlay, so it stacks on top instead of behind it.
+                    # Show the A4/thermal window INSIDE the sheet (Stack
+                    # overlay) so it sits above the sheet and the sheet never
+                    # closes; the saved invoice is printed on confirm.
                     await asyncio.sleep(0.05)
                     try:
-                        print_handler = self._print_handler(saved_id)
-                        if print_handler is not None:
-                            print_handler(None)
+                        show_print_window(saved_id)
                     except Exception:
                         pass
 
@@ -3487,7 +3562,7 @@ class InvoiceCenter:
         _init_tabs(initial_tab)
         refresh_summary()
 
-        sheet.content = ft.Container(
+        base = ft.Container(
             ft.Column(
                 [
                     ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
@@ -3627,6 +3702,58 @@ class InvoiceCenter:
             shadow=Shadow.LG,
             rtl=True,
         )
+
+        # Print settings open INSIDE this sheet (a Stack overlay), never as a
+        # dialog: an AlertDialog over a BottomSheet makes Flutter dismiss the
+        # sheet. Same window pattern as the item sheet's recipe/units editor.
+        print_overlay = ft.Container(
+            visible=False,
+            width=sheet_w,
+            height=sheet_h,
+            bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+            alignment=ft.alignment.center,
+            on_click=lambda _=None: None,
+        )
+        print_overlay_ref = [print_overlay]
+
+        def show_print_window(invoice_id: int) -> None:
+            overlay = print_overlay_ref[0]
+
+            def confirm(layout: str, roll_width_mm: int) -> None:
+                overlay.visible = False
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+                async def _run() -> None:
+                    await self._print_invoice_now(invoice_id, layout, roll_width_mm)
+
+                try:
+                    self.page.run_task(_run)
+                except Exception:
+                    pass
+
+            def cancel() -> None:
+                overlay.visible = False
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+            overlay.content = build_print_profile_panel(
+                self.ctx.settings,
+                on_confirm=confirm,
+                on_cancel=cancel,
+                surface="invoice",
+            )
+            overlay.visible = True
+            try:
+                overlay.update()
+            except Exception:
+                pass
+
+        sheet.content = ft.Stack([base, print_overlay], width=sheet_w, height=sheet_h)
         self.page.open(sheet)
 
     def confirm_cancel_order(self, invoice_id: int) -> None:
