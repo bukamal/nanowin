@@ -17,6 +17,7 @@ from nano_offline.components.buttons import danger_button, primary_button, secon
 from nano_offline.components.sections_sheet import open_sections_sheet
 from nano_offline.components.restaurant_boards import open_kitchen_board
 from nano_offline.components.tables_admin import open_tables_admin
+from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.services.auth_service import CAPABILITIES, ROLE_LABELS, ROLE_PERMISSIONS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -228,8 +229,11 @@ class AdminCenter:
             active_color=Colors.PRIMARY,
         )
         users_search = SelectAllTextField(
-            label="بحث بالاسم أو اسم المستخدم",
-            prefix_icon=ft.Icons.SEARCH_ROUNDED,
+            label="بحث في المستخدمين",
+            hint_text="الاسم أو اسم المستخدم",
+            prefix_icon=ft.Icons.SEARCH,
+            border_radius=16,
+            on_focus=lambda e: users_grid.disarm(),
             on_change=lambda _: refresh_users(),
         )
         permission_switches: dict[str, ft.Switch] = {}
@@ -261,54 +265,109 @@ class AdminCenter:
         ]
 
         def permissions_panel() -> ft.Control:
+            def group(title: str, icon: str, switches: list[ft.Control]) -> ft.Control:
+                return ft.Container(
+                    ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Icon(icon, size=15, color=Colors.TEXT_SECONDARY),
+                                    ft.Text(
+                                        title, size=12,
+                                        weight=ft.FontWeight.W_600,
+                                        color=Colors.TEXT_SECONDARY,
+                                    ),
+                                ],
+                                spacing=6,
+                            ),
+                            ft.ResponsiveRow(
+                                [ft.Container(sw, col={"xs": 12, "md": 6}) for sw in switches],
+                                spacing=4,
+                                run_spacing=0,
+                            ),
+                        ],
+                        spacing=6,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                    border=ft.border.all(1, Colors.BORDER),
+                    border_radius=Radius.MD,
+                )
+
             return ft.Column(
                 [
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.KEY_OUTLINED, size=16, color=Colors.TEXT_SECONDARY),
-                            ft.Text("صلاحيات الوصول", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                            ft.Text("الصلاحيات", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                            ft.Container(expand=True),
+                            ft.TextButton(
+                                "إرجاع صلاحيات الدور",
+                                icon=ft.Icons.RESTART_ALT,
+                                on_click=lambda _: (apply_role_preset(role.value), self.page.update()),
+                            ),
                         ],
-                        spacing=6,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.ResponsiveRow(
-                        [ft.Container(sw, col={"xs": 12, "md": 6}) for sw in access_switches],
-                        spacing=4, run_spacing=0,
-                    ),
-                    ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                    ft.Row(
-                        [
-                            ft.Icon(ft.Icons.SHIELD_OUTLINED, size=16, color=Colors.WARNING_DARK),
-                            ft.Text("صلاحيات حساسة", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
-                        ],
-                        spacing=6,
-                    ),
-                    ft.ResponsiveRow(
-                        [ft.Container(sw, col={"xs": 12, "md": 6}) for sw in sensitive_switches],
-                        spacing=4, run_spacing=0,
-                    ),
-                    ft.TextButton(
-                        "إرجاع الصلاحيات إلى الدور المحدد",
-                        icon=ft.Icons.RESTART_ALT,
-                        on_click=lambda _: (apply_role_preset(role.value), self.page.update()),
-                    ),
+                    group("صلاحيات الوصول", ft.Icons.KEY_OUTLINED, access_switches),
+                    group("صلاحيات حساسة", ft.Icons.SHIELD_OUTLINED, sensitive_switches),
                 ],
                 spacing=8,
             )
 
+        user_columns = [
+            GridColumn("full_name", "الاسم", tooltip="الاسم الكامل للمستخدم"),
+            GridColumn("username", "اسم المستخدم", width=160, tooltip="اسم الدخول"),
+            GridColumn("role_label", "الدور", width=130, align="center", tooltip="قالب الصلاحيات"),
+            GridColumn("status_label", "الحالة", width=100, align="center", kind="badge"),
+            GridColumn("last_login_label", "آخر دخول", width=170, align="center"),
+        ]
+        users_visibility = ColumnVisibility(
+            columns=user_columns,
+            settings=self.ctx.settings,
+            preference_key="ui.users_hidden_columns",
+            auto_hidden={"last_login_label"} if (self.page.width or 1280) < 760 else set(),
+            on_change=lambda: (
+                users_grid.set_hidden_keys(users_visibility.hidden_keys),
+                self.page.update(),
+            ),
+        )
+        users_density = {"compact": self.ctx.settings.get("ui.users_density", "comfortable") == "compact"}
+
+        def toggle_users_density(_=None) -> None:
+            compact = not users_density["compact"]
+            users_density["compact"] = compact
+            users_grid.set_row_height(36 if compact else 48)
+            density_button.icon = ft.Icons.DENSITY_SMALL if compact else ft.Icons.DENSITY_MEDIUM
+            density_button.tooltip = "عرض مريح" if compact else "عرض مضغوط"
+            self.ctx.settings.set("ui.users_density", "compact" if compact else "comfortable")
+            self.page.update()
+
+        density_button = ft.IconButton(
+            icon=ft.Icons.DENSITY_SMALL if users_density["compact"] else ft.Icons.DENSITY_MEDIUM,
+            tooltip="عرض مريح" if users_density["compact"] else "عرض مضغوط",
+            on_click=toggle_users_density,
+        )
+        def focus_users_search() -> None:
+            users_grid.disarm()
+            try:
+                users_search.focus()
+            except Exception:
+                pass
+
+        users_grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
         users_grid = DataGrid(
-            columns=[
-                GridColumn("full_name", "الاسم"),
-                GridColumn("username", "اسم المستخدم", width=150),
-                GridColumn("role_label", "الدور", width=130, align="center"),
-                GridColumn("status_label", "الحالة", width=90, align="center", kind="badge"),
-                GridColumn("last_login_label", "آخر دخول", width=160, align="center"),
-            ],
+            columns=user_columns,
             rows=[],
-            viewport_height=340,
-            boxed=True,
-            center_cells=True,
+            page=self.page,
+            row_height=36 if users_density["compact"] else 48,
+            viewport_height=users_grid_height,
+            hidden_keys=users_visibility.hidden_keys,
             empty_text="لا يوجد مستخدمون بعد — أضف أول مستخدم.",
             activate_tooltip="تعديل المستخدم",
+            on_row_activate=lambda row: open_user_sheet(row),
+            on_row_menu=lambda row: user_row_menu(row),
+            on_sort=lambda key, direction: sort_users(key, direction),
+            on_search_shortcut=focus_users_search,
+            on_new_shortcut=lambda: open_create_user_sheet(),
             formatter=lambda col, value, row: (
                 (str(value), Colors.SUCCESS_DARK, Colors.SUCCESS_BG)
                 if col.key == "status_label" and value == "نشط"
@@ -316,6 +375,8 @@ class AdminCenter:
                 if col.key == "status_label"
                 else None
             ),
+            boxed=True,
+            center_cells=True,
         )
 
         def _last_login_label(value) -> str:
@@ -341,6 +402,17 @@ class AdminCenter:
                 })
             return rows
 
+        def _render_user_rows(rows: list[dict]) -> None:
+            users_grid.set_rows(rows)
+            if rows:
+                active = sum(1 for row in rows if row.get("is_active"))
+                users_grid.set_footer({
+                    "full_name": f"{len(rows)} مستخدم",
+                    "status_label": f"{active} نشط",
+                })
+            else:
+                users_grid.set_footer(None)
+
         def sort_users(key: str | None, direction: str | None):
             rows = _user_rows()
             if key:
@@ -348,12 +420,36 @@ class AdminCenter:
                     key=lambda row: str(row.get(key) or "").casefold(),
                     reverse=direction == "desc",
                 )
-            users_grid.set_rows(rows)
-
-        users_grid.on_sort = sort_users
+            _render_user_rows(rows)
 
         def refresh_users():
-            users_grid.set_rows(_user_rows())
+            _render_user_rows(_user_rows())
+
+        users_toolbar = ft.ResponsiveRow(
+            [
+                ft.Container(users_search, col={"xs": 12, "md": 6}),
+                ft.Container(
+                    ft.Row(
+                        [
+                            users_visibility.button(),
+                            density_button,
+                            primary_button(
+                                "مستخدم جديد",
+                                icon=ft.Icons.PERSON_ADD,
+                                on_click=lambda _=None: open_create_user_sheet(),
+                                width=None,
+                                size="md",
+                            ),
+                        ],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    col={"xs": 12, "md": 6},
+                ),
+            ],
+            spacing=8,
+            run_spacing=8,
+        )
 
         editing_user: dict = {"user": None}
         user_sheet: dict = {"control": None}
@@ -429,24 +525,44 @@ class AdminCenter:
                 except Exception as exc:
                     self._notify(str(exc), kind="error")
 
+            sheet_w = sheets.sheet_width(self.page, cap=980)
+            sheets.constrain_width(sheet, sheet_w)
+            sheet_h = sheets.sheet_height(
+                self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=480, max_height=680
+            )
+            body = ft.Column(
+                [
+                    ft.Text("بيانات الحساب", size=12, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(full_name, col={"xs": 12, "md": 6}),
+                            ft.Container(username, col={"xs": 12, "md": 6}),
+                            ft.Container(role, col={"xs": 12, "md": 6}),
+                            ft.Container(password, col={"xs": 12, "md": 3}),
+                            ft.Container(confirm_password, col={"xs": 12, "md": 3}),
+                        ],
+                        spacing=10,
+                        run_spacing=8,
+                    ),
+                    must_change,
+                    ft.Divider(height=1, color=Colors.BORDER_ALT),
+                    permissions_panel(),
+                ],
+                spacing=12,
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
+            )
             sheet.content = sheets.sheet_frame(
                 ft.Column(
                     [
                         sheets.sheet_handle(),
-                        ft.Text(title, size=18, weight=ft.FontWeight.BOLD),
-                        ft.ResponsiveRow(
-                            [
-                                ft.Container(username, col={"xs": 12, "md": 6}),
-                                ft.Container(full_name, col={"xs": 12, "md": 6}),
-                                ft.Container(role, col={"xs": 12, "md": 6}),
-                                ft.Container(password, col={"xs": 12, "md": 3}),
-                                ft.Container(confirm_password, col={"xs": 12, "md": 3}),
-                            ],
-                            spacing=10,
+                        sheets.sheet_header(
+                            title=title,
+                            subtitle="أنشئ حسابًا وحدد صلاحياته" if not is_edit else "عدّل البيانات والدور والصلاحيات",
+                            icon=ft.Icons.PERSON_ADD if not is_edit else ft.Icons.EDIT_OUTLINED,
+                            on_close=close,
                         ),
-                        must_change,
-                        ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                        permissions_panel(),
+                        ft.Container(body, expand=True),
                         ft.Row(
                             [
                                 ft.TextButton("إلغاء", on_click=close),
@@ -462,9 +578,9 @@ class AdminCenter:
                         ),
                     ],
                     spacing=12,
-                    scroll=ft.ScrollMode.AUTO,
                 ),
-                width=780,
+                width=sheet_w,
+                height=sheet_h,
             )
             self.page.open(sheet)
 
@@ -483,7 +599,7 @@ class AdminCenter:
             force_switch = ft.Switch(
                 label="إجبار التغيير عند أول دخول", value=True, active_color=Colors.PRIMARY
             )
-            sheet, _width = sheets.new_desktop_sheet(self.page)
+            sheet, sheet_w = sheets.new_desktop_sheet(self.page, cap=620)
             user_sheet["control"] = sheet
 
             def close(_=None):
@@ -508,8 +624,12 @@ class AdminCenter:
                 ft.Column(
                     [
                         sheets.sheet_handle(),
-                        ft.Text(f"إعادة تعيين كلمة المرور — {user.get('full_name') or user.get('username')}",
-                                size=17, weight=ft.FontWeight.BOLD),
+                        sheets.sheet_header(
+                            title="إعادة تعيين كلمة المرور",
+                            subtitle=str(user.get("full_name") or user.get("username") or ""),
+                            icon=ft.Icons.LOCK_RESET,
+                            on_close=close,
+                        ),
                         new_field, confirm_field, force_switch,
                         ft.Row(
                             [
@@ -523,13 +643,44 @@ class AdminCenter:
                     ],
                     spacing=12,
                 ),
-                width=560,
+                width=sheet_w,
             )
             self.page.open(sheet)
+
+        def confirm_delete_user(user: dict) -> None:
+            name = str(user.get("full_name") or user.get("username") or "")
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("حذف المستخدم"),
+                content=ft.Text(
+                    f"سيتم حذف حساب «{name}» نهائيًا. سجلات التدقيق تبقى محفوظة، "
+                    "ولا يمكن التراجع عن الحذف."
+                ),
+            )
+
+            def close(_=None):
+                self.page.close(dialog)
+
+            def do_delete(_=None):
+                try:
+                    self.ctx.auth.delete_user(int(user["id"]))
+                    close()
+                    refresh_users()
+                    self._notify("تم حذف المستخدم", sound_kind="delete")
+                    self.page.update()
+                except Exception as exc:
+                    self._notify(str(exc), kind="error")
+
+            dialog.actions = [
+                ft.TextButton("إلغاء", on_click=close),
+                danger_button("حذف نهائي", icon=ft.Icons.DELETE_FOREVER, on_click=do_delete),
+            ]
+            self.page.open(dialog)
 
         def user_row_menu(user: dict) -> list:
             user_id = int(user["id"])
             active = bool(user.get("is_active"))
+            session = self.ctx.auth.current()
 
             def toggle_user():
                 try:
@@ -561,11 +712,13 @@ class AdminCenter:
                 ("إيقاف المستخدم" if active else "تفعيل المستخدم",
                  ft.Icons.BLOCK if active else ft.Icons.CHECK_CIRCLE_OUTLINE, toggle_user),
             ])
+            if not session or int(session.id) != user_id:
+                items.extend([
+                    None,
+                    ("حذف المستخدم", ft.Icons.DELETE_OUTLINE,
+                     lambda: confirm_delete_user(user)),
+                ])
             return items
-
-        users_grid.on_row_menu = user_row_menu
-        users_grid.on_row_activate = lambda user: open_user_sheet(user)
-        users_grid.activate_tooltip = "تعديل المستخدم"
 
         refresh_users()
 
@@ -3208,22 +3361,8 @@ class AdminCenter:
             ),
             "users": self._section(
                 "المستخدمون المحليون",
-                [
-                    ft.Row(
-                        [
-                            ft.Text("المستخدمون والصلاحيات", size=13, color=Colors.TEXT_SECONDARY),
-                            ft.Container(expand=True),
-                            primary_button(
-                                "مستخدم جديد",
-                                icon=ft.Icons.PERSON_ADD,
-                                on_click=open_create_user_sheet,
-                                width=None,
-                                size="md",
-                            ),
-                        ]
-                    ),
-                    users_grid,
-                ],
+                [users_toolbar, users_grid],
+                responsive=False,
             ),
             "backup": self._section(
                 "النسخ الاحتياطي والاسترجاع",

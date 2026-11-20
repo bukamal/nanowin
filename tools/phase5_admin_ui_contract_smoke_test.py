@@ -18,6 +18,6 @@ assert "section_nav," in admin and "_render_section_nav()" in admin
 assert '"notifications": self._section(' in admin
 assert '("notifications", "الإشعارات"' in admin
 assert "notification_center=notification_center" in main
-assert "audit_rows_view.on_row_menu" in admin and "users_grid.on_row_menu" in admin
+assert "audit_rows_view.on_row_menu" in admin and "on_row_menu=lambda row: user_row_menu(row)" in admin
 assert "RibbonAction" not in admin and "تحميل المزيد" in admin
 print("phase5_admin_ui_contract_smoke_test passed")

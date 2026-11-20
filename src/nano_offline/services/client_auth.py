@@ -98,6 +98,9 @@ class ClientAuth:
     def unlock_user(self, user_id: int) -> None:
         return self._transport.call("auth", "unlock_user", user_id=int(user_id))
 
+    def delete_user(self, user_id: int) -> None:
+        return self._transport.call("auth", "delete_user", user_id=int(user_id))
+
     def audit_entries(self, limit: int = 200, offset: int = 0) -> list:
         return self._transport.call("auth", "audit_entries", limit=int(limit), offset=int(offset))
 

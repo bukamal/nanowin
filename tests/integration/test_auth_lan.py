@@ -47,6 +47,10 @@ def test_lan_user_administration_and_permission_denial():
         assert "admin_users" not in limited_info["permissions"]
         with pytest.raises(RuntimeError):
             limited.auth.list_users()
+
+        admin.auth.delete_user(int(user_id))
+        names = {user["username"] for user in admin.auth.list_users()}
+        assert "wh1" not in names
     finally:
         server.stop()
         shutil.rmtree(tmp, ignore_errors=True)

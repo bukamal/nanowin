@@ -126,6 +126,7 @@ WRITE_METHODS: dict[str, str] = {
     "auth.set_active": "admin_users",
     "auth.reset_password": "admin_users",
     "auth.unlock_user": "admin_users",
+    "auth.delete_user": "admin_users",
     "auth.change_password": "security",
     "notifications.mark_read": "dashboard",
     "notifications.mark_all_read": "dashboard",

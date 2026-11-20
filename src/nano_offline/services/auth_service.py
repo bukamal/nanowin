@@ -771,6 +771,36 @@ class AuthService:
                 (user_id,),
             )
 
+    def delete_user(self, user_id: int) -> None:
+        """Permanently remove a user account (audit rows keep the username).
+
+        Guarded like every other user-admin action: you cannot delete the
+        account you are signed in with, and the last active user with
+        ``admin_users`` can never be removed.
+        """
+        actor = self.require("admin_users")
+        user_id = int(user_id)
+        if actor.id == user_id:
+            raise ValueError("لا يمكنك حذف المستخدم الحالي")
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT id,username,role,is_active,permissions_json,must_change_password "
+                "FROM users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("المستخدم غير موجود")
+            remaining = self._active_admin_count(conn, replace_id=user_id)
+            if remaining <= 0:
+                raise ValueError("لا يمكن حذف آخر مدير لديه صلاحية إدارة المستخدمين")
+            username = str(row["username"])
+            conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+            conn.execute(
+                "INSERT INTO audit_log(action,entity_type,entity_id,details) "
+                "VALUES('delete','user',?,?)",
+                (user_id, f"username={username}"),
+            )
+
     def audit_entries(self, limit: int = 200, offset: int = 0) -> list[dict]:
         self.require("admin_users")
         page_size = max(1, min(int(limit), 1000))

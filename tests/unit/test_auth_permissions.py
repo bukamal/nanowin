@@ -102,3 +102,26 @@ def test_last_admin_cannot_lose_user_administration():
 def test_capability_catalogue_shape():
     for key, (label, group) in CAPABILITIES.items():
         assert key and label and group in {"access", "sensitive"}
+
+
+def test_delete_user_guards_and_audit_retention():
+    ctx, tmp = _ctx()
+    try:
+        admin = ctx.auth.current()
+        assert admin is not None
+        uid = ctx.auth.create_user(
+            username="temp1", full_name="مؤقت", password=PASSWORD, role="sales"
+        )
+        with pytest.raises(ValueError):
+            ctx.auth.delete_user(admin.id)
+        ctx.auth.delete_user(uid)
+        assert all(user["id"] != uid for user in ctx.auth.list_users())
+        # The audit trail keeps the username even after the account is gone.
+        with ctx.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT details FROM audit_log WHERE action='delete' AND entity_type='user'"
+            ).fetchall()
+        assert rows and "temp1" in str(rows[-1][0])
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
