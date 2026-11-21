@@ -788,9 +788,6 @@ class InvoiceCenter:
             # being hard-capped at 250 rows. KPIs/totals come from SQL
             # aggregates over the whole table, not this page.
             list_state = {"page": 250, "offset": 0, "done": False}
-            invoices = self.ctx.invoices.list_invoices(limit=list_state["page"], offset=0)
-            list_state["offset"] = len(invoices)
-            list_state["done"] = len(invoices) < list_state["page"]
             search = SelectAllTextField(
                 label="بحث في الفواتير",
                 hint_text="رقم الفاتورة، العميل، المورد أو المرجع",
@@ -800,6 +797,23 @@ class InvoiceCenter:
             )
             cards = ft.Container(expand=True)
             filters = {"type": initial_type, "status": "all"}
+
+            def _server_type() -> str | None:
+                """Invoice type pushed to SQL, so a dedicated tab (or a type
+                chip) pages that type only -- otherwise the first 250 rows of a
+                mixed 300k database could contain no purchases at all."""
+                if mode in ("sale", "purchase"):
+                    return mode
+                value = filters.get("type")
+                if value == "opening":
+                    return "purchase"
+                return value if value in ("sale", "purchase") else None
+
+            invoices = self.ctx.invoices.list_invoices(
+                invoice_type=_server_type(), limit=list_state["page"], offset=0
+            )
+            list_state["offset"] = len(invoices)
+            list_state["done"] = len(invoices) < list_state["page"]
             # Same reasoning as the items screen: build only a page of cards
             # at a time instead of all (up to 250) on every keystroke.
             render_limit = {"n": 60}
@@ -807,7 +821,7 @@ class InvoiceCenter:
             status_row = ft.Row(spacing=6, wrap=True)
 
             try:
-                totals = self.ctx.invoices.invoice_totals(invoice_type=mode)
+                totals = self.ctx.invoices.invoice_totals(invoice_type=_server_type())
             except Exception:
                 totals = {}
             outstanding = float(totals.get("remaining_sum") or 0)
@@ -1312,10 +1326,47 @@ class InvoiceCenter:
                     matched.sort(key=lambda inv: 0 if invoice_is_overdue(inv) else 1)
                 export_state["rows"] = matched
                 invoice_grid.set_hidden_keys(invoice_visibility.hidden_keys)
+                def load_more(_=None) -> None:
+                    # Grow the current client-side window first; once every
+                    # loaded row is visible, pull the next server page so the
+                    # whole database stays reachable past the old 250-row cap.
+                    if len(matched) > render_limit["n"]:
+                        render_limit["n"] += 60
+                        refresh_cards()
+                        return
+                    if list_state["done"]:
+                        return
+                    fetched = self.ctx.invoices.list_invoices(
+                        invoice_type=_server_type(),
+                        limit=list_state["page"],
+                        offset=list_state["offset"],
+                    )
+                    list_state["offset"] += len(fetched)
+                    list_state["done"] = len(fetched) < list_state["page"]
+                    if fetched:
+                        invoices.extend(fetched)
+                    render_limit["n"] += 60
+                    refresh_cards()
+
                 invoice_grid.set_group_by(None if grid_sort["key"] else invoice_group)
                 shown = matched[: render_limit["n"]]
                 if not shown:
                     invoice_grid.set_footer(None)
+                    invoice_grid.set_rows([])
+                    if not list_state["done"]:
+                        # The current server page had no row of this type; keep
+                        # a way to page deeper instead of dead-ending.
+                        grid_more.content = ft.Row(
+                            [ft.OutlinedButton(
+                                "تحميل المزيد من القاعدة",
+                                icon=ft.Icons.UNARCHIVE_OUTLINED,
+                                on_click=load_more,
+                            )],
+                            alignment=ft.MainAxisAlignment.CENTER,
+                        )
+                        grid_more.visible = True
+                    else:
+                        grid_more.visible = False
                     if invoices:
                         cards.content = empty_state(
                             "لا توجد فواتير مطابقة",
@@ -1332,6 +1383,7 @@ class InvoiceCenter:
                         )
                     self.page.update()
                     return
+
                 invoice_grid.set_rows(shown)
                 # Totals cover the whole filtered set, not just the first
                 # page of 60 -- so the footer answers "how much is open in
@@ -1346,26 +1398,6 @@ class InvoiceCenter:
                         sum(float(i.get("profit_amount") or 0) for i in matched)
                     )
                 invoice_grid.set_footer(footer_values)
-                def load_more(_=None) -> None:
-                    # Grow the current client-side window first; once every
-                    # loaded row is visible, pull the next server page so the
-                    # whole database stays reachable past the old 250-row cap.
-                    if len(matched) > render_limit["n"]:
-                        render_limit["n"] += 60
-                        refresh_cards()
-                        return
-                    if list_state["done"]:
-                        return
-                    fetched = self.ctx.invoices.list_invoices(
-                        limit=list_state["page"], offset=list_state["offset"]
-                    )
-                    list_state["offset"] += len(fetched)
-                    list_state["done"] = len(fetched) < list_state["page"]
-                    if fetched:
-                        invoices.extend(fetched)
-                    render_limit["n"] += 60
-                    refresh_cards()
-
                 remaining = len(matched) - len(shown)
                 if remaining > 0:
                     grid_more.content = ft.Row(
@@ -1431,6 +1463,17 @@ class InvoiceCenter:
             def set_filter(key: str, value: str) -> None:
                 filters[key] = value
                 render_limit["n"] = 60
+                if key == "type":
+                    # Re-query from the server with the new type so the whole
+                    # database of that type is reachable (not just the page we
+                    # happened to load for the previous type).
+                    fetched = self.ctx.invoices.list_invoices(
+                        invoice_type=_server_type(), limit=list_state["page"], offset=0
+                    )
+                    invoices.clear()
+                    invoices.extend(fetched)
+                    list_state["offset"] = len(fetched)
+                    list_state["done"] = len(fetched) < list_state["page"]
                 render_filters()
                 refresh_cards()
 
