@@ -208,12 +208,239 @@ class AccountingRebuilder:
                 (st["qty"], st["avg"], item["id"]),
             )
 
+    @staticmethod
+    def _create_initial_invoice_payment(conn, inv) -> int | None:
+        """(Re)create one invoice's derived initial-payment row + allocation."""
+        if _is_opening_invoice(inv):
+            return None
+        initial = float(inv["initial_paid_amount"] or 0)
+        total = float(inv["total"] or 0)
+        if initial < -EPSILON or initial > total + EPSILON:
+            raise ValueError(f"الدفعة الأولى غير صالحة للفاتورة #{inv['id']}")
+        if initial <= EPSILON:
+            return None
+        direction = "in" if inv["type"] == "sale" else "out"
+        # Derived reflection of the invoice's own initial payment: inherit the
+        # invoice's historical rate snapshot rather than stamping "now".
+        cur = conn.execute(
+            """INSERT INTO payments(
+                   invoice_id,customer_id,supplier_id,direction,amount,payment_date,
+                   reference,notes,source_type,source_id,
+                   payment_exchange_rate,payment_currency_code,payment_currency_symbol
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                inv["id"],
+                inv["customer_id"],
+                inv["supplier_id"],
+                direction,
+                initial,
+                inv["invoice_date"],
+                inv["reference"],
+                "دفعة أولى من الفاتورة",
+                "invoice_initial",
+                inv["id"],
+                inv["invoice_exchange_rate"],
+                inv["invoice_currency_code"],
+                inv["invoice_currency_symbol"],
+            ),
+        )
+        payment_id = int(cur.lastrowid)
+        conn.execute(
+            "INSERT INTO payment_allocations(payment_id,invoice_id,amount) VALUES(?,?,?)",
+            (payment_id, inv["id"], initial),
+        )
+        return payment_id
+
     @classmethod
     def rebuild_financials(cls, conn, progress=None, cancel=None) -> None:
         cls._sync_initial_invoice_payments(conn, progress=progress, cancel=cancel)
         cls._validate_allocations(conn)
         cls._refresh_invoice_paid_amounts(conn)
         cls._rebuild_ledger_and_party_balances(conn, progress=progress, cancel=cancel)
+
+    @classmethod
+    def append_invoice(cls, conn, invoice_id: int) -> bool:
+        """Fast incremental post for a *newly created* invoice.
+
+        Returns ``True`` when the invoice could be posted incrementally (the
+        common POS case: dated today, no composite lines, no back-dating).
+        Returns ``False`` when the caller must fall back to the full rebuild
+        (composites, back-dated invoices, edited/deleted documents). This keeps
+        writes on a 300k-invoice database in the millisecond range instead of
+        re-deriving the whole database.
+        """
+        inv = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if inv is None or str(inv["type"]) not in {"sale", "purchase"}:
+            return False
+        if _is_opening_invoice(inv):
+            return False
+        date = str(inv["invoice_date"] or "")
+        lines = conn.execute(
+            "SELECT * FROM invoice_lines WHERE invoice_id=? ORDER BY id", (invoice_id,)
+        ).fetchall()
+        state: dict[int, dict[str, float]] = {}
+        stock_lines: list[tuple] = []
+        for ln in lines:
+            item_id = ln["item_id"]
+            if not item_id:
+                continue
+            item = conn.execute(
+                "SELECT id,item_type,is_composite,quantity,average_cost FROM items WHERE id=?",
+                (item_id,),
+            ).fetchone()
+            if item is None or str(item["item_type"]) != "مخزون":
+                continue
+            if int(item["is_composite"] or 0):
+                # Composite sales consume their components' timeline; let the
+                # full rebuild handle them so stock/COGS always stays exact.
+                return False
+            if int(item_id) not in state:
+                state[int(item_id)] = {
+                    "qty": float(item["quantity"] or 0),
+                    "avg": float(item["average_cost"] or 0),
+                }
+            stock_lines.append((ln, int(item_id)))
+        # Only append when this invoice is chronologically last for every item
+        # it touches; a back-dated invoice would change history and needs replay.
+        for _ln, item_id in stock_lines:
+            latest = conn.execute(
+                """SELECT MAX(inv.invoice_date) FROM invoice_lines il
+                   JOIN invoices inv ON inv.id=il.invoice_id
+                   WHERE il.item_id=? AND inv.id<>?""",
+                (item_id, invoice_id),
+            ).fetchone()[0]
+            latest_comp = conn.execute(
+                """SELECT MAX(inv.invoice_date) FROM invoice_line_components ilc
+                   JOIN invoice_lines il ON il.id=ilc.invoice_line_id
+                   JOIN invoices inv ON inv.id=il.invoice_id
+                   WHERE ilc.component_item_id=? AND inv.id<>?""",
+                (item_id, invoice_id),
+            ).fetchone()[0]
+            for other in (latest, latest_comp):
+                if other and str(other) > date:
+                    return False
+        # ---- inventory ----
+        allow_negative = bool(int(inv["allow_negative_stock"] or 0)) if "allow_negative_stock" in inv.keys() else False
+        for ln, item_id in stock_lines:
+            base_qty = float(ln["quantity_in_base"])
+            line_total = float(ln["total"])
+            st = state[item_id]
+            if str(inv["type"]) == "purchase":
+                unit_cost = (line_total / base_qty) if base_qty else 0.0
+                new_qty = st["qty"] + base_qty
+                if new_qty > EPSILON:
+                    st["avg"] = ((st["qty"] * st["avg"]) + line_total) / new_qty
+                else:
+                    st["avg"] = unit_cost
+                st["qty"] = new_qty
+                conn.execute(
+                    "UPDATE invoice_lines SET unit_cost=?,cost_amount=0 WHERE id=?",
+                    (unit_cost, ln["id"]),
+                )
+                conn.execute(
+                    """INSERT INTO inventory_movements(
+                           item_id,invoice_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date
+                       ) VALUES(?,?,'purchase',?,?,?,?)""",
+                    (item_id, invoice_id, base_qty, unit_cost, line_total, date),
+                )
+                conn.execute(
+                    "UPDATE items SET quantity=?,average_cost=?,purchase_price=? WHERE id=?",
+                    (st["qty"], st["avg"], unit_cost, item_id),
+                )
+            else:
+                if not allow_negative and st["qty"] + EPSILON < base_qty:
+                    name_row = conn.execute("SELECT name FROM items WHERE id=?", (item_id,)).fetchone()
+                    label = name_row[0] if name_row is not None else item_id
+                    raise ValueError(
+                        f"المخزون غير كافٍ للمادة: {label} — المتاح {st['qty']:.3f} والمطلوب {base_qty:.3f}"
+                    )
+                unit_cost = st["avg"]
+                cost = money.quantized(unit_cost * base_qty)
+                st["qty"] = st["qty"] - base_qty
+                if abs(st["qty"]) <= EPSILON:
+                    st["qty"] = 0.0
+                conn.execute(
+                    "UPDATE invoice_lines SET unit_cost=?,cost_amount=? WHERE id=?",
+                    (unit_cost, cost, ln["id"]),
+                )
+                conn.execute(
+                    """INSERT INTO inventory_movements(
+                           item_id,invoice_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date
+                       ) VALUES(?,?,'sale',?,?,?,?)""",
+                    (item_id, invoice_id, -base_qty, unit_cost, -cost, date),
+                )
+                conn.execute(
+                    "UPDATE items SET quantity=?,average_cost=? WHERE id=?",
+                    (st["qty"], st["avg"], item_id),
+                )
+        # ---- invoice ledger + party balance ----
+        total = float(inv["total"])
+        if str(inv["type"]) == "sale":
+            conn.execute(
+                """INSERT INTO ledger_entries(entry_date,account_code,party_type,party_id,debit,source_type,source_id,description)
+                   VALUES(?,?,?,?,?,'invoice',?,?)""",
+                (date, "AR", "customer" if inv["customer_id"] else None,
+                 inv["customer_id"], total, invoice_id, "فاتورة بيع"),
+            )
+            conn.execute(
+                "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                (date, "SALES", total, invoice_id, "إيراد مبيعات"),
+            )
+            cogs = float(conn.execute(
+                "SELECT COALESCE(SUM(cost_amount),0) FROM invoice_lines WHERE invoice_id=?",
+                (invoice_id,),
+            ).fetchone()[0])
+            if cogs > EPSILON:
+                conn.execute(
+                    "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                    (date, "COGS", cogs, invoice_id, "تكلفة بضاعة مباعة"),
+                )
+                conn.execute(
+                    "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                    (date, "INVENTORY", cogs, invoice_id, "انخفاض مخزون"),
+                )
+            if inv["customer_id"]:
+                conn.execute(
+                    "UPDATE customers SET balance=balance+? WHERE id=?",
+                    (money.quantized(total), inv["customer_id"]),
+                )
+        else:
+            conn.execute(
+                "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                (date, "PURCHASES", total, invoice_id, "فاتورة شراء"),
+            )
+            conn.execute(
+                """INSERT INTO ledger_entries(entry_date,account_code,party_type,party_id,credit,source_type,source_id,description)
+                   VALUES(?,?,?,?,?,'invoice',?,?)""",
+                (date, "AP", "supplier" if inv["supplier_id"] else None,
+                 inv["supplier_id"], total, invoice_id, "التزام مورد"),
+            )
+            if inv["supplier_id"]:
+                conn.execute(
+                    "UPDATE suppliers SET balance=balance+? WHERE id=?",
+                    (money.quantized(total), inv["supplier_id"]),
+                )
+        # ---- derived initial payment + its cash ledger ----
+        payment_id = cls._create_initial_invoice_payment(conn, inv)
+        if payment_id is not None:
+            pay = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+            if pay is not None:
+                cls._write_payment_ledger(
+                    conn, payment_id, str(pay["direction"]), float(pay["amount"]),
+                    str(pay["payment_date"]), pay["customer_id"], pay["supplier_id"],
+                    str(pay["notes"] or ""),
+                )
+                amount = money.quantized(float(pay["amount"]))
+                if pay["direction"] == "in" and pay["customer_id"]:
+                    conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (amount, pay["customer_id"]))
+                elif pay["direction"] == "out" and pay["supplier_id"]:
+                    conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (amount, pay["supplier_id"]))
+        conn.execute(
+            "UPDATE invoices SET paid_amount=COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE invoice_id=?),0) WHERE id=?",
+            (invoice_id, invoice_id),
+        )
+        derived_state.mark_clean_conn(conn)
+        return True
 
     @staticmethod
     def _sync_initial_invoice_payments(conn, progress=None, cancel=None) -> None:
@@ -249,38 +476,7 @@ class AccountingRebuilder:
             total = float(inv["total"] or 0)
             if initial < -EPSILON or initial > total + EPSILON:
                 raise ValueError(f"الدفعة الأولى غير صالحة للفاتورة #{inv['id']}")
-            if initial <= EPSILON:
-                continue
-            direction = "in" if inv["type"] == "sale" else "out"
-            # This payment is a derived reflection of the invoice's own initial
-            # payment, not a separate real-world event -- so it inherits the
-            # invoice's historical rate snapshot rather than stamping "now".
-            cur = conn.execute(
-                """INSERT INTO payments(
-                       invoice_id,customer_id,supplier_id,direction,amount,payment_date,
-                       reference,notes,source_type,source_id,
-                       payment_exchange_rate,payment_currency_code,payment_currency_symbol
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    inv["id"],
-                    inv["customer_id"],
-                    inv["supplier_id"],
-                    direction,
-                    initial,
-                    inv["invoice_date"],
-                    inv["reference"],
-                    "دفعة أولى من الفاتورة",
-                    "invoice_initial",
-                    inv["id"],
-                    inv["invoice_exchange_rate"],
-                    inv["invoice_currency_code"],
-                    inv["invoice_currency_symbol"],
-                ),
-            )
-            conn.execute(
-                "INSERT INTO payment_allocations(payment_id,invoice_id,amount) VALUES(?,?,?)",
-                (int(cur.lastrowid), inv["id"], initial),
-            )
+            AccountingRebuilder._create_initial_invoice_payment(conn, inv)
 
     @staticmethod
     def _validate_allocations(conn) -> None:

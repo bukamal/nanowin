@@ -256,7 +256,12 @@ class InvoiceService:
             )
             invoice_id = int(cur.lastrowid)
             self._insert_lines(conn, invoice_id, prepared)
-            AccountingRebuilder.rebuild(conn)
+            # Fast path: append just this invoice's inventory/ledger/balance
+            # effects when it is chronologically last for the items it touches
+            # and has no composite lines. Otherwise fall back to the exact full
+            # rebuild (back-dated invoices, composites, opening documents).
+            if not AccountingRebuilder.append_invoice(conn, invoice_id):
+                AccountingRebuilder.rebuild(conn)
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','invoice',?,?)",
                 (invoice_id, f"{invoice_type}:{total}"),
