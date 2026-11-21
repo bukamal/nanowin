@@ -4,6 +4,7 @@ from datetime import date
 
 from nano_offline.core import money
 from nano_offline.core.cancellation import check_cancel
+from nano_offline.core import derived_state
 
 EPSILON = 1e-9
 
@@ -41,6 +42,9 @@ class AccountingRebuilder:
         if inventory:
             cls.rebuild_inventory(conn, progress=progress, cancel=cancel)
         cls.rebuild_financials(conn, progress=progress, cancel=cancel)
+        # Derived state is now current: stamp the marker so the next app launch
+        # can skip the (expensive) rebuild entirely.
+        derived_state.mark_clean_conn(conn)
 
     @staticmethod
     def rebuild_inventory(conn, progress=None, cancel=None) -> None:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
+import time
 
 from nano_offline.core.asyncdb import Offloadable, blocking
 from nano_offline.core.database import Database
@@ -129,30 +131,111 @@ class ItemRepository(Offloadable):
 
     @blocking
     def pos_catalog(self, limit_best_sellers: int = 12) -> list[dict]:
-        """Items ordered for the POS grid: best sellers first, then the rest A-Z.
+        """Items for the POS grid, ordered A-Z.
 
-        "Best seller" is derived live from posted sale invoice lines rather
-        than a stored counter, so the ranking always reflects real history
-        without a separate table to keep in sync.
+        Deliberately *does not* aggregate sold quantities: grouping hundreds of
+        thousands of invoice lines took ~22s on a large database and froze the
+        POS screen. Best sellers are computed separately (and cached) by
+        :meth:`best_sellers`, so opening POS is a single cheap join.
         """
         sql = """
         SELECT i.*, c.name AS category_name, u.abbreviation AS unit_abbreviation,
                COALESCE(i.section_id, c.section_id) AS section_id,
-               COALESCE(SUM(CASE WHEN inv.type='sale' THEN il.quantity_in_base ELSE 0 END), 0) AS sold_qty
+               0 AS sold_qty
         FROM items i
         LEFT JOIN categories c ON c.id = i.category_id
         LEFT JOIN units u ON u.id = i.base_unit_id
-        LEFT JOIN invoice_lines il ON il.item_id = i.id
-        LEFT JOIN invoices inv ON inv.id = il.invoice_id
-        GROUP BY i.id
-        ORDER BY sold_qty DESC, i.name
+        ORDER BY i.name
         """
         with self.db.connect() as conn:
-            rows = [dict(r) for r in conn.execute(sql).fetchall()]
-        best = [r for r in rows if r["sold_qty"] > 0][: max(0, int(limit_best_sellers))]
-        best_ids = {r["id"] for r in best}
-        rest = sorted((r for r in rows if r["id"] not in best_ids), key=lambda r: r["name"])
-        return best + rest
+            return [dict(r) for r in conn.execute(sql).fetchall()]
+
+    # ---- best sellers (cached, never on the POS open path) ----------------
+    _BEST_SELLERS_KEY = "cache.best_sellers"
+
+    def _read_best_sellers_cache(self) -> dict | None:
+        try:
+            with self.db.connect() as conn:
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key=?", (self._BEST_SELLERS_KEY,)
+                ).fetchone()
+            if not row or not row[0]:
+                return None
+            data = json.loads(str(row[0]))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_best_sellers_cache(self, items: list[dict]) -> None:
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (self._BEST_SELLERS_KEY, json.dumps(
+                        {"computed_at": time.time(), "items": items}, ensure_ascii=False)),
+                )
+        except Exception:
+            pass
+
+    def best_sellers_stale(self, max_age_seconds: float = 6 * 3600) -> bool:
+        cached = self._read_best_sellers_cache()
+        if not cached:
+            return True
+        try:
+            return (time.time() - float(cached.get("computed_at") or 0)) > max_age_seconds
+        except (TypeError, ValueError):
+            return True
+
+    def best_sellers(self, limit: int = 12) -> list[dict]:
+        """Cached best-selling items (may be empty until first computed)."""
+        cached = self._read_best_sellers_cache() or {}
+        entries = cached.get("items") or []
+        out: list[dict] = []
+        ids = [int(e.get("id")) for e in entries if e.get("id") is not None][: max(0, int(limit))]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        qty_by_id = {int(e["id"]): float(e.get("qty") or 0) for e in entries if e.get("id") is not None}
+        with self.db.connect() as conn:
+            rows = {
+                int(r["id"]): dict(r)
+                for r in conn.execute(
+                    f"SELECT i.*, c.name AS category_name, u.abbreviation AS unit_abbreviation "
+                    f"FROM items i LEFT JOIN categories c ON c.id=i.category_id "
+                    f"LEFT JOIN units u ON u.id=i.base_unit_id WHERE i.id IN ({placeholders})",
+                    ids,
+                ).fetchall()
+            }
+        for item_id in ids:
+            row = rows.get(item_id)
+            if row is not None:
+                row["sold_qty"] = qty_by_id.get(item_id, 0.0)
+                out.append(row)
+        return out
+
+    @blocking
+    def refresh_best_sellers(self, limit: int = 12) -> list[dict]:
+        """Recompute the best sellers once and cache them (slow query)."""
+        sql = """
+        SELECT il.item_id, SUM(il.quantity_in_base) AS q
+        FROM invoice_lines il
+        JOIN invoices inv ON inv.id = il.invoice_id
+        WHERE inv.type='sale'
+        GROUP BY il.item_id
+        ORDER BY q DESC
+        LIMIT ?
+        """
+        try:
+            with self.db.connect() as conn:
+                entries = [
+                    {"id": int(r["item_id"]), "qty": float(r["q"] or 0)}
+                    for r in conn.execute(sql, (max(1, int(limit)),)).fetchall()
+                ]
+            self._write_best_sellers_cache(entries)
+        except Exception:
+            entries = []
+        return self.best_sellers(limit)
 
     @blocking
     def purchased_by_party(self, party_type: str, party_id: int, limit: int = 20) -> list[dict]:

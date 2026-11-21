@@ -6,6 +6,7 @@ from nano_offline.core.database import Database
 from nano_offline.core import event_bus
 from nano_offline.core import money
 from nano_offline.services.accounting_rebuilder import EPSILON
+from nano_offline.core import derived_state
 
 
 class ExpenseService:
@@ -26,6 +27,7 @@ class ExpenseService:
                     conn, int(row["id"]), str(row["expense_date"]), float(row["amount"]),
                     str(row["description"]), str(row["category_name"] or "") or None,
                 )
+            derived_state.mark_clean_conn(conn)
 
     def list_categories(self) -> list[dict]:
         with self.db.connect() as conn:

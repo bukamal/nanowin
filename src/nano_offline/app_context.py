@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nano_offline.core.database import Database
+from nano_offline.core import derived_state
 from nano_offline.repositories.definitions_repository import DefinitionsRepository
 from nano_offline.repositories.item_repository import ItemRepository
 from nano_offline.repositories.party_repository import PartyRepository
@@ -77,10 +78,13 @@ class AppContext:
         db.initialize()
         invoices = InvoiceService(db)
         expenses = ExpenseService(db)
-        # Required after phase-2 -> phase-3 migration: initial invoice payments
-        # become explicit payment/allocation rows and all balances are reconciled.
-        invoices.rebuild_derived_state(progress=progress, cancel=cancel)
-        expenses.rebuild_ledger()
+        # Skip the (potentially minute-long) rebuild when the last session left
+        # derived state clean at the current schema version with matching source
+        # counts. A fresh/legacy/restored database, or any raw change, does not
+        # match and therefore rebuilds exactly once.
+        if not derived_state.is_clean(db):
+            invoices.rebuild_derived_state(progress=progress, cancel=cancel)
+            expenses.rebuild_ledger()
         # Print stations: sale invoices fan out to each section's network
         # ESC/POS printer (see SectionPrintService).
         sections_repo = SectionRepository(db)

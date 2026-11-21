@@ -289,6 +289,11 @@ class POSCenter:
         self._pos_active = True
         items = self.ctx.items.pos_catalog()
         self.item_map = {int(i["id"]): i for i in items}
+        # Pre-normalize each name once so typing in the catalog search never
+        # re-runs Arabic normalization over the whole (10k+) catalog.
+        self._item_search_blobs = {
+            int(i["id"]): normalize_ar(str(i.get("name") or "").casefold()) for i in items
+        }
         # Restaurant mode groups the catalog rail by print section (kitchen,
         # bar, ...) instead of category, so the cashier thinks in stations.
         self._group_by_section = restaurant_settings.enabled(self.ctx.settings)
@@ -474,11 +479,27 @@ class POSCenter:
         # than an inline labelled section inside the grid. pos_catalog()
         # already returns best-sellers-first; keep only real sellers and cap
         # the strip short so it stays a quick pick, not a second catalog.
-        best_sellers = sorted(
-            (it for it in items if float(it.get("sold_qty") or 0) > 0),
-            key=lambda it: float(it.get("sold_qty") or 0),
-            reverse=True,
-        )[:8]
+        # Best sellers come from a cached, separately-computed list -- never
+        # from aggregating the whole invoice history on the POS open path.
+        best_sellers = list(self.ctx.items.best_sellers(limit=8))
+        if self.ctx.items.best_sellers_stale():
+            async def _refresh_best_sellers_bg() -> None:
+                try:
+                    rows = await asyncio.to_thread(self.ctx.items.refresh_best_sellers, 8)
+                except Exception:
+                    return
+                if not self._pos_active or not rows:
+                    return
+                best_sellers[:] = rows
+                try:
+                    render_bestsellers()
+                    self.page.update()
+                except Exception:
+                    pass
+            try:
+                self.page.run_task(_refresh_best_sellers_bg)
+            except Exception:
+                pass
 
         best_toggle_icon = ft.Icon(ft.Icons.EXPAND_MORE, size=16, color=Colors.TEXT_SECONDARY)
         best_toggle_label = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
@@ -561,7 +582,7 @@ class POSCenter:
                     elif item.get("category_id") != cat_id:
                         continue
                 if q:
-                    name = normalize_ar(str(item["name"]).casefold())
+                    name = self._item_search_blobs.get(int(item["id"]), "")
                     barcode = str(item.get("barcode") or "")
                     if not (
                         (tokens and all(t in name for t in tokens))

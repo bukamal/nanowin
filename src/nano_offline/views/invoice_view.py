@@ -3949,7 +3949,7 @@ class InvoiceCenter:
         suppliers = self.ctx.suppliers.list()
         items = self.ctx.items.list()
         item_map = {int(i["id"]): i for i in items}
-        best_sellers = [i for i in self.ctx.items.pos_catalog(limit_best_sellers=10) if i.get("sold_qty")]
+        best_sellers = self.ctx.items.best_sellers(limit=10)
 
         type_dd = SegmentedToggle(
             options=[
