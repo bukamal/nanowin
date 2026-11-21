@@ -486,6 +486,22 @@ class InvoiceService:
             invalidate_insights()
             return invoice_id
 
+    @staticmethod
+    def _invoice_item_info(conn, invoice_id: int) -> tuple[list[int], bool]:
+        """(stock item ids, has-composite-line) for an invoice's current lines."""
+        item_ids: list[int] = []
+        composite = False
+        for row in conn.execute(
+            "SELECT il.item_id, it.item_type, it.is_composite FROM invoice_lines il "
+            "LEFT JOIN items it ON it.id=il.item_id WHERE il.invoice_id=? AND il.item_id IS NOT NULL",
+            (invoice_id,),
+        ).fetchall():
+            if int(row["is_composite"] or 0):
+                composite = True
+            elif str(row["item_type"]) == "مخزون":
+                item_ids.append(int(row["item_id"]))
+        return item_ids, composite
+
     def update_invoice(
         self,
         invoice_id: int,
@@ -511,6 +527,7 @@ class InvoiceService:
             ):
                 raise ValueError("لا يمكن تغيير نوع أو جهة فاتورة «أول المدة»")
             before = self._snapshot(conn, invoice_id)
+            old_item_ids, old_composite = self._invoice_item_info(conn, invoice_id)
             prepared, total, paid_amount = self._validate_and_prepare(
                 conn,
                 invoice_type=invoice_type,
@@ -587,7 +604,14 @@ class InvoiceService:
                         f"UPDATE invoice_lines SET printed_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
                         kept_ids,
                     )
-            AccountingRebuilder.rebuild(conn)
+            new_item_ids, new_composite = self._invoice_item_info(conn, invoice_id)
+            incremental = False
+            if not (old_composite or new_composite):
+                incremental = AccountingRebuilder.update_invoice_incremental(
+                    conn, invoice_id, old, old_item_ids, new_item_ids
+                )
+            if not incremental:
+                AccountingRebuilder.rebuild(conn)
             after = self._snapshot(conn, invoice_id)
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','invoice',?,?)",

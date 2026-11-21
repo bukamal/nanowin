@@ -389,18 +389,9 @@ class AccountingRebuilder:
             )
 
     @classmethod
-    def remove_invoice(cls, conn, invoice_id: int, row, item_ids) -> bool:
-        """Incrementally unpost a deleted invoice (fallback: return False).
-
-        Reverses its ledger, its derived initial payment and the party balance,
-        removes its inventory movements, deletes the invoice, then replays only
-        the affected items' timelines (including composite consumption).
-        Returns ``False`` for opening invoices so the caller falls back to the
-        full rebuild. Composite *lines* are rejected by the caller.
-        """
-        invoice_id = int(invoice_id)
-        if row is None or _is_opening_invoice(row):
-            return False
+    def _remove_invoice_financials_conn(cls, conn, row) -> None:
+        """Reverse one invoice's ledger, initial payment and party balance."""
+        invoice_id = int(row["id"])
         conn.execute(
             "DELETE FROM ledger_entries WHERE source_type='invoice' AND source_id=?", (invoice_id,)
         )
@@ -419,9 +410,126 @@ class AccountingRebuilder:
             conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (total, row["customer_id"]))
         elif str(row["type"]) == "purchase" and row["supplier_id"]:
             conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (total, row["supplier_id"]))
+
+    @classmethod
+    def _refresh_cost_ledger_for_items(cls, conn, item_ids, exclude_invoice_id=None) -> None:
+        """Re-post COGS/INVENTORY for every invoice whose cost of an item may
+        have changed (their AR/SALES/PURCHASES entries stay untouched)."""
+        ids: set[int] = set()
+        for item_id in {int(i) for i in (item_ids or ()) if i is not None}:
+            for r in conn.execute(
+                "SELECT DISTINCT invoice_id FROM invoice_lines WHERE item_id=? AND invoice_id IS NOT NULL",
+                (item_id,),
+            ).fetchall():
+                ids.add(int(r[0]))
+            for r in conn.execute(
+                "SELECT DISTINCT il.invoice_id FROM invoice_line_components ilc "
+                "JOIN invoice_lines il ON il.id=ilc.invoice_line_id WHERE ilc.component_item_id=?",
+                (item_id,),
+            ).fetchall():
+                ids.add(int(r[0]))
+        if exclude_invoice_id is not None:
+            ids.discard(int(exclude_invoice_id))
+        for invoice_id in ids:
+            inv = conn.execute("SELECT invoice_date FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+            if inv is None:
+                continue
+            entry_date = str(inv["invoice_date"] or "")
+            conn.execute(
+                "DELETE FROM ledger_entries WHERE source_type='invoice' AND source_id=? "
+                "AND account_code IN ('COGS','INVENTORY')",
+                (invoice_id,),
+            )
+            cogs = float(conn.execute(
+                "SELECT COALESCE(SUM(cost_amount),0) FROM invoice_lines WHERE invoice_id=?",
+                (invoice_id,),
+            ).fetchone()[0])
+            if cogs > EPSILON:
+                conn.execute(
+                    "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) "
+                    "VALUES(?,?,?,'invoice',?,?)",
+                    (entry_date, "COGS", cogs, invoice_id, "تكلفة بضاعة مباعة"),
+                )
+                conn.execute(
+                    "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) "
+                    "VALUES(?,?,?,'invoice',?,?)",
+                    (entry_date, "INVENTORY", cogs, invoice_id, "انخفاض مخزون"),
+                )
+
+    @staticmethod
+    def _items_touch_composite_lines(conn, item_ids) -> bool:
+        ids = sorted({int(i) for i in (item_ids or ()) if i is not None})
+        if not ids:
+            return False
+        placeholders = ",".join("?" for _ in ids)
+        row = conn.execute(
+            f"SELECT 1 FROM invoice_line_components WHERE component_item_id IN ({placeholders}) LIMIT 1",
+            ids,
+        ).fetchone()
+        return row is not None
+
+    @classmethod
+    def update_invoice_incremental(cls, conn, invoice_id, old_row, old_item_ids, new_item_ids) -> bool:
+        """Incrementally re-post an *edited* invoice.
+
+        The caller must already have written the new invoice row and lines.
+        Reverses the old ledger/initial payment/party effect, posts the new
+        one, then replays only the union of old+new affected items (so edits
+        stay correct even when the date changes). Returns ``False`` for opening
+        invoices and allows the caller to fall back for composite lines.
+        """
+        if old_row is None or _is_opening_invoice(old_row):
+            return False
+        all_items = set(old_item_ids or ()) | set(new_item_ids or ())
+        # If any affected item feeds a composite sale line, a partial replay
+        # would under-count that line's cost; let the full rebuild handle it.
+        if cls._items_touch_composite_lines(conn, all_items):
+            return False
+        cls._remove_invoice_financials_conn(conn, old_row)
+        new_row = conn.execute("SELECT * FROM invoices WHERE id=?", (int(invoice_id),)).fetchone()
+        if new_row is None:
+            return False
+        # Guard: an edit may not drop the total below already-allocated
+        # voucher payments (mirrors the full rebuild's allocation validation).
+        allocated = float(conn.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM payment_allocations WHERE invoice_id=?",
+            (int(invoice_id),),
+        ).fetchone()[0])
+        if money.quantized(allocated, decimals=2) > money.quantized(float(new_row["total"] or 0), decimals=2) + EPSILON:
+            raise ValueError(
+                f"الدفعات الموزعة على الفاتورة #{int(invoice_id)} تتجاوز إجمالي الفاتورة؛ عدّل السندات المرتبطة أولًا"
+            )
+        # Replay inventory so the invoice's fresh cost_amount (COGS) is in place
+        # before its ledger is (re)posted.
+        cls.rebuild_inventory_for_items(conn, set(old_item_ids or ()) | set(new_item_ids or ()))
+        cls._post_invoice_financials_conn(conn, new_row)
+        # A changed item cost also changes *other* invoices' COGS.
+        cls._refresh_cost_ledger_for_items(
+            conn, set(old_item_ids or ()) | set(new_item_ids or ()), exclude_invoice_id=invoice_id
+        )
+        derived_state.mark_clean_conn(conn)
+        return True
+
+    @classmethod
+    def remove_invoice(cls, conn, invoice_id: int, row, item_ids) -> bool:
+        """Incrementally unpost a deleted invoice (fallback: return False).
+
+        Reverses its ledger, its derived initial payment and the party balance,
+        removes its inventory movements, deletes the invoice, then replays only
+        the affected items' timelines (including composite consumption).
+        Returns ``False`` for opening invoices so the caller falls back to the
+        full rebuild. Composite *lines* are rejected by the caller.
+        """
+        invoice_id = int(invoice_id)
+        if row is None or _is_opening_invoice(row):
+            return False
+        if cls._items_touch_composite_lines(conn, item_ids):
+            return False
+        cls._remove_invoice_financials_conn(conn, row)
         conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (invoice_id,))
         conn.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
         cls.rebuild_inventory_for_items(conn, item_ids)
+        cls._refresh_cost_ledger_for_items(conn, item_ids)
         derived_state.mark_clean_conn(conn)
         return True
 
@@ -477,6 +585,79 @@ class AccountingRebuilder:
             ).fetchall()]
         cls.refresh_paid_amounts(conn, invoice_ids)
         derived_state.mark_clean_conn(conn)
+
+    @classmethod
+    def _post_invoice_financials_conn(cls, conn, inv) -> None:
+        """Post one invoice's ledger, initial payment and party balance."""
+        invoice_id = int(inv["id"])
+        date = str(inv["invoice_date"] or "")
+        total = float(inv["total"])
+        # ---- invoice ledger + party balance ----
+        total = float(inv["total"])
+        if str(inv["type"]) == "sale":
+            conn.execute(
+                """INSERT INTO ledger_entries(entry_date,account_code,party_type,party_id,debit,source_type,source_id,description)
+                   VALUES(?,?,?,?,?,'invoice',?,?)""",
+                (date, "AR", "customer" if inv["customer_id"] else None,
+                 inv["customer_id"], total, invoice_id, "فاتورة بيع"),
+            )
+            conn.execute(
+                "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                (date, "SALES", total, invoice_id, "إيراد مبيعات"),
+            )
+            cogs = float(conn.execute(
+                "SELECT COALESCE(SUM(cost_amount),0) FROM invoice_lines WHERE invoice_id=?",
+                (invoice_id,),
+            ).fetchone()[0])
+            if cogs > EPSILON:
+                conn.execute(
+                    "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                    (date, "COGS", cogs, invoice_id, "تكلفة بضاعة مباعة"),
+                )
+                conn.execute(
+                    "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                    (date, "INVENTORY", cogs, invoice_id, "انخفاض مخزون"),
+                )
+            if inv["customer_id"]:
+                conn.execute(
+                    "UPDATE customers SET balance=balance+? WHERE id=?",
+                    (money.quantized(total), inv["customer_id"]),
+                )
+        else:
+            conn.execute(
+                "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
+                (date, "PURCHASES", total, invoice_id, "فاتورة شراء"),
+            )
+            conn.execute(
+                """INSERT INTO ledger_entries(entry_date,account_code,party_type,party_id,credit,source_type,source_id,description)
+                   VALUES(?,?,?,?,?,'invoice',?,?)""",
+                (date, "AP", "supplier" if inv["supplier_id"] else None,
+                 inv["supplier_id"], total, invoice_id, "التزام مورد"),
+            )
+            if inv["supplier_id"]:
+                conn.execute(
+                    "UPDATE suppliers SET balance=balance+? WHERE id=?",
+                    (money.quantized(total), inv["supplier_id"]),
+                )
+        # ---- derived initial payment + its cash ledger ----
+        payment_id = cls._create_initial_invoice_payment(conn, inv)
+        if payment_id is not None:
+            pay = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+            if pay is not None:
+                cls._write_payment_ledger(
+                    conn, payment_id, str(pay["direction"]), float(pay["amount"]),
+                    str(pay["payment_date"]), pay["customer_id"], pay["supplier_id"],
+                    str(pay["notes"] or ""),
+                )
+                amount = money.quantized(float(pay["amount"]))
+                if pay["direction"] == "in" and pay["customer_id"]:
+                    conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (amount, pay["customer_id"]))
+                elif pay["direction"] == "out" and pay["supplier_id"]:
+                    conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (amount, pay["supplier_id"]))
+        conn.execute(
+            "UPDATE invoices SET paid_amount=COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE invoice_id=?),0) WHERE id=?",
+            (invoice_id, invoice_id),
+        )
 
     @classmethod
     def append_invoice(cls, conn, invoice_id: int) -> bool:
@@ -593,72 +774,7 @@ class AccountingRebuilder:
                     "UPDATE items SET quantity=?,average_cost=? WHERE id=?",
                     (st["qty"], st["avg"], item_id),
                 )
-        # ---- invoice ledger + party balance ----
-        total = float(inv["total"])
-        if str(inv["type"]) == "sale":
-            conn.execute(
-                """INSERT INTO ledger_entries(entry_date,account_code,party_type,party_id,debit,source_type,source_id,description)
-                   VALUES(?,?,?,?,?,'invoice',?,?)""",
-                (date, "AR", "customer" if inv["customer_id"] else None,
-                 inv["customer_id"], total, invoice_id, "فاتورة بيع"),
-            )
-            conn.execute(
-                "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
-                (date, "SALES", total, invoice_id, "إيراد مبيعات"),
-            )
-            cogs = float(conn.execute(
-                "SELECT COALESCE(SUM(cost_amount),0) FROM invoice_lines WHERE invoice_id=?",
-                (invoice_id,),
-            ).fetchone()[0])
-            if cogs > EPSILON:
-                conn.execute(
-                    "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
-                    (date, "COGS", cogs, invoice_id, "تكلفة بضاعة مباعة"),
-                )
-                conn.execute(
-                    "INSERT INTO ledger_entries(entry_date,account_code,credit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
-                    (date, "INVENTORY", cogs, invoice_id, "انخفاض مخزون"),
-                )
-            if inv["customer_id"]:
-                conn.execute(
-                    "UPDATE customers SET balance=balance+? WHERE id=?",
-                    (money.quantized(total), inv["customer_id"]),
-                )
-        else:
-            conn.execute(
-                "INSERT INTO ledger_entries(entry_date,account_code,debit,source_type,source_id,description) VALUES(?,?,?,'invoice',?,?)",
-                (date, "PURCHASES", total, invoice_id, "فاتورة شراء"),
-            )
-            conn.execute(
-                """INSERT INTO ledger_entries(entry_date,account_code,party_type,party_id,credit,source_type,source_id,description)
-                   VALUES(?,?,?,?,?,'invoice',?,?)""",
-                (date, "AP", "supplier" if inv["supplier_id"] else None,
-                 inv["supplier_id"], total, invoice_id, "التزام مورد"),
-            )
-            if inv["supplier_id"]:
-                conn.execute(
-                    "UPDATE suppliers SET balance=balance+? WHERE id=?",
-                    (money.quantized(total), inv["supplier_id"]),
-                )
-        # ---- derived initial payment + its cash ledger ----
-        payment_id = cls._create_initial_invoice_payment(conn, inv)
-        if payment_id is not None:
-            pay = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
-            if pay is not None:
-                cls._write_payment_ledger(
-                    conn, payment_id, str(pay["direction"]), float(pay["amount"]),
-                    str(pay["payment_date"]), pay["customer_id"], pay["supplier_id"],
-                    str(pay["notes"] or ""),
-                )
-                amount = money.quantized(float(pay["amount"]))
-                if pay["direction"] == "in" and pay["customer_id"]:
-                    conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (amount, pay["customer_id"]))
-                elif pay["direction"] == "out" and pay["supplier_id"]:
-                    conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (amount, pay["supplier_id"]))
-        conn.execute(
-            "UPDATE invoices SET paid_amount=COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE invoice_id=?),0) WHERE id=?",
-            (invoice_id, invoice_id),
-        )
+        cls._post_invoice_financials_conn(conn, inv)
         derived_state.mark_clean_conn(conn)
         return True
 
