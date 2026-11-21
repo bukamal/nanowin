@@ -783,7 +783,14 @@ class InvoiceCenter:
             else:
                 self.on_title_change("الفواتير", "المبيعات والمشتريات وحالات السداد")
         try:
-            invoices = self.ctx.invoices.list_invoices(limit=250)
+            # Server-side paging: load the first page now and fetch more on
+            # demand, so a 300k-invoice database is fully reachable instead of
+            # being hard-capped at 250 rows. KPIs/totals come from SQL
+            # aggregates over the whole table, not this page.
+            list_state = {"page": 250, "offset": 0, "done": False}
+            invoices = self.ctx.invoices.list_invoices(limit=list_state["page"], offset=0)
+            list_state["offset"] = len(invoices)
+            list_state["done"] = len(invoices) < list_state["page"]
             search = SelectAllTextField(
                 label="بحث في الفواتير",
                 hint_text="رقم الفاتورة، العميل، المورد أو المرجع",
@@ -799,14 +806,16 @@ class InvoiceCenter:
             type_row = ft.Row(spacing=6, wrap=True)
             status_row = ft.Row(spacing=6, wrap=True)
 
-            outstanding = sum(max(0.0, float(i.get("remaining_amount") or 0)) for i in invoices)
-            open_count = sum(1 for i in invoices if i.get("payment_status") != "paid")
-            sales_total = sum(float(i.get("total") or 0) for i in invoices if i.get("type") == "sale")
-            purchases_total = sum(float(i.get("total") or 0) for i in invoices if i.get("type") == "purchase")
-            # Sales profit = sum(total - COGS) over the sale invoices.
-            profits_total = sum(
-                float(i.get("profit_amount") or 0) for i in invoices if i.get("type") == "sale"
-            )
+            try:
+                totals = self.ctx.invoices.invoice_totals(invoice_type=mode)
+            except Exception:
+                totals = {}
+            outstanding = float(totals.get("remaining_sum") or 0)
+            open_count = int(totals.get("open_count") or 0)
+            sales_total = float(totals.get("sales_sum") or 0)
+            purchases_total = float(totals.get("purchases_sum") or 0)
+            profits_total = float(totals.get("profit_sum") or 0)
+            total_invoices_count = int(totals.get("count") or 0)
 
             def days_since(invoice_date_str) -> int | None:
                 if not invoice_date_str:
@@ -1337,11 +1346,44 @@ class InvoiceCenter:
                         sum(float(i.get("profit_amount") or 0) for i in matched)
                     )
                 invoice_grid.set_footer(footer_values)
+                def load_more(_=None) -> None:
+                    # Grow the current client-side window first; once every
+                    # loaded row is visible, pull the next server page so the
+                    # whole database stays reachable past the old 250-row cap.
+                    if len(matched) > render_limit["n"]:
+                        render_limit["n"] += 60
+                        refresh_cards()
+                        return
+                    if list_state["done"]:
+                        return
+                    fetched = self.ctx.invoices.list_invoices(
+                        limit=list_state["page"], offset=list_state["offset"]
+                    )
+                    list_state["offset"] += len(fetched)
+                    list_state["done"] = len(fetched) < list_state["page"]
+                    if fetched:
+                        invoices.extend(fetched)
+                    render_limit["n"] += 60
+                    refresh_cards()
+
                 remaining = len(matched) - len(shown)
                 if remaining > 0:
                     grid_more.content = ft.Row(
-                        [ft.OutlinedButton(f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                                           on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh_cards()))],
+                        [ft.OutlinedButton(
+                            f"تحميل المزيد ({remaining:,})",
+                            icon=ft.Icons.EXPAND_MORE_ROUNDED,
+                            on_click=load_more,
+                        )],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    )
+                    grid_more.visible = True
+                elif not list_state["done"]:
+                    grid_more.content = ft.Row(
+                        [ft.OutlinedButton(
+                            "تحميل المزيد من القاعدة",
+                            icon=ft.Icons.UNARCHIVE_OUTLINED,
+                            on_click=load_more,
+                        )],
                         alignment=ft.MainAxisAlignment.CENTER,
                     )
                     grid_more.visible = True
@@ -1432,6 +1474,7 @@ class InvoiceCenter:
                     kpi_card("إجمالي المشتريات", self.money(purchases_total), ft.Icons.TRENDING_DOWN, Colors.PURPLE, on_tap=lambda _: set_filter("type", "purchase")),
                     kpi_card("المستحق على الموردين", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
                     kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                    kpi_card("إجمالي الفواتير", f"{total_invoices_count:,}", ft.Icons.INVENTORY_2_OUTLINED, Colors.PURPLE),
                 ], spacing=8)
             elif mode == "sale":
                 kpi_cards = metric_row([
@@ -1439,12 +1482,14 @@ class InvoiceCenter:
                     kpi_card("إجمالي الربح", self.money(profits_total), ft.Icons.SAVINGS_OUTLINED, Colors.PURPLE),
                     kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
                     kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                    kpi_card("إجمالي الفواتير", f"{total_invoices_count:,}", ft.Icons.INVENTORY_2_OUTLINED, Colors.PURPLE),
                 ], spacing=8)
             else:
                 kpi_cards = metric_row([
                     kpi_card("إجمالي المبيعات", self.money(sales_total), ft.Icons.TRENDING_UP, Colors.SUCCESS, on_tap=lambda _: set_filter("type", "sale")),
                     kpi_card("المستحق", self.money(outstanding), ft.Icons.SCHEDULE, Colors.ORANGE, on_tap=lambda _: set_filter("status", "outstanding")),
                     kpi_card("فواتير مفتوحة", str(open_count), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, on_tap=lambda _: set_filter("status", "outstanding")),
+                    kpi_card("إجمالي الفواتير", f"{total_invoices_count:,}", ft.Icons.INVENTORY_2_OUTLINED, Colors.PURPLE),
                 ], spacing=8)
             kpi_collapsed = {
                 "v": self.ctx.settings.get("ui.invoices_kpi_collapsed", "true").strip().lower()

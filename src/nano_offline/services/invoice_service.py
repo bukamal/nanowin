@@ -68,7 +68,50 @@ class InvoiceService:
             exclude_invoice_id=exclude_invoice_id,
         )
 
-    def list_invoices(self, invoice_type: str | None = None, limit: int = 200) -> list[dict]:
+    def count_invoices(self, invoice_type: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM invoices"
+        params: list[object] = []
+        if invoice_type in {"sale", "purchase"}:
+            sql += " WHERE type=?"
+            params.append(invoice_type)
+        with self.db.connect() as conn:
+            return int(conn.execute(sql, params).fetchone()[0])
+
+    def invoice_totals(self, invoice_type: str | None = None) -> dict:
+        """Whole-database totals (not just the visible page) for the KPI strip.
+
+        Sales profit is ``total - COGS`` per invoice (COGS from its lines);
+        everything is aggregated in SQL so a 300k-invoice database returns the
+        real numbers instead of the first-page subset.
+        """
+        where = ""
+        params: list[object] = []
+        if invoice_type in {"sale", "purchase"}:
+            where = "WHERE i.type=?"
+            params.append(invoice_type)
+        sql = f"""
+        SELECT
+            COUNT(*) AS count,
+            COALESCE(SUM(i.total), 0) AS total_sum,
+            COALESCE(SUM(MAX(i.total - i.paid_amount, 0)), 0) AS remaining_sum,
+            COALESCE(SUM(CASE WHEN i.type='sale' THEN i.total ELSE 0 END), 0) AS sales_sum,
+            COALESCE(SUM(CASE WHEN i.type='purchase' THEN i.total ELSE 0 END), 0) AS purchases_sum,
+            COALESCE(SUM(CASE WHEN i.type='sale'
+                              THEN i.total - COALESCE(l.cogs, 0) ELSE 0 END), 0) AS profit_sum,
+            COALESCE(SUM(CASE WHEN i.total - i.paid_amount > 1e-9 THEN 1 ELSE 0 END), 0) AS open_count
+        FROM invoices i
+        LEFT JOIN (
+            SELECT invoice_id, SUM(cost_amount) AS cogs
+            FROM invoice_lines GROUP BY invoice_id
+        ) l ON l.invoice_id = i.id
+        {where}
+        """
+        with self.db.connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return {key: (int(row[key]) if key in ("count", "open_count") else float(row[key] or 0))
+                for key in row.keys()}
+
+    def list_invoices(self, invoice_type: str | None = None, limit: int = 200, offset: int = 0) -> list[dict]:
         sql = """
         SELECT i.*,
                c.name AS customer_name,
@@ -85,8 +128,9 @@ class InvoiceService:
         if invoice_type in {"sale", "purchase"}:
             sql += " WHERE i.type=?"
             params.append(invoice_type)
-        sql += " ORDER BY i.invoice_date DESC, i.id DESC LIMIT ?"
+        sql += " ORDER BY i.invoice_date DESC, i.id DESC LIMIT ? OFFSET ?"
         params.append(max(1, int(limit)))
+        params.append(max(0, int(offset)))
         with self.db.connect() as conn:
             rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
         for row in rows:

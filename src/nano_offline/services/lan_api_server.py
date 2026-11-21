@@ -38,6 +38,7 @@ READ_METHODS = frozenset({
     "items.build_item_card", "items.verify_item_card",
     # invoices
     "invoices.list_invoices", "invoices.get_invoice", "invoices.check_purchase_price",
+    "invoices.count_invoices", "invoices.invoice_totals",
     "invoices.open_sale_orders", "invoices.open_invoices_for_party",
     # parties
     "customers.list", "customers.get", "customers.count", "customers.activity_summary",
