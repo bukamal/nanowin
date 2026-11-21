@@ -259,6 +259,226 @@ class AccountingRebuilder:
         cls._rebuild_ledger_and_party_balances(conn, progress=progress, cancel=cancel)
 
     @classmethod
+    def rebuild_inventory_for_items(cls, conn, item_ids) -> None:
+        """Recompute the inventory timeline of just these stock items.
+
+        Used by incremental invoice delete (and, later, edit): replaying one
+        item's own movements (plus any composite-sale consumption of it) is
+        O(movements of that item) instead of O(all invoice lines).
+        """
+        ids = sorted({int(i) for i in (item_ids or []) if i is not None})
+        if not ids:
+            return
+        comp_costs: dict[int, float] = {}
+        for item_id in ids:
+            item = conn.execute(
+                "SELECT id,item_type,is_composite,opening_quantity,opening_unit_cost FROM items WHERE id=?",
+                (item_id,),
+            ).fetchone()
+            if item is None or str(item["item_type"]) != "مخزون" or int(item["is_composite"] or 0):
+                continue
+            conn.execute(
+                "DELETE FROM inventory_movements WHERE item_id=? AND invoice_id IS NOT NULL",
+                (item_id,),
+            )
+            qty = float(item["opening_quantity"] or 0)
+            avg = float(item["opening_unit_cost"] or 0) if abs(qty) > EPSILON else 0.0
+            events: list[tuple] = []
+            for r in conn.execute(
+                """SELECT il.id AS line_id, il.invoice_id, il.quantity_in_base, il.total,
+                          inv.type, inv.invoice_date, inv.created_at, inv.id AS inv_id,
+                          inv.allow_negative_stock AS allow_negative_stock
+                   FROM invoice_lines il JOIN invoices inv ON inv.id=il.invoice_id
+                   WHERE il.item_id=? AND inv.type IN ('purchase','sale')""",
+                (item_id,),
+            ).fetchall():
+                events.append((
+                    str(r["invoice_date"]), str(r["created_at"] or ""), int(r["inv_id"]), int(r["line_id"]),
+                    r["type"], dict(r),
+                ))
+            for r in conn.execute(
+                """SELECT ilc.invoice_line_id AS line_id, il.invoice_id, ilc.base_qty,
+                          inv.invoice_date, inv.created_at, inv.id AS inv_id
+                   FROM invoice_line_components ilc
+                   JOIN invoice_lines il ON il.id=ilc.invoice_line_id
+                   JOIN invoices inv ON inv.id=il.invoice_id
+                   WHERE ilc.component_item_id=? AND inv.type='sale'""",
+                (item_id,),
+            ).fetchall():
+                events.append((
+                    str(r["invoice_date"]), str(r["created_at"] or ""), int(r["inv_id"]), int(r["line_id"]),
+                    "composite", dict(r),
+                ))
+            events.sort(key=lambda e: (e[0], e[1], e[2], e[3]))
+            last_purchase_unit_cost: float | None = None
+            for _date, _created, inv_id, line_id, kind, data in events:
+                if kind == "purchase":
+                    base = float(data["quantity_in_base"])
+                    line_total = float(data["total"])
+                    unit_cost = (line_total / base) if base else 0.0
+                    new_qty = qty + base
+                    if new_qty > EPSILON:
+                        avg = ((qty * avg) + line_total) / new_qty
+                    else:
+                        avg = unit_cost
+                    qty = new_qty
+                    last_purchase_unit_cost = unit_cost
+                    conn.execute("UPDATE invoice_lines SET unit_cost=?,cost_amount=0 WHERE id=?", (unit_cost, line_id))
+                    conn.execute(
+                        """INSERT INTO inventory_movements(item_id,invoice_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date)
+                           VALUES(?,?,'purchase',?,?,?,?)""",
+                        (item_id, inv_id, base, unit_cost, line_total, str(data["invoice_date"])),
+                    )
+                elif kind == "sale":
+                    base = float(data["quantity_in_base"])
+                    allow_negative = bool(int(data.get("allow_negative_stock") or 0))
+                    if not allow_negative and qty + EPSILON < base:
+                        name_row = conn.execute("SELECT name FROM items WHERE id=?", (item_id,)).fetchone()
+                        label = name_row[0] if name_row is not None else item_id
+                        raise ValueError(
+                            f"المخزون غير كافٍ للمادة: {label} — المتاح {qty:.3f} والمطلوب {base:.3f}"
+                        )
+                    cost = money.quantized(avg * base)
+                    qty -= base
+                    if abs(qty) <= EPSILON:
+                        qty = 0.0
+                    conn.execute("UPDATE invoice_lines SET unit_cost=?,cost_amount=? WHERE id=?", (avg, cost, line_id))
+                    conn.execute(
+                        """INSERT INTO inventory_movements(item_id,invoice_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date)
+                           VALUES(?,?,'sale',?,?,?,?)""",
+                        (item_id, inv_id, -base, avg, -cost, str(data["invoice_date"])),
+                    )
+                else:  # composite consumption of this component
+                    base = float(data["base_qty"])
+                    if qty + EPSILON < base:
+                        name_row = conn.execute("SELECT name FROM items WHERE id=?", (item_id,)).fetchone()
+                        label = name_row[0] if name_row is not None else item_id
+                        raise ValueError(
+                            f"المخزون غير كافٍ للمادة: {label} — المتاح {qty:.3f} والمطلوب {base:.3f}"
+                        )
+                    cost = money.quantized(avg * base)
+                    qty -= base
+                    if abs(qty) <= EPSILON:
+                        qty = 0.0
+                    conn.execute(
+                        """INSERT INTO inventory_movements(item_id,invoice_id,movement_type,quantity_delta,unit_cost,value_delta,movement_date)
+                           VALUES(?,?,'sale',?,?,?,?)""",
+                        (item_id, inv_id, -base, avg, -cost, str(data["invoice_date"])),
+                    )
+                    comp_costs[line_id] = comp_costs.get(line_id, 0.0) + cost
+            if last_purchase_unit_cost is not None:
+                conn.execute(
+                    "UPDATE items SET quantity=?,average_cost=?,purchase_price=? WHERE id=?",
+                    (qty, avg, last_purchase_unit_cost, item_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE items SET quantity=?,average_cost=? WHERE id=?",
+                    (qty, avg, item_id),
+                )
+        # Composite sale lines: their cost is the sum of their components.
+        for line_id, cost in comp_costs.items():
+            row = conn.execute(
+                "SELECT quantity FROM invoice_lines WHERE id=?", (line_id,)
+            ).fetchone()
+            qty = float(row["quantity"] or 0) if row is not None else 0.0
+            unit_cost = (cost / qty) if qty > EPSILON else 0.0
+            conn.execute(
+                "UPDATE invoice_lines SET unit_cost=?,cost_amount=? WHERE id=?",
+                (unit_cost, money.quantized(cost), line_id),
+            )
+
+    @classmethod
+    def remove_invoice(cls, conn, invoice_id: int, row, item_ids) -> bool:
+        """Incrementally unpost a deleted invoice (fallback: return False).
+
+        Reverses its ledger, its derived initial payment and the party balance,
+        removes its inventory movements, deletes the invoice, then replays only
+        the affected items' timelines (including composite consumption).
+        Returns ``False`` for opening invoices so the caller falls back to the
+        full rebuild. Composite *lines* are rejected by the caller.
+        """
+        invoice_id = int(invoice_id)
+        if row is None or _is_opening_invoice(row):
+            return False
+        conn.execute(
+            "DELETE FROM ledger_entries WHERE source_type='invoice' AND source_id=?", (invoice_id,)
+        )
+        for p in conn.execute(
+            "SELECT * FROM payments WHERE source_type='invoice_initial' AND invoice_id=?", (invoice_id,)
+        ).fetchall():
+            conn.execute("DELETE FROM ledger_entries WHERE source_type='payment' AND source_id=?", (int(p["id"]),))
+            amount = money.quantized(float(p["amount"]))
+            if str(p["direction"]) == "in" and p["customer_id"]:
+                conn.execute("UPDATE customers SET balance=balance+? WHERE id=?", (amount, p["customer_id"]))
+            elif str(p["direction"]) == "out" and p["supplier_id"]:
+                conn.execute("UPDATE suppliers SET balance=balance+? WHERE id=?", (amount, p["supplier_id"]))
+        conn.execute("DELETE FROM payments WHERE source_type='invoice_initial' AND invoice_id=?", (invoice_id,))
+        total = money.quantized(float(row["total"] or 0))
+        if str(row["type"]) == "sale" and row["customer_id"]:
+            conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (total, row["customer_id"]))
+        elif str(row["type"]) == "purchase" and row["supplier_id"]:
+            conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (total, row["supplier_id"]))
+        conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (invoice_id,))
+        conn.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
+        cls.rebuild_inventory_for_items(conn, item_ids)
+        derived_state.mark_clean_conn(conn)
+        return True
+
+    @staticmethod
+    def refresh_paid_amounts(conn, invoice_ids) -> None:
+        for invoice_id in {int(i) for i in (invoice_ids or []) if i is not None}:
+            conn.execute(
+                "UPDATE invoices SET paid_amount=COALESCE("
+                "(SELECT SUM(amount) FROM payment_allocations WHERE invoice_id=?),0) WHERE id=?",
+                (invoice_id, invoice_id),
+            )
+
+    @classmethod
+    def post_payment(cls, conn, payment_id: int) -> None:
+        """Incrementally post one cash movement (voucher create/update)."""
+        payment_id = int(payment_id)
+        pay = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+        if pay is None:
+            return
+        cls._write_payment_ledger(
+            conn, payment_id, str(pay["direction"]), float(pay["amount"]),
+            str(pay["payment_date"]), pay["customer_id"], pay["supplier_id"],
+            str(pay["notes"] or ""),
+        )
+        amount = money.quantized(float(pay["amount"]))
+        if str(pay["direction"]) == "in" and pay["customer_id"]:
+            conn.execute("UPDATE customers SET balance=balance-? WHERE id=?", (amount, pay["customer_id"]))
+        elif str(pay["direction"]) == "out" and pay["supplier_id"]:
+            conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?", (amount, pay["supplier_id"]))
+        ids = [r[0] for r in conn.execute(
+            "SELECT DISTINCT invoice_id FROM payment_allocations WHERE payment_id=?", (payment_id,)
+        ).fetchall()]
+        cls.refresh_paid_amounts(conn, ids)
+        derived_state.mark_clean_conn(conn)
+
+    @classmethod
+    def remove_payment(cls, conn, payment_row, invoice_ids=None) -> None:
+        """Incrementally unpost one cash movement (voucher delete/update)."""
+        if payment_row is None:
+            return
+        payment_id = int(payment_row["id"])
+        conn.execute(
+            "DELETE FROM ledger_entries WHERE source_type='payment' AND source_id=?", (payment_id,)
+        )
+        amount = money.quantized(float(payment_row["amount"] or 0))
+        if str(payment_row["direction"]) == "in" and payment_row["customer_id"]:
+            conn.execute("UPDATE customers SET balance=balance+? WHERE id=?", (amount, payment_row["customer_id"]))
+        elif str(payment_row["direction"]) == "out" and payment_row["supplier_id"]:
+            conn.execute("UPDATE suppliers SET balance=balance+? WHERE id=?", (amount, payment_row["supplier_id"]))
+        if invoice_ids is None:
+            invoice_ids = [r[0] for r in conn.execute(
+                "SELECT DISTINCT invoice_id FROM payment_allocations WHERE payment_id=?", (payment_id,)
+            ).fetchall()]
+        cls.refresh_paid_amounts(conn, invoice_ids)
+        derived_state.mark_clean_conn(conn)
+
+    @classmethod
     def append_invoice(cls, conn, invoice_id: int) -> bool:
         """Fast incremental post for a *newly created* invoice.
 

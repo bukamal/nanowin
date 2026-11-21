@@ -152,16 +152,19 @@ class PaymentService:
                     currency.symbol_for(settings, snapshot_code),
                 ),
             )
+            payment_id = int(pcur.lastrowid)
             self._apply_allocations(
                 conn,
-                payment_id=int(pcur.lastrowid),
+                payment_id=payment_id,
                 voucher_type=voucher_type,
                 party_id=int(customer_id or supplier_id),
                 amount=amount_value,
                 allocation_mode=allocation_mode,
                 allocations=allocations,
             )
-            AccountingRebuilder.rebuild(conn, inventory=False)
+            # Incremental: post only this cash movement's ledger/balance and
+            # refresh paid amounts for the invoices it allocated to.
+            AccountingRebuilder.post_payment(conn, payment_id)
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('create','voucher',?,?)",
                 (voucher_id, f"{voucher_type}:{amount_value}"),
@@ -222,7 +225,13 @@ class PaymentService:
                     payment["id"],
                 ),
             )
+            old_payment = dict(payment)
+            old_invoice_ids = [r[0] for r in conn.execute(
+                "SELECT DISTINCT invoice_id FROM payment_allocations WHERE payment_id=?",
+                (payment["id"],),
+            ).fetchall()]
             conn.execute("DELETE FROM payment_allocations WHERE payment_id=?", (payment["id"],))
+            AccountingRebuilder.remove_payment(conn, old_payment, old_invoice_ids)
             self._apply_allocations(
                 conn,
                 payment_id=int(payment["id"]),
@@ -232,7 +241,7 @@ class PaymentService:
                 allocation_mode=allocation_mode,
                 allocations=allocations,
             )
-            AccountingRebuilder.rebuild(conn, inventory=False)
+            AccountingRebuilder.post_payment(conn, int(payment["id"]))
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('update','voucher',?,?)",
                 (voucher_id, f"{old['voucher_type']}:{old['amount']} -> {voucher_type}:{amount_value}"),
@@ -246,9 +255,18 @@ class PaymentService:
             if old is None:
                 raise ValueError("السند غير موجود")
             before = self._snapshot(conn, voucher_id)
+            payment_row = conn.execute(
+                "SELECT * FROM payments WHERE source_type='voucher' AND source_id=?", (voucher_id,)
+            ).fetchone()
+            invoice_ids = [r[0] for r in conn.execute(
+                "SELECT DISTINCT pa.invoice_id FROM payment_allocations pa "
+                "JOIN payments p ON p.id=pa.payment_id WHERE p.source_type='voucher' AND p.source_id=?",
+                (voucher_id,),
+            ).fetchall()] if payment_row is not None else []
+            payment_snapshot = dict(payment_row) if payment_row is not None else None
             conn.execute("DELETE FROM payments WHERE source_type='voucher' AND source_id=?", (voucher_id,))
             conn.execute("DELETE FROM vouchers WHERE id=?", (voucher_id,))
-            AccountingRebuilder.rebuild(conn, inventory=False)
+            AccountingRebuilder.remove_payment(conn, payment_snapshot, invoice_ids)
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','voucher',?,?)",
                 (voucher_id, f"{old['voucher_type']}:{old['amount']}"),

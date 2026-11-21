@@ -104,3 +104,52 @@ def test_backdated_invoice_falls_back_and_matches_full_rebuild():
         assert incremental == full
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_incremental_delete_and_vouchers_match_full_rebuild():
+    tmp = tempfile.mkdtemp(prefix="nano-incr-del-")
+    try:
+        ctx = AppContext.create(Path(tmp) / "nano.db")
+        ctx.auth.create_initial_admin("admin", "المدير", "StrongPass1")
+        items = [
+            ctx.items.create(name=f"م {i}", selling_price=3.0 + i, purchase_price=1.0 + i * 0.2, quantity=200)
+            for i in range(3)
+        ]
+        cust = int(ctx.customers.create("عميل", "0900"))
+        sup = int(ctx.suppliers.create("مورد", "0911"))
+
+        base = date.today() - timedelta(days=20)
+        invoice_ids: list[int] = []
+        for n in range(12):
+            day = (base + timedelta(days=n)).isoformat()
+            item_id = int(items[n % len(items)])
+            if n % 3 == 0:
+                iid = ctx.invoices.create_invoice(
+                    invoice_type="purchase", supplier_id=sup, invoice_date=day, paid_amount=0,
+                    lines=[InvoiceLineInput(description="", item_id=item_id, quantity=10, unit_price=1.0)],
+                )
+            else:
+                iid = ctx.invoices.create_invoice(
+                    invoice_type="sale", customer_id=cust, invoice_date=day, paid_amount=0,
+                    lines=[InvoiceLineInput(description="", item_id=item_id, quantity=2, unit_price=4.0)],
+                )
+            invoice_ids.append(int(iid))
+
+        v1 = ctx.payments.create_voucher(voucher_type="receipt", amount=6.0, customer_id=cust, allocation_mode="oldest")
+        v2 = ctx.payments.create_voucher(voucher_type="payment", amount=3.0, supplier_id=sup)
+        ctx.payments.update_voucher(
+            v1, voucher_type="receipt", amount=9.0, customer_id=cust, allocation_mode="oldest",
+        )
+        ctx.payments.delete_voucher(v2)
+
+        # Delete a mid-history sale invoice (per-item replay path).
+        sale_ids = [i for i in invoice_ids if ctx.invoices.get_invoice(i)["type"] == "sale"]
+        ctx.invoices.delete_invoice(sale_ids[1])
+
+        incremental = _snapshot(ctx)
+        with ctx.db.transaction() as conn:
+            AccountingRebuilder.rebuild(conn)
+        full = _snapshot(ctx)
+        assert incremental == full
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

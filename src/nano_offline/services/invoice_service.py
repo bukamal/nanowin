@@ -609,11 +609,32 @@ class InvoiceService:
             if old is None:
                 raise ValueError("الفاتورة غير موجودة")
             before = self._snapshot(conn, invoice_id)
-            # inventory_movements uses SET NULL, so remove invoice movements first;
-            # otherwise they would become fake manual adjustments after deletion.
-            conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (invoice_id,))
-            conn.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
-            AccountingRebuilder.rebuild(conn)
+            item_ids: list[int] = []
+            has_composite = False
+            for line in conn.execute(
+                "SELECT item_id FROM invoice_lines WHERE invoice_id=?", (invoice_id,)
+            ).fetchall():
+                item_id = line["item_id"]
+                if not item_id:
+                    continue
+                item = conn.execute(
+                    "SELECT item_type,is_composite FROM items WHERE id=?", (item_id,)
+                ).fetchone()
+                if item is None:
+                    continue
+                if int(item["is_composite"] or 0):
+                    has_composite = True
+                elif str(item["item_type"]) == "مخزون":
+                    item_ids.append(int(item_id))
+            incremental = False
+            if not has_composite:
+                incremental = AccountingRebuilder.remove_invoice(conn, invoice_id, old, item_ids)
+            if not incremental:
+                # inventory_movements uses SET NULL, so remove invoice movements
+                # first; otherwise they would become fake manual adjustments.
+                conn.execute("DELETE FROM inventory_movements WHERE invoice_id=?", (invoice_id,))
+                conn.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
+                AccountingRebuilder.rebuild(conn)
             conn.execute(
                 "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('delete','invoice',?,?)",
                 (invoice_id, f"{old['type']}:{old['total']}"),
