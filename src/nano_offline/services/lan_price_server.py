@@ -29,6 +29,8 @@ insecure contexts -- work on phones and Windows terminals.
 
 import base64
 import json
+import time
+from collections import OrderedDict
 import os
 import socket
 import ssl
@@ -505,11 +507,23 @@ body::before {
       .then(function (d) { if (d && d.found) { showPrice(d); } else { showMiss(); } })
       .catch(function () { showMiss(); });
   }
+  var searchSeq = 0, searchCache = {};
   function search(q) {
     q = (q || '').trim();
     if (!q) { return; }
+    var key = q.toLowerCase();
+    if (searchCache[key]) { renderResults(searchCache[key]); return; }
+    var seq = ++searchSeq;
     fetch('/api/search?q=' + encodeURIComponent(q), { cache: 'no-store' })
-      .then(function (r) { return r.json(); }).then(function (d) { renderResults(d.results || []); }).catch(function () { showMiss(); });
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (seq !== searchSeq) { return; }  // a newer query already won
+        var rows = d.results || [];
+        searchCache[key] = rows;
+        if (Object.keys(searchCache).length > 40) { searchCache = {}; }
+        renderResults(rows);
+      })
+      .catch(function () { if (seq === searchSeq) { showMiss(); } });
   }
   function dispatch(v) {
     v = (v || '').trim();
@@ -517,9 +531,23 @@ body::before {
     if (isDigits(v) && v.length >= 4) { lookup(v); } else { search(v); }
   }
 
+  var searchTimer = null;
+  input.addEventListener('input', function () {
+    // Live, debounced name search (barcodes still wait for Enter/scanner so a
+    // wedge scanner's first 4+ digits never fire a premature lookup).
+    var v = (input.value || '').trim();
+    if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+    if (!v || (isDigits(v) && v.length >= 4)) { return; }
+    searchTimer = setTimeout(function () {
+      if ((input.value || '').trim() === v) { search(v); }
+    }, 300);
+  });
   input.addEventListener('keydown', function (e) {
     scheduleReset();
-    if (e.key === 'Enter' || e.keyCode === 13) { var v = input.value; input.value = ''; dispatch(v); e.preventDefault(); }
+    if (e.key === 'Enter' || e.keyCode === 13) {
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+      var v = input.value; input.value = ''; dispatch(v); e.preventDefault();
+    }
   });
   document.addEventListener('click', function (e) {
     if (cam.classList.contains('show')) { return; }
@@ -796,6 +824,10 @@ class LanPriceServer:
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        # Small short-lived search cache: many kiosks look up the same popular
+        # terms, and this saves repeating the FTS query for each screen.
+        self._search_cache: "OrderedDict[str, tuple[float, list]]" = OrderedDict()
+        self._search_cache_ttl = 30.0
 
     @property
     def running(self) -> bool:
@@ -913,6 +945,13 @@ class LanPriceServer:
         text = (query or "").strip()[:64]
         if not text:
             return {"results": []}
+        cache_key = f"{text.casefold()}|{int(limit)}"
+        now = time.monotonic()
+        with self._lock:
+            hit = self._search_cache.get(cache_key)
+            if hit is not None and (now - hit[0]) < self._search_cache_ttl:
+                self._search_cache.move_to_end(cache_key)
+                return {"results": hit[1]}
         try:
             rows = self._items.list(search=text, limit=limit)
         except Exception:
@@ -928,6 +967,11 @@ class LanPriceServer:
             }
             row.update(self._price_fields(item.get("selling_price")))
             results.append(row)
+        with self._lock:
+            self._search_cache[cache_key] = (now, results)
+            self._search_cache.move_to_end(cache_key)
+            while len(self._search_cache) > 200:
+                self._search_cache.popitem(last=False)
         return {"results": results}
 
     def start(self) -> None:
