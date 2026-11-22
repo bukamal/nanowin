@@ -30,17 +30,12 @@ from nano_offline.core import backup_settings
 from nano_offline.core import branding
 from nano_offline.core.cancellation import OperationCancelled
 from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.components.task_progress import BACKUP_STEPS, ProgressSection
 
-_STEPS = [
-    ("snapshot", "لقطة القاعدة", ft.Icons.SAVE_OUTLINED),
-    ("pack", "التحقق والضغط", ft.Icons.FOLDER_ZIP),
-    ("prune", "تنظيف النسخ", ft.Icons.CLEANING_SERVICES),
-    ("exit", "الخروج", ft.Icons.LOGOUT),
-]
 _STAGE_STEP = {
     "safety_backup": "snapshot",
     "integrity": "pack",
-    "backup_hash": "pack",
+    "backup_hash": "verify",
     "backup_zip": "pack",
     "cleanup": "prune",
 }
@@ -201,31 +196,10 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
         )
 
         # progress ---------------------------------------------------------
-        controls["percent"] = ft.Text("0%", size=24, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY)
-        controls["bar"] = ft.ProgressBar(value=0.0, height=8, color=Colors.PRIMARY,
-                                         bgcolor=Colors.PRIMARY_BG, border_radius=8)
-        controls["stage_title"] = ft.Text("جارٍ التحضير...", size=13, weight=ft.FontWeight.W_700, color=Colors.TEXT_PRIMARY)
-        controls["detail"] = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
-        controls["metric"] = ft.Text("", size=10.5, color=Colors.TEXT_FAINT)
-        step_boxes = {}
-        step_row = ft.Row(spacing=8, wrap=True)
-        for key, label, icon in _STEPS:
-            icon_ctl = ft.Icon(icon, size=15, color=Colors.TEXT_FAINT)
-            text_ctl = ft.Text(label, size=10.5, color=Colors.TEXT_MUTED)
-            box = ft.Container(
-                ft.Row([icon_ctl, text_ctl], spacing=6, tight=True),
-                padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                border=ft.border.all(1, Colors.BORDER), border_radius=12,
-                bgcolor=Colors.WHITE,
-            )
-            step_boxes[key] = (box, icon_ctl, text_ctl)
-            step_row.controls.append(box)
-        controls["steps"] = step_boxes
-        controls["step_row"] = step_row
-        controls["progress_section"] = ft.Column([
-            ft.Row([controls["percent"], ft.Container(expand=True), controls["metric"]]),
-            controls["bar"], controls["stage_title"], controls["detail"], step_row,
-        ], spacing=10, visible=False)
+        progress = ProgressSection(orientation="horizontal", steps=BACKUP_STEPS)
+        controls["progress"] = progress
+        controls.update(progress.controls)
+        controls["progress_section"] = ft.Container(progress.control, visible=False)
 
         # success / error --------------------------------------------------
         controls["success_name"] = ft.Text("", size=12, weight=ft.FontWeight.W_600, color=Colors.SUCCESS_DARK)
@@ -327,44 +301,36 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
             pass
 
     def _render_progress() -> None:
-        if "percent" not in controls:
+        progress = controls.get("progress")
+        if progress is None:
             return
         ratio = max(0.0, min(1.0, float(state.get("ratio") or 0.0)))
-        controls["percent"].value = f"{int(round(ratio * 100))}%"
-        controls["bar"].value = ratio
-        step_key = str(state.get("stage") or "snapshot")
-        title = next((label for key, label, _i in _STEPS if key == step_key), "جارٍ العمل...")
-        controls["stage_title"].value = title
-        controls["detail"].value = str(state.get("detail") or "")
-        controls["metric"].value = str(state.get("metric") or "")
-        order = [k for k, _l, _i in _STEPS]
-        idx = order.index(step_key) if step_key in order else 0
-        for i, key in enumerate(order):
-            box, icon_ctl, text_ctl = controls["steps"][key]
-            if state.get("done") and not state.get("error"):
-                st = "done"
-            elif i < idx:
-                st = "done"
-            elif i == idx:
-                st = "error" if state.get("error") else "current"
-            else:
-                st = "pending"
-            if st == "done":
-                icon_ctl.name, icon_ctl.color = ft.Icons.CHECK_CIRCLE_ROUNDED, Colors.SUCCESS
-                text_ctl.color = Colors.SUCCESS_DARK
-            elif st == "current":
-                icon_ctl.name, icon_ctl.color = ft.Icons.SYNC_ROUNDED, Colors.PRIMARY
-                text_ctl.color = Colors.PRIMARY
-            elif st == "error":
-                icon_ctl.name, icon_ctl.color = ft.Icons.ERROR_OUTLINE, Colors.DANGER
-                text_ctl.color = Colors.DANGER_DARK
-            else:
-                icon_ctl.name, icon_ctl.color = ft.Icons.RADIO_BUTTON_UNCHECKED, Colors.TEXT_FAINT
-                text_ctl.color = Colors.TEXT_MUTED
-        try:
-            controls["root"].update()
-        except Exception:
-            pass
+        stage_key = str(state.get("stage") or "snapshot")
+        if stage_key not in {key for key, _l, _i in BACKUP_STEPS}:
+            stage_key = {"safety_backup": "snapshot", "integrity": "verify",
+                         "backup_hash": "verify", "backup_zip": "pack",
+                         "cleanup": "prune"}.get(stage_key, "snapshot")
+        if state.get("done") and not state.get("error"):
+            states = {key: "done" for key, _l, _i in BACKUP_STEPS}
+        elif state.get("error"):
+            keys = [k for k, _l, _i in BACKUP_STEPS]
+            idx = keys.index(stage_key) if stage_key in keys else 0
+            states = {
+                k: ("done" if i < idx else "error" if i == idx else "pending")
+                for i, (k, _l, _i) in enumerate(BACKUP_STEPS)
+            }
+        else:
+            states = None
+        title = next((label for key, label, _i in BACKUP_STEPS if key == stage_key), "جارٍ العمل...")
+        progress.render(
+            ratio=ratio,
+            indeterminate=bool(state.get("indeterminate")) and not state.get("done"),
+            stage_key=stage_key,
+            title=title,
+            detail=str(state.get("detail") or ""),
+            metric=str(state.get("metric") or ""),
+            states=states,
+        )
 
     async def _pump() -> None:
         while state["busy"] and state["open"]:

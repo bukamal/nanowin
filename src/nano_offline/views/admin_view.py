@@ -979,33 +979,134 @@ class AdminCenter:
             )
 
         async def _build_backup_file(target: Path) -> tuple[Path, object]:
-            from nano_offline.core.toast import toast_progress
+            from nano_offline.components.task_progress import BACKUP_STEPS, ProgressSection
 
-            handle = toast_progress(
-                self.page, "جارٍ إنشاء النسخة الاحتياطية", subtitle=target.name,
+            stage_map = {
+                "safety_backup": "snapshot",
+                "integrity": "verify",
+                "backup_hash": "verify",
+                "backup_zip": "pack",
+                "cleanup": "prune",
+            }
+            section = ProgressSection(orientation="vertical", steps=BACKUP_STEPS)
+            status = ft.Text("جارٍ تجهيز النسخة الاحتياطية...", size=11, color=Colors.TEXT_SECONDARY)
+            try:
+                available = int(getattr(self.page, "width", 0) or 0)
+            except Exception:
+                available = 0
+            width = 560 if available <= 0 else max(340, min(560, available - 48))
+            dialog = ft.AlertDialog(
+                modal=True,
+                content=ft.Container(
+                    ft.Column(
+                        [
+                            ft.Container(
+                                ft.Row([
+                                    ft.Container(ft.Icon(ft.Icons.CLOUD_DONE_OUTLINED,
+                                                         color=Colors.WHITE, size=22),
+                                                 width=44, height=44, alignment=ft.alignment.center,
+                                                 bgcolor=ft.Colors.with_opacity(0.22, ft.Colors.WHITE), border_radius=14),
+                                    ft.Column([
+                                        ft.Text("إنشاء نسخة احتياطية", size=17, weight=ft.FontWeight.BOLD, color=Colors.WHITE),
+                                        ft.Text(target.name, size=11, color=ft.Colors.with_opacity(0.9, ft.Colors.WHITE),
+                                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ], spacing=1, expand=True, tight=True),
+                                ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                                padding=ft.padding.symmetric(horizontal=16, vertical=14),
+                                gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
+                                                           begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
+                                border_radius=ft.border_radius.only(top_left=18, top_right=18),
+                            ),
+                            ft.Container(section.control, padding=ft.padding.only(left=16, right=16, top=14)),
+                            ft.Container(status, padding=ft.padding.only(left=16, right=16, top=2, bottom=12)),
+                        ],
+                        spacing=0,
+                    ),
+                    width=width, bgcolor=Colors.WHITE, border_radius=18, shadow=Shadow.LG, rtl=True,
+                ),
+                content_padding=0,
             )
+            state = {"ratio": 0.0, "stage": "snapshot", "detail": "لقطة القاعدة", "metric": "", "done": False, "error": None,
+                     "_last_done": 0.0, "_last_t": 0.0}
 
-            def _progress(_stage, done, total, _unit, detail=""):
+            def _cb(stage, done, total, unit, detail=""):
                 try:
+                    state["stage"] = stage_map.get(str(stage), state["stage"])
                     if total and float(total) > 0:
-                        handle.update(min(1.0, float(done) / float(total)),
-                                      subtitle=detail or "إنشاء النسخة")
-                    else:
-                        handle.update(None, subtitle=detail or "إنشاء النسخة")
+                        state["ratio"] = max(0.0, min(1.0, float(done) / float(total)))
+                    import time as _t
+                    now = _t.monotonic()
+                    prev_done = float(state.get("_last_done") or 0); prev_t = float(state.get("_last_t") or now)
+                    dt = max(now - prev_t, 1e-6)
+                    if float(done) >= prev_done and unit == "bytes":
+                        speed = (float(done) - prev_done) / dt
+                        if speed > 0:
+                            state["metric"] = f"{speed/1048576:.1f} MB/ث"
+                    state["_last_done"] = float(done); state["_last_t"] = now
+                    state["detail"] = detail or ""
                 except Exception:
                     pass
 
+            async def _pump() -> None:
+                import asyncio as _a
+                while not state["done"] and state["error"] is None and getattr(dialog, "open", True):
+                    section.render(
+                        ratio=float(state["ratio"]),
+                        indeterminate=state["ratio"] <= 0 and state["error"] is None,
+                        stage_key=str(state["stage"]),
+                        title=next((l for k, l, _i in BACKUP_STEPS if k == state["stage"]), "جارٍ العمل..."),
+                        detail=str(state["detail"]), metric=str(state["metric"]),
+                    )
+                    try:
+                        self.page.update()
+                    except Exception:
+                        pass
+                    await _a.sleep(0.12)
+
+            self.page.open(dialog)
+            self.page.run_task(_pump)
             try:
                 result = await asyncio.to_thread(
-                    self.ctx.backup.create_backup, target, progress=_progress
+                    self.ctx.backup.create_backup, target, progress=_cb
                 )
-                handle.update(1.0, subtitle="التحقق من سلامة النسخة")
+                state["stage"] = "verify"
+                state["detail"] = "التحقق من سلامة النسخة..."
                 validation = await asyncio.to_thread(self.ctx.backup.validate_backup, result)
-                handle.done("تم إنشاء النسخة الاحتياطية", kind="success")
+                state.update({"done": True, "ratio": 1.0})
+                section.render(
+                    ratio=1.0, stage_key="prune",
+                    title="تم إنشاء النسخة الاحتياطية",
+                    detail="اكتملت العملية بنجاح", metric="",
+                    states={key: "done" for key, _l, _i in BACKUP_STEPS},
+                )
+                status.value = "تم ✓"
+                status.color = Colors.SUCCESS_DARK
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+                await asyncio.sleep(1.1)
                 return result, validation
             except Exception as exc:
-                handle.done(f"تعذّر إنشاء النسخة: {exc}", kind="error", duration=3200)
+                state.update({"error": str(exc), "done": True})
+                section.render(
+                    ratio=float(state["ratio"]), indeterminate=False,
+                    stage_key="snapshot", title="تعذّر إنشاء النسخة", detail=str(exc), metric="",
+                    states={"snapshot": "error", "verify": "pending", "pack": "pending", "prune": "pending"},
+                )
+                status.value = str(exc)
+                status.color = Colors.DANGER_DARK
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+                await asyncio.sleep(2.0)
                 raise
+            finally:
+                try:
+                    self.page.close(dialog)
+                except Exception:
+                    pass
 
         async def _finalize_backup() -> None:
             keep = backup_settings.retention_count(self.ctx.settings)

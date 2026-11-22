@@ -19,7 +19,8 @@ from pathlib import Path
 import flet as ft
 
 from nano_offline.core.cancellation import OperationCancelled
-from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.theme import Colors, Shadow
+from nano_offline.components.task_progress import ProgressSection
 
 _STEPS = [
     ("source", "الملف", "اختيار ونسخ النسخة"),
@@ -31,6 +32,15 @@ _STEPS = [
     ("finish", "الجاهزية", "تجهيز القاعدة والترخيص"),
 ]
 _STEP_KEYS = [key for key, _title, _sub in _STEPS]
+_STEP_ICONS = {
+    "source": ft.Icons.UPLOAD_FILE_OUTLINED,
+    "verify": ft.Icons.VERIFIED_OUTLINED,
+    "safety": ft.Icons.SHIELD_OUTLINED,
+    "prepare": ft.Icons.BUILD_OUTLINED,
+    "swap": ft.Icons.SWAP_HORIZ_ROUNDED,
+    "rebuild": ft.Icons.AUTORENEW_ROUNDED,
+    "finish": ft.Icons.LOGIN_ROUNDED,
+}
 _STEP_RANGES = {
     "source": (0.00, 0.08),
     "verify": (0.08, 0.26),
@@ -161,45 +171,12 @@ class RestoreFlow:
             _human_bytes(source.stat().st_size) if source.exists() else "",
             size=11, color=Colors.TEXT_SECONDARY,
         )
-        self._controls["percent"] = ft.Text("0%", size=36, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY)
-        self._controls["ring"] = ft.ProgressRing(
-            width=76, height=76, stroke_width=6, value=None,
-            color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG,
+        self._progress = ProgressSection(
+            orientation="vertical",
+            steps=[(key, label, _STEP_ICONS.get(key, ft.Icons.CIRCLE_OUTLINED), sub) for key, label, sub in _STEPS],
         )
-        self._controls["bar"] = ft.ProgressBar(
-            value=None, height=9, color=Colors.PRIMARY,
-            bgcolor=Colors.PRIMARY_BG, border_radius=8,
-        )
-        self._controls["stage"] = ft.Text("جارٍ التحضير...", size=13, weight=ft.FontWeight.W_700, color=Colors.TEXT_PRIMARY)
-        self._controls["detail"] = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
-        self._controls["metric"] = ft.Text("", size=10.5, color=Colors.TEXT_FAINT)
-        self._controls["live"] = ft.ProgressRing(width=14, height=14, stroke_width=2, color=Colors.PRIMARY, visible=True)
-
-        step_rows = []
-        self._controls["steps"] = {}
-        for key, label, sub in _STEPS:
-            icon = ft.Icon(ft.Icons.RADIO_BUTTON_UNCHECKED, size=16, color=Colors.TEXT_FAINT)
-            metric = ft.Text("", size=10.5, color=Colors.TEXT_FAINT)
-            title_text = ft.Text(label, size=11.5, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED)
-            sub_text = ft.Text(sub, size=9.5, color=Colors.TEXT_FAINT)
-            step_rows.append(
-                ft.Container(
-                    ft.Row(
-                        [
-                            icon,
-                            ft.Column([title_text, sub_text], spacing=0, expand=True, tight=True),
-                            metric,
-                        ],
-                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    padding=ft.padding.symmetric(horizontal=8, vertical=5),
-                    border_radius=Radius.SM,
-                )
-            )
-            self._controls["steps"][key] = {
-                "container": step_rows[-1], "icon": icon, "title": title_text,
-                "sub": sub_text, "metric": metric,
-            }
+        self._controls.update(self._progress.controls)
+        progress_section = self._progress.control
 
         self._controls["cancel"] = ft.OutlinedButton(
             "إلغاء",
@@ -210,42 +187,6 @@ class RestoreFlow:
         self._controls["hint"] = ft.Text(
             "يمكنك الإلغاء بأمان حتى لحظة تبديل قاعدة البيانات. بياناتك الحالية محفوظة دائمًا في نسخة أمان.",
             size=9.5, color=Colors.TEXT_FAINT,
-        )
-
-        progress_section = ft.Column(
-            [
-                ft.Row(
-                    [
-                        self._controls["ring"],
-                        ft.Column(
-                            [
-                                self._controls["percent"],
-                                ft.Text("نسبة الإنجاز", size=10, color=Colors.TEXT_SECONDARY),
-                            ],
-                            spacing=0, tight=True,
-                        ),
-                        ft.Container(expand=True),
-                        ft.Column(
-                            [
-                                ft.Row([self._controls["live"], ft.Text("جارٍ التنفيذ", size=10, color=Colors.PRIMARY)]),
-                                self._controls["file_meta"],
-                            ],
-                            spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END,
-                        ),
-                    ],
-                    spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                self._controls["bar"],
-                ft.Column(
-                    [self._controls["stage"], self._controls["detail"], self._controls["metric"]],
-                    spacing=2, tight=True,
-                ),
-                ft.Container(
-                    ft.Column(step_rows, spacing=2),
-                    padding=ft.padding.only(top=4),
-                ),
-            ],
-            spacing=12,
         )
 
         self._controls["success_icon"] = ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, size=54, color=Colors.SUCCESS)
@@ -405,46 +346,33 @@ class RestoreFlow:
         c = self._controls
         ratio = float(st.get("ratio") or 0.0)
         indeterminate = bool(st.get("indeterminate")) and not st.get("finished")
-        try:
-            c["percent"].value = f"{int(round(ratio * 100))}%"
-            c["ring"].value = None if indeterminate else ratio
-            c["bar"].value = None if indeterminate else ratio
-        except Exception:
-            pass
         stage = str(st.get("stage") or "")
-        c["stage"].value = _STAGE_TITLES.get(stage, stage or "جارٍ التحضير...")
-        c["detail"].value = str(st.get("detail") or "")
-        c["metric"].value = self._metric_text(st)
-        # step list
         current_step = str(st.get("step") or "verify")
         current_index = _STEP_KEYS.index(current_step) if current_step in _STEP_KEYS else 0
+        states = {}
         for index, key in enumerate(_STEP_KEYS):
-            row = c["steps"][key]
             if st.get("finished") and st.get("ok"):
-                state = "done"
+                states[key] = "done"
             elif index < current_index:
-                state = "done"
+                states[key] = "done"
             elif index == current_index:
-                state = "error" if st.get("error") else ("done" if st.get("finished") and st.get("ok") else "current")
+                states[key] = "error" if st.get("error") else (
+                    "done" if st.get("finished") and st.get("ok") else "current"
+                )
             else:
-                state = "pending"
-            if state == "done":
-                row["icon"].name = ft.Icons.CHECK_CIRCLE_ROUNDED
-                row["icon"].color = Colors.SUCCESS
-                row["title"].color = Colors.SUCCESS_DARK
-            elif state == "current":
-                row["icon"].name = ft.Icons.SYNC_ROUNDED
-                row["icon"].color = Colors.PRIMARY
-                row["title"].color = Colors.PRIMARY
-            elif state == "error":
-                row["icon"].name = ft.Icons.ERROR_OUTLINE
-                row["icon"].color = Colors.DANGER
-                row["title"].color = Colors.DANGER_DARK
-            else:
-                row["icon"].name = ft.Icons.RADIO_BUTTON_UNCHECKED
-                row["icon"].color = Colors.TEXT_FAINT
-                row["title"].color = Colors.TEXT_MUTED
-            row["metric"].value = self._step_metric(st, key)
+                states[key] = "pending"
+            row = c["steps"].get(key)
+            if row is not None and row.get("metric") is not None:
+                row["metric"].value = self._step_metric(st, key)
+        self._progress.render(
+            ratio=ratio,
+            indeterminate=indeterminate,
+            stage_key=current_step,
+            title=_STAGE_TITLES.get(stage, stage or "جارٍ التحضير..."),
+            detail=str(st.get("detail") or ""),
+            metric=self._metric_text(st),
+            states=states,
+        )
         try:
             c["cancel"].disabled = bool(st.get("critical") or st.get("finished"))
             c["cancel"].visible = not st.get("finished")
