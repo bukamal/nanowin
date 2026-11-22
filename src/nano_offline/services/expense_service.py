@@ -49,7 +49,11 @@ class ExpenseService:
                 raise
             return int(cur.lastrowid)
 
-    def list_expenses(self, limit: int = 300) -> list[dict]:
+    def count_expenses(self) -> int:
+        with self.db.connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0])
+
+    def list_expenses(self, limit: int = 300, offset: int = 0) -> list[dict]:
         with self.db.connect() as conn:
             # Columns are named explicitly on purpose: receipt_image is a
             # photo BLOB (PHASE10 wave2, B4) and must never be dragged into
@@ -61,8 +65,8 @@ class ExpenseService:
                           (e.receipt_image IS NOT NULL) AS has_receipt, e.receipt_name
                    FROM expenses e
                    LEFT JOIN expense_categories ec ON ec.id=e.category_id
-                   ORDER BY e.expense_date DESC,e.id DESC LIMIT ?""",
-                (max(1, int(limit)),),
+                   ORDER BY e.expense_date DESC,e.id DESC LIMIT ? OFFSET ?""",
+                (max(1, int(limit)), max(0, int(offset))),
             ).fetchall()
             return [dict(r) for r in rows]
 

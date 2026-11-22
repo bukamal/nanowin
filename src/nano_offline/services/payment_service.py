@@ -33,7 +33,11 @@ class PaymentService:
             settings = {str(r["key"]): str(r["value"]) for r in conn.execute("SELECT key,value FROM settings").fetchall()}
         return currency.format_amount(value, settings)
 
-    def list_vouchers(self, limit: int = 300) -> list[dict]:
+    def count_vouchers(self) -> int:
+        with self.db.connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM vouchers").fetchone()[0])
+
+    def list_vouchers(self, limit: int = 300, offset: int = 0) -> list[dict]:
         with self.db.connect() as conn:
             rows = conn.execute(
                 """
@@ -45,9 +49,9 @@ class PaymentService:
                 LEFT JOIN suppliers s ON s.id=v.supplier_id
                 LEFT JOIN payments p ON p.source_type='voucher' AND p.source_id=v.id
                 ORDER BY v.voucher_date DESC, v.id DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (max(1, int(limit)),),
+                (max(1, int(limit)), max(0, int(offset))),
             ).fetchall()
             result = [dict(r) for r in rows]
         for row in result:

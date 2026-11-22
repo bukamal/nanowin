@@ -262,7 +262,14 @@ class ReportingService(Offloadable):
         return rows[: max(1, int(limit))]
 
     @blocking
-    def inventory_report(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    def inventory_report(
+        self,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
         """Inventory movement and valuation by item for a period.
 
         Opening inventory is a timeless baseline. Historical value is
@@ -272,28 +279,41 @@ class ReportingService(Offloadable):
         """
         date_from, date_to = self._normalize_dates(date_from, date_to)
         with self.db.connect() as conn:
-            items = conn.execute(
+            page_sql = (
                 """SELECT i.id,i.name,i.opening_quantity,i.opening_unit_cost,i.quantity,i.average_cost,
                           COALESCE(u.name,'') AS unit_name
                    FROM items i LEFT JOIN units u ON u.id=i.base_unit_id
                    WHERE i.item_type='مخزون' ORDER BY i.name"""
-            ).fetchall()
+            )
+            page_params: list[object] = []
+            if limit is not None and int(limit) > 0:
+                page_sql += " LIMIT ? OFFSET ?"
+                page_params.extend([int(limit), max(0, int(offset))])
+            items = conn.execute(page_sql, page_params).fetchall()
+            page_ids = [int(r["id"]) for r in items]
+            item_filter = ""
+            item_filter_params: list[object] = []
+            if limit is not None and int(limit) > 0 and page_ids:
+                placeholders = ",".join("?" for _ in page_ids)
+                item_filter = f" AND item_id IN ({placeholders})"
+                item_filter_params = list(page_ids)
 
             before_map: dict[int, tuple[float, float]] = {}
             if date_from:
                 for r in conn.execute(
-                    """SELECT item_id, COALESCE(SUM(quantity_delta),0) AS q,
-                              COALESCE(SUM(value_delta),0) AS v
-                       FROM inventory_movements
-                       WHERE invoice_id IS NOT NULL AND movement_date<?
-                       GROUP BY item_id""",
-                    (date_from,),
+                    "SELECT item_id, COALESCE(SUM(quantity_delta),0) AS q, "
+                    "COALESCE(SUM(value_delta),0) AS v FROM inventory_movements "
+                    "WHERE invoice_id IS NOT NULL AND movement_date<?" + item_filter +
+                    " GROUP BY item_id",
+                    [date_from, *item_filter_params],
                 ).fetchall():
                     before_map[int(r["item_id"])] = (float(r["q"] or 0), float(r["v"] or 0))
 
             period_map: dict[int, dict] = {}
             where = ["invoice_id IS NOT NULL"]
-            params: list[object] = []
+            params: list[object] = list(item_filter_params)
+            if item_filter:
+                where.append(item_filter.strip()[len("AND "):])
             if date_from:
                 where.append("movement_date>=?")
                 params.append(date_from)
@@ -345,14 +365,53 @@ class ReportingService(Offloadable):
 
     @blocking
     def inventory_valuation(self, *, as_of: str | None = None) -> dict:
+        """Aggregate inventory quantity/value at ``as_of`` in one SQL pass.
+
+        The report grid only needs a page of per-item rows; valuation totals
+        must still cover every item, so they are computed here without
+        building a Python row per material.
+        """
         _, as_of = self._normalize_dates(None, as_of)
-        rows = self.inventory_report(date_to=as_of)
+        where = ["invoice_id IS NOT NULL"]
+        params: list[object] = []
+        if as_of:
+            where.append("movement_date<=?")
+            params.append(as_of)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT i.opening_quantity, i.opening_unit_cost,
+                           COALESCE(m.net_qty,0) AS net_qty,
+                           COALESCE(m.net_value,0) AS net_value
+                    FROM items i
+                    LEFT JOIN (
+                        SELECT item_id, SUM(quantity_delta) AS net_qty,
+                               SUM(value_delta) AS net_value
+                        FROM inventory_movements WHERE {' AND '.join(where)}
+                        GROUP BY item_id
+                    ) m ON m.item_id = i.id
+                    WHERE i.item_type='مخزون'""",
+                params,
+            ).fetchall()
+        total_quantity = 0.0
+        total_value = 0.0
+        count = 0
+        for r in rows:
+            opening_qty = float(r["opening_quantity"] or 0)
+            opening_value = opening_qty * float(r["opening_unit_cost"] or 0)
+            closing_qty = opening_qty + float(r["net_qty"] or 0)
+            closing_value = opening_value + float(r["net_value"] or 0)
+            if abs(closing_qty) <= EPSILON:
+                closing_qty = 0.0
+                closing_value = 0.0
+            total_quantity += closing_qty
+            total_value += closing_value
+            count += 1
         return {
             "as_of": as_of,
-            "rows": rows,
-            "total_quantity": sum(float(r["closing_quantity"]) for r in rows),
-            "total_value": sum(float(r["closing_value"]) for r in rows),
-            "item_count": len(rows),
+            "rows": [],
+            "total_quantity": total_quantity,
+            "total_value": total_value,
+            "item_count": count,
         }
 
     @blocking

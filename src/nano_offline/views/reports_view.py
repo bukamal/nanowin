@@ -572,7 +572,7 @@ class ReportsCenter:
             return invoices, items, top
         if report == "inventory":
             return await asyncio.gather(
-                reports.inventory_report(date_from=date_from, date_to=date_to),
+                reports.inventory_report(date_from=date_from, date_to=date_to, limit=self._rows_limit),
                 reports.inventory_valuation(as_of=date_to),
             )
         if report == "balances":
@@ -658,7 +658,7 @@ class ReportsCenter:
             )
         if report == "inventory":
             rows, valuation = await asyncio.gather(
-                reports.inventory_report(date_from=date_from, date_to=date_to),
+                reports.inventory_report(date_from=date_from, date_to=date_to, limit=5000),
                 reports.inventory_valuation(as_of=date_to),
             )
             return documents.inventory_report_html(rows=rows, valuation=valuation, date_from=date_from, date_to=date_to)
@@ -983,7 +983,7 @@ class ReportsCenter:
             rows_shown,
             height=440,
         )
-        rows_more = self._load_more(len(rows_shown), len(rows))
+        rows_more = self._load_more(len(rows_shown), int(valuation.get("item_count") or len(rows)))
         return [
             metric_row([
                 self._metric("قيمة المخزون", self.money(valuation["total_value"]), icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PRIMARY, note=f"كما في {date_to or 'آخر حركة'}"),

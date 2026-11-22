@@ -864,8 +864,18 @@ class FinanceCenter:
         desktop_list = ft.Column([bulk_bar, ft.Container(grid), grid_more], spacing=8)
         list_switch = ft.Container(content=desktop_list)
 
-        def refresh(_=None):
-            vouchers = self.ctx.payments.list_vouchers()
+        vouchers_state = {"page": 300, "offset": 0, "done": False, "rows": []}
+
+        def _load_vouchers_first() -> None:
+            fetched = self.ctx.payments.list_vouchers(limit=vouchers_state["page"], offset=0)
+            vouchers_state["rows"] = fetched
+            vouchers_state["offset"] = len(fetched)
+            vouchers_state["done"] = len(fetched) < vouchers_state["page"]
+
+        def refresh(_=None, *, reload_first: bool = True):
+            if reload_first:
+                _load_vouchers_first()
+            vouchers = vouchers_state["rows"]
             q = (search.value or "").strip().casefold()
             start = (date_from.value or "").strip()
             end = (date_to.value or "").strip()
@@ -925,14 +935,30 @@ class FinanceCenter:
                 return
             shown = filtered[: render_limit["n"]]
             grid.set_rows(shown)
-            remaining = len(filtered) - len(shown)
-            if remaining > 0:
-                grid_more.content = ft.Row(
-                    [ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh())),
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
+
+            def load_more_vouchers(_=None) -> None:
+                if len(filtered) > render_limit["n"]:
+                    render_limit["n"] += 100
+                elif not vouchers_state["done"]:
+                    fetched = self.ctx.payments.list_vouchers(
+                        limit=vouchers_state["page"], offset=vouchers_state["offset"]
+                    )
+                    vouchers_state["offset"] += len(fetched)
+                    vouchers_state["done"] = len(fetched) < vouchers_state["page"]
+                    vouchers_state["rows"].extend(fetched)
+                    render_limit["n"] += 100
+                refresh(reload_first=False)
+
+            filters_active = bool((search.value or "").strip()) or filter_state["type"] != "all" or bool((date_from.value or "").strip()) or bool((date_to.value or "").strip())
+            try:
+                caption_total = len(filtered) if filters_active else self.ctx.payments.count_vouchers()
+            except Exception:
+                caption_total = len(filtered)
+            if len(filtered) > len(shown) or not vouchers_state["done"]:
+                from nano_offline.components import load_more_control
+                grid_more.content = load_more_control(
+                    shown=len(shown), total=max(caption_total, len(shown)),
+                    on_click=load_more_vouchers,
                 )
                 grid_more.visible = True
             else:
@@ -1616,8 +1642,18 @@ class FinanceCenter:
             render_limit["n"] = 60
             refresh()
 
-        def refresh(_=None):
-            expenses = self.ctx.expenses.list_expenses()
+        expenses_state = {"page": 300, "offset": 0, "done": False, "rows": []}
+
+        def _load_expenses_first() -> None:
+            fetched = self.ctx.expenses.list_expenses(limit=expenses_state["page"], offset=0)
+            expenses_state["rows"] = fetched
+            expenses_state["offset"] = len(fetched)
+            expenses_state["done"] = len(fetched) < expenses_state["page"]
+
+        def refresh(_=None, *, reload_first: bool = True):
+            if reload_first:
+                _load_expenses_first()
+            expenses = expenses_state["rows"]
             q = (search.value or "").strip().casefold()
             start = (date_from.value or "").strip()
             end = (date_to.value or "").strip()
@@ -1669,14 +1705,30 @@ class FinanceCenter:
                 return
             shown = filtered[: render_limit["n"]]
             grid.set_rows(shown)
-            remaining = len(filtered) - len(shown)
-            if remaining > 0:
-                grid_more.content = ft.Row(
-                    [ft.OutlinedButton(
-                        f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                        on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 60), refresh())),
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
+
+            def load_more_expenses(_=None) -> None:
+                if len(filtered) > render_limit["n"]:
+                    render_limit["n"] += 100
+                elif not expenses_state["done"]:
+                    fetched = self.ctx.expenses.list_expenses(
+                        limit=expenses_state["page"], offset=expenses_state["offset"]
+                    )
+                    expenses_state["offset"] += len(fetched)
+                    expenses_state["done"] = len(fetched) < expenses_state["page"]
+                    expenses_state["rows"].extend(fetched)
+                    render_limit["n"] += 100
+                refresh(reload_first=False)
+
+            filters_active = bool((search.value or "").strip()) or bool((date_from.value or "").strip()) or bool((date_to.value or "").strip())
+            try:
+                caption_total = len(filtered) if filters_active else self.ctx.expenses.count_expenses()
+            except Exception:
+                caption_total = len(filtered)
+            if len(filtered) > len(shown) or not expenses_state["done"]:
+                from nano_offline.components import load_more_control
+                grid_more.content = load_more_control(
+                    shown=len(shown), total=max(caption_total, len(shown)),
+                    on_click=load_more_expenses,
                 )
                 grid_more.visible = True
             else:

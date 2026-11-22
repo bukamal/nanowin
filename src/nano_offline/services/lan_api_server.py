@@ -66,10 +66,10 @@ READ_METHODS = frozenset({
     "smart_assistant.decisions", "smart_assistant.decision_of_the_day",
     "owner_pulse.generate",
     # expenses (reads)
-    "expenses.list_expenses", "expenses.list_categories", "expenses.get_expense",
+    "expenses.list_expenses", "expenses.list_categories", "expenses.get_expense", "expenses.count_expenses",
     "expenses.get_expense_receipt",
     # payments / vouchers (reads)
-    "payments.list_vouchers", "payments.get_voucher", "payments.payment_source",
+    "payments.list_vouchers", "payments.get_voucher", "payments.payment_source", "payments.count_vouchers",
     "payments.allocatable_invoices", "payments.open_invoices",
     # stocktake (reads)
     "stocktake.find_resumable_session", "stocktake.lines", "stocktake.diff_summary",
