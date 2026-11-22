@@ -1,17 +1,27 @@
 """A modern floating toast notification -- replacement for ``ft.SnackBar``.
 
 Flet's built-in ``SnackBar`` sits flush against the bottom edge and is hard
-to style consistently. :func:`toast` instead floats its own pill in
-``page.overlay``, hugging the bottom edge with a small margin (the app is
-desktop-only, so there is no bottom nav bar to clear). A single reusable
-overlay slot lives on the page object itself, so calling this twice in quick
-succession slides the old toast out instead of stacking duplicates.
+to style consistently. :func:`toast` instead floats its own card in
+``page.overlay`` (or inside the top-most open sheet/dialog -- see
+``register_modal``). One reusable slot lives on the page object itself, so a
+new toast replaces the previous one instead of stacking duplicates.
+
+Visual language
+---------------
+* a colored accent bar + a gradient icon chip (kind aware),
+* an optional bold title with a secondary detail line,
+* a slim auto-dismiss progress bar (pauses while the pointer is over it),
+* a spring-like slide/scale entrance and a quick slide-out,
+* placement chosen by context: bottom-centre normally, top-centre inside an
+  open sheet or on full-screen surfaces (POS) so it never covers the
+  footer actions or the checkout bar.
 
 Usage (drop-in replacement for every existing ``notify``/``_notify`` helper):
 
     from nano_offline.core.toast import toast
     toast(self.page, "تم الحفظ")                      # kind auto-detected
     toast(self.page, "تعذّر الاتصال", kind="error")     # explicit override
+    toast(self.page, "تم الحفظ", title="فاتورة #123", subtitle="5,473 ل.س")
 """
 
 from __future__ import annotations
@@ -22,21 +32,22 @@ from typing import Literal
 import flet as ft
 
 from nano_offline.core import sound
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import Colors, Radius, Shadow
 
 ToastKind = Literal["success", "error", "warning", "info"]
 
-# (icon, accent color, tint background for the icon chip)
-_STYLE: dict[ToastKind, tuple[str, str, str]] = {
-    "success": (ft.Icons.CHECK_CIRCLE_ROUNDED, Colors.SUCCESS, Colors.SUCCESS_BG),
-    "error": (ft.Icons.ERROR_ROUNDED, Colors.DANGER, Colors.DANGER_BG),
-    "warning": (ft.Icons.WARNING_ROUNDED, Colors.WARNING, Colors.WARNING_BG),
-    "info": (ft.Icons.INFO_ROUNDED, Colors.PRIMARY, Colors.PRIMARY_BG),
+# (icon, accent token, icon-chip tint, gradient-end token)
+_STYLE: dict[ToastKind, tuple[str, str, str, str]] = {
+    "success": (ft.Icons.CHECK_ROUNDED, "SUCCESS", "SUCCESS_BG", "SUCCESS_DARKER"),
+    "error": (ft.Icons.PRIORITY_HIGH_ROUNDED, "DANGER", "DANGER_BG", "DANGER_DARKER"),
+    "warning": (ft.Icons.WARNING_ROUNDED, "WARNING", "WARNING_BG", "WARNING_DARKER"),
+    "info": (ft.Icons.INFO_ROUNDED, "PRIMARY", "PRIMARY_BG", "PRIMARY_DARK"),
 }
 
-_HIDDEN_BOTTOM = -120.0
 _EDGE_MARGIN = 18
-_ANIM = ft.Animation(260, ft.AnimationCurve.EASE_OUT)
+_OFFSCREEN = 160.0
+_ANIM = ft.Animation(240, ft.AnimationCurve.EASE_OUT)
+_TICK = 0.06  # seconds between progress-bar updates
 
 # Calibrated against the app's actual message strings (see every existing
 # notify()/_notify() call site) rather than a generic guess -- success
@@ -44,12 +55,12 @@ _ANIM = ft.Animation(260, ft.AnimationCurve.EASE_OUT)
 # failures name themselves ("خطأ", "تعذر", "فشل", "غير موجود"...), and
 # blocking validation prompts read as "يجب"/"اختر"/"لا تملك"/etc.
 _SUCCESS_MARKERS = ("تم ", "تمت ", "✔", "بنجاح")
-_ERROR_MARKERS = ("خطأ", "تعذر", "فشل", "غير مهيأ", "غير موجود", "غير مطابق", "لا توجد", "لا يمكن")
+_ERROR_MARKERS = ("خطأ", "تعذر", "فشل", "غير مهيأ", "غير موجود", "غير مطابق", "لا توجد", "لا يمكن", "رفض")
 _WARNING_MARKERS = ("يجب", "اختر", "لا تملك", "أولاً", "أولًا", "الرجاء", "فارغ")
 
 
 def _infer_kind(text: str) -> ToastKind:
-    t = text.strip()
+    t = (text or "").strip()
     if t.startswith(_SUCCESS_MARKERS) or any(m in t for m in _SUCCESS_MARKERS):
         return "success"
     if any(m in t for m in _ERROR_MARKERS):
@@ -57,12 +68,6 @@ def _infer_kind(text: str) -> ToastKind:
     if any(m in t for m in _WARNING_MARKERS):
         return "warning"
     return "info"
-
-
-def _visible_bottom(page: ft.Page) -> float:
-    """Hug the bottom edge of the window (desktop-only app -- no bottom bar
-    to clear)."""
-    return _EDGE_MARGIN
 
 
 def _host_controls(host):
@@ -89,7 +94,7 @@ def register_modal(page: ft.Page, control) -> None:
     Flet 0.28 pushes bottom sheets and dialogs as Navigator routes above the
     page's overlay, so a toast appended to ``page.overlay`` is hidden behind
     them. Wrap the modal's content in a ``Stack`` and remember it, so
-    :func:`toast` can mount the pill inside the top-most open modal instead.
+    :func:`toast` can mount the card inside the top-most open modal instead.
     """
     if not isinstance(control, _MODAL_TYPES):
         return
@@ -100,7 +105,6 @@ def register_modal(page: ft.Page, control) -> None:
         try:
             stack = ft.Stack([content], fit=ft.StackFit.LOOSE)
             stack.rtl = True
-            # Preserve an expanding content's fill behaviour.
             expand = getattr(content, "expand", None)
             if expand:
                 stack.expand = expand
@@ -122,79 +126,182 @@ def unregister_modal(page: ft.Page, control) -> None:
         stack_list.remove(control)
 
 
-def _active_toast_host(page: ft.Page):
-    """The stack of the top-most *open* sheet/dialog, else the page overlay."""
+def _active_modal(page: ft.Page):
     stack_list = getattr(page, "_nano_modal_stack", None)
     if stack_list:
-        # Walk newest -> oldest without mutating: a modal is registered just
-        # before it is opened, so entries may legitimately still be closed.
         for control in reversed(stack_list):
             if getattr(control, "open", False):
-                host = getattr(control, "_nano_toast_stack", None)
-                if host is not None:
-                    return host
+                return control
+    return None
+
+
+def _active_toast_host(page: ft.Page):
+    """The stack of the top-most *open* sheet/dialog, else the page overlay."""
+    modal = _active_modal(page)
+    if modal is not None:
+        host = getattr(modal, "_nano_toast_stack", None)
+        if host is not None:
+            return host
     return page.overlay
 
 
-def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int = 2600, sound_kind: str | None = None) -> None:
-    """Show a floating toast pill at the bottom of the window.
+def _prefer_top(page: ft.Page) -> bool:
+    """Top placement inside modals (above the footer) and on full-screen
+    surfaces like POS (so the card never covers the checkout bar)."""
+    if _active_modal(page) is not None:
+        return True
+    return str(getattr(page, "_nano_toast_position", "") or "").lower() == "top"
+
+
+def _dismiss(page: ft.Page, wrapper: ft.Container, host) -> None:
+    if getattr(wrapper, "_nano_dismissed", False):
+        return
+    wrapper._nano_dismissed = True
+    try:
+        wrapper.opacity = 0
+        wrapper.offset = ft.Offset(0, 0.15 if _prefer_top(page) else -0.15)
+        wrapper.update()
+    except Exception:
+        pass
+
+    async def _remove() -> None:
+        await asyncio.sleep(_ANIM.duration / 1000)
+        controls = _host_controls(host)
+        if wrapper in controls:
+            controls.remove(wrapper)
+            _host_update(host)
+            try:
+                page.update()
+            except Exception:
+                pass
+        if getattr(page, "_nano_toast", None) is wrapper:
+            page._nano_toast = None
+
+    try:
+        page.run_task(_remove)
+    except Exception:
+        controls = _host_controls(host)
+        if wrapper in controls:
+            controls.remove(wrapper)
+
+
+def toast(
+    page: ft.Page,
+    text: str,
+    kind: ToastKind | None = None,
+    duration: int = 2600,
+    sound_kind: str | None = None,
+    *,
+    title: str | None = None,
+    subtitle: str | None = None,
+) -> None:
+    """Show a floating toast card.
 
     ``kind`` controls the accent color/icon (success/error/warning/info);
     when omitted it's inferred from the message text. ``sound_kind`` lets a
-    call site play a more specific tone (e.g. "scan", "save" -- see
-    core/sound.py) than the four visual kinds cover, without needing a
-    matching new pill color/icon for it. Slides up with a fade-in, then
-    slides back down and removes itself after ``duration``ms.
+    call site play a more specific tone than the four visual kinds cover.
+    ``title``/``subtitle`` render a two-line card (falling back to ``text``
+    when no title is given).
     """
     resolved_kind: ToastKind = kind or _infer_kind(text)
-    icon_name, accent, tint = _STYLE[resolved_kind]
+    icon_name, accent_token, _tint_token, deep_token = _STYLE[resolved_kind]
+    accent = getattr(Colors, accent_token)
+    deep = getattr(Colors, deep_token)
 
-    # Every toast in the app already carries a resolved success/error/
-    # warning/info kind -- piggyback the sound-cue system on it here so
-    # every existing call site gets a matching tone for free. See
-    # core/sound.py's module docstring for why this single choke point
-    # was chosen over touching every notify() call site individually.
     sound.play(page, sound_kind or resolved_kind)
 
+    primary_text = title if title is not None else text
+    secondary_text = subtitle
+
+    text_lines: list[ft.Control] = [
+        ft.Text(
+            primary_text, size=12.5, weight=ft.FontWeight.W_700,
+            color=Colors.TEXT_PRIMARY, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+    ]
+    if secondary_text:
+        text_lines.append(
+            ft.Text(
+                secondary_text, size=11, color=Colors.TEXT_SECONDARY,
+                max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+            )
+        )
+
+    progress = ft.ProgressBar(
+        value=1.0, height=3, color=accent, bgcolor=Colors.BORDER, border_radius=2,
+    )
+    try:
+        available = int(getattr(page, "width", 0) or 0)
+    except Exception:
+        available = 0
+    card_width = 420 if available <= 0 else max(240, min(420, available - 48))
+
     pill = ft.Container(
-        content=ft.Row(
+        content=ft.Column(
             [
-                ft.Container(
-                    ft.Icon(icon_name, color=accent, size=18),
-                    width=30,
-                    height=30,
-                    border_radius=15,
-                    bgcolor=tint,
-                    alignment=ft.alignment.center,
+                ft.Row(
+                    [
+                        ft.Container(width=4, height=34, border_radius=3, bgcolor=accent),
+                        ft.Container(
+                            ft.Icon(icon_name, color=Colors.WHITE, size=18),
+                            width=32, height=32, alignment=ft.alignment.center,
+                            border_radius=Radius.SM,
+                            gradient=ft.LinearGradient(
+                                colors=[deep, accent],
+                                begin=ft.alignment.top_left,
+                                end=ft.alignment.bottom_right,
+                            ),
+                        ),
+                        ft.Column(text_lines, spacing=1, tight=True, expand=True),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE_ROUNDED,
+                            icon_size=14,
+                            icon_color=Colors.TEXT_FAINT,
+                            tooltip="إغلاق",
+                            width=26, height=26,
+                            on_click=lambda _=None: _dismiss(page, wrapper, host),
+                        ),
+                    ],
+                    spacing=10,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                ft.Text(text, size=12.5, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY, max_lines=3),
+                progress,
             ],
-            spacing=10,
+            spacing=8,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         bgcolor=Colors.WHITE,
         border=ft.border.all(1, Colors.BORDER),
-        border_radius=999,
-        padding=ft.padding.only(left=14, right=16, top=8, bottom=8),
+        border_radius=Radius.MD,
+        padding=ft.padding.only(left=10, right=6, top=9, bottom=7),
         shadow=Shadow.LG,
+        width=card_width,
+        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        ink=True,
+        on_click=lambda _=None: _dismiss(page, wrapper, host),
+        animate_scale=ft.Animation(220, ft.AnimationCurve.EASE_OUT),
+        scale=0.96,
+        opacity=0,
     )
 
+    host = _active_toast_host(page)
+    top_position = _prefer_top(page)
     wrapper = ft.Container(
         content=ft.Row([pill], alignment=ft.MainAxisAlignment.CENTER),
         left=0,
         right=0,
-        bottom=_HIDDEN_BOTTOM,
+        bottom=None if top_position else -_OFFSCREEN,
+        top=-_OFFSCREEN if top_position else None,
         opacity=0,
         animate_position=_ANIM,
         animate_opacity=_ANIM,
     )
 
-    # Reuse one toast slot per page: a fresh call while a toast is still
-    # showing removes the previous one immediately instead of letting two
-    # pills stack on top of each other. Mount it inside the top-most open
-    # sheet when there is one (page.overlay sits *below* sheet routes), else
-    # in the page overlay.
+    paused = {"value": False}
+    pill.on_hover = lambda e: paused.__setitem__("value", str(getattr(e, "data", "")).lower() == "true")
+
+    # Replace any live toast (single slot) instead of stacking.
     previous = getattr(page, "_nano_toast", None)
     if previous is not None:
         prev_host = getattr(previous, "_nano_host", page.overlay)
@@ -203,36 +310,64 @@ def toast(page: ft.Page, text: str, kind: ToastKind | None = None, duration: int
             prev_controls.remove(previous)
             _host_update(prev_host)
 
-    host = _active_toast_host(page)
     controls = _host_controls(host)
     wrapper._nano_host = host
+    wrapper._nano_dismissed = False
     page._nano_toast = wrapper
     controls.append(wrapper)
     _host_update(host)
-    page.update()
-
-    wrapper.bottom = _visible_bottom(page)
-    wrapper.opacity = 1
-    page.update()
-
-    async def _auto_dismiss() -> None:
-        await asyncio.sleep(duration / 1000)
-        if getattr(page, "_nano_toast", None) is not wrapper:
-            return  # a newer toast already replaced this one
-        wrapper.bottom = _HIDDEN_BOTTOM
-        wrapper.opacity = 0
+    try:
         page.update()
-        await asyncio.sleep(_ANIM.duration / 1000)
-        host = getattr(wrapper, "_nano_host", page.overlay)
-        controls = _host_controls(host)
-        if wrapper in controls:
-            controls.remove(wrapper)
-            _host_update(host)
-            page.update()
-        if getattr(page, "_nano_toast", None) is wrapper:
-            page._nano_toast = None
+    except Exception:
+        pass
 
-    page.run_task(_auto_dismiss)
+    # Entrance: slide in + scale up + fade in.
+    async def _enter() -> None:
+        await asyncio.sleep(0.01)
+        if top_position:
+            wrapper.top = _EDGE_MARGIN
+        else:
+            wrapper.bottom = _EDGE_MARGIN
+        wrapper.opacity = 1
+        pill.scale = 1.0
+        pill.opacity = 1
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    try:
+        page.run_task(_enter)
+    except Exception:
+        if top_position:
+            wrapper.top = _EDGE_MARGIN
+        else:
+            wrapper.bottom = _EDGE_MARGIN
+        wrapper.opacity = 1
+        pill.opacity = 1
+
+    total = max(0.4, float(duration) / 1000.0)
+
+    async def _countdown() -> None:
+        remaining = total
+        while remaining > 0:
+            await asyncio.sleep(_TICK)
+            if getattr(page, "_nano_toast", None) is not wrapper:
+                return
+            if paused["value"]:
+                continue  # pointer is over the card: hold the timer
+            remaining -= _TICK
+            try:
+                progress.value = max(0.0, remaining / total)
+                progress.update()
+            except Exception:
+                pass
+        _dismiss(page, wrapper, host)
+
+    try:
+        page.run_task(_countdown)
+    except Exception:
+        pass
 
 
 __all__ = ["toast", "ToastKind", "register_modal", "unregister_modal"]
