@@ -12,6 +12,7 @@ from .status_pill import status_pill
 from .text_field import SelectAllTextField
 from .owner_pulse_card import build_owner_pulse_card
 from .metric_row import metric_row, metric_controls
+from .load_more import load_more_control
 from .auth_layout import auth_scaffold
 
 __all__ = [
@@ -20,5 +21,5 @@ __all__ = [
     "SmartAmountField", "SmartDateField", "kpi_card", "status_pill",
     "build_owner_pulse_card",
     "DataGrid", "GridColumn", "GridNavigator",
-    "metric_row", "metric_controls", "auth_scaffold",
+    "metric_row", "metric_controls", "auth_scaffold", "load_more_control",
 ]

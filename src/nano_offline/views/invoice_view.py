@@ -1327,25 +1327,20 @@ class InvoiceCenter:
                 export_state["rows"] = matched
                 invoice_grid.set_hidden_keys(invoice_visibility.hidden_keys)
                 def load_more(_=None) -> None:
-                    # Grow the current client-side window first; once every
-                    # loaded row is visible, pull the next server page so the
-                    # whole database stays reachable past the old 250-row cap.
-                    if len(matched) > render_limit["n"]:
-                        render_limit["n"] += 60
-                        refresh_cards()
-                        return
-                    if list_state["done"]:
-                        return
-                    fetched = self.ctx.invoices.list_invoices(
-                        invoice_type=_server_type(),
-                        limit=list_state["page"],
-                        offset=list_state["offset"],
-                    )
-                    list_state["offset"] += len(fetched)
-                    list_state["done"] = len(fetched) < list_state["page"]
-                    if fetched:
-                        invoices.extend(fetched)
-                    render_limit["n"] += 60
+                    # One stable action: reveal the next batch, and pull the
+                    # next server page as soon as the loaded set runs out, so a
+                    # 300k database is reachable without a second button type.
+                    render_limit["n"] += 100
+                    if len(matched) <= render_limit["n"] and not list_state["done"]:
+                        fetched = self.ctx.invoices.list_invoices(
+                            invoice_type=_server_type(),
+                            limit=list_state["page"],
+                            offset=list_state["offset"],
+                        )
+                        list_state["offset"] += len(fetched)
+                        list_state["done"] = len(fetched) < list_state["page"]
+                        if fetched:
+                            invoices.extend(fetched)
                     refresh_cards()
 
                 invoice_grid.set_group_by(None if grid_sort["key"] else invoice_group)
@@ -1356,13 +1351,11 @@ class InvoiceCenter:
                     if not list_state["done"]:
                         # The current server page had no row of this type; keep
                         # a way to page deeper instead of dead-ending.
-                        grid_more.content = ft.Row(
-                            [ft.OutlinedButton(
-                                "تحميل المزيد من القاعدة",
-                                icon=ft.Icons.UNARCHIVE_OUTLINED,
-                                on_click=load_more,
-                            )],
-                            alignment=ft.MainAxisAlignment.CENTER,
+                        from nano_offline.components import load_more_control
+                        grid_more.content = load_more_control(
+                            shown=0,
+                            total=(len(matched) if (filters["status"] != "all" or bool((search.value or "").strip())) else total_invoices_count),
+                            on_click=load_more,
                         )
                         grid_more.visible = True
                     else:
@@ -1388,8 +1381,10 @@ class InvoiceCenter:
                 # Totals cover the whole filtered set, not just the first
                 # page of 60 -- so the footer answers "how much is open in
                 # what I'm looking at" without paging through 250 rows.
+                _client_filtered_footer = filters["status"] != "all" or bool((search.value or "").strip())
                 footer_values = {
-                    "type": f"{len(matched)} فاتورة",
+                    "type": (f"{len(matched):,} فاتورة" if _client_filtered_footer
+                             else f"{len(matched):,} / {total_invoices_count:,} فاتورة"),
                     "total": self.money(sum(float(i.get("total") or 0) for i in matched)),
                     "remaining_amount": self.money(sum(max(0.0, float(i.get("remaining_amount") or 0)) for i in matched)),
                 }
@@ -1398,25 +1393,14 @@ class InvoiceCenter:
                         sum(float(i.get("profit_amount") or 0) for i in matched)
                     )
                 invoice_grid.set_footer(footer_values)
-                remaining = len(matched) - len(shown)
-                if remaining > 0:
-                    grid_more.content = ft.Row(
-                        [ft.OutlinedButton(
-                            f"تحميل المزيد ({remaining:,})",
-                            icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                            on_click=load_more,
-                        )],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    )
-                    grid_more.visible = True
-                elif not list_state["done"]:
-                    grid_more.content = ft.Row(
-                        [ft.OutlinedButton(
-                            "تحميل المزيد من القاعدة",
-                            icon=ft.Icons.UNARCHIVE_OUTLINED,
-                            on_click=load_more,
-                        )],
-                        alignment=ft.MainAxisAlignment.CENTER,
+                client_filtered = filters["status"] != "all" or bool((search.value or "").strip())
+                caption_total = len(matched) if client_filtered else total_invoices_count
+                if len(matched) > render_limit["n"] or not list_state["done"]:
+                    from nano_offline.components import load_more_control
+                    grid_more.content = load_more_control(
+                        shown=len(shown),
+                        total=caption_total,
+                        on_click=load_more,
                     )
                     grid_more.visible = True
                 else:

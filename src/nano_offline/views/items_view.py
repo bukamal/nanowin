@@ -4103,12 +4103,12 @@ class ItemsCenter:
                 grid.set_footer(footer)
             else:
                 grid.set_footer(None)
-            remaining = len(filtered) - len(shown)
-            if remaining > 0:
-                grid_more.content = ft.Row(
-                    [ft.OutlinedButton(f"تحميل المزيد ({remaining})", icon=ft.Icons.EXPAND_MORE_ROUNDED,
-                                       on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()))],
-                    alignment=ft.MainAxisAlignment.CENTER,
+            if len(filtered) > len(shown):
+                from nano_offline.components import load_more_control
+                grid_more.content = load_more_control(
+                    shown=len(shown),
+                    total=len(filtered),
+                    on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()),
                 )
                 grid_more.visible = True
             else:
