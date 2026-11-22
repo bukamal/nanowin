@@ -67,6 +67,9 @@ class ReportsCenter:
         self.on_context_actions = on_context_actions
         self._report_key: str = "pnl"
         self._refresh_generation = 0
+        # How many rows of the heavy report tables are rendered at once; grown
+        # by «عرض المزيد» so a 200k-invoice database never builds 200k controls.
+        self._rows_limit = 200
         self.report_chips: dict[str, ft.Container] = {}
         self.date_from: ft.TextField | None = None
         self.date_to: ft.TextField | None = None
@@ -244,6 +247,16 @@ class ReportsCenter:
     def _empty(self, text: str, *, icon=ft.Icons.INSIGHTS_OUTLINED) -> ft.Container:
         return empty_state(text, icon=icon)
 
+    def _grow_rows(self, _=None) -> None:
+        self._rows_limit += 200
+        self._refresh()
+
+    def _load_more(self, shown: int, total: int) -> ft.Control | None:
+        if total <= shown:
+            return None
+        from nano_offline.components import load_more_control
+        return load_more_control(shown=shown, total=total, on_click=self._grow_rows)
+
     def _error_card(self, exc: Exception) -> ft.Container:
         """Inline failure state for a single report render -- keeps the
         picker/date bar usable and offers a retry instead of leaving the
@@ -316,6 +329,7 @@ class ReportsCenter:
 
     # -- report tab chips -----------------------------------------------------
     def _select_report(self, key: str) -> None:
+        self._rows_limit = 200
         if key == self._report_key:
             return
         self._report_key = key
@@ -470,6 +484,7 @@ class ReportsCenter:
         self._refresh()
 
     def _apply_date_preset(self, key: str) -> None:
+        self._rows_limit = 200
         if not key:
             return
         today = date.today()
@@ -561,14 +576,16 @@ class ReportsCenter:
                 reports.inventory_valuation(as_of=date_to),
             )
         if report == "balances":
-            return await asyncio.gather(
+            customers, suppliers, open_customers, open_suppliers = await asyncio.gather(
                 reports.party_balances("customer", as_of=date_to),
                 reports.party_balances("supplier", as_of=date_to),
                 reports.outstanding_invoices("customer", as_of=date_to),
                 reports.outstanding_invoices("supplier", as_of=date_to),
-                reports.aging_summary("customer", as_of=date_to),
-                reports.aging_summary("supplier", as_of=date_to),
             )
+            # Reuse the fetched outstanding rows instead of recomputing them.
+            customer_aging = self.ctx.reports.aging_summary("customer", as_of=date_to, rows=open_customers)
+            supplier_aging = self.ctx.reports.aging_summary("supplier", as_of=date_to, rows=open_suppliers)
+            return customers, suppliers, open_customers, open_suppliers, customer_aging, supplier_aging
         if report == "forecast":
             return await asyncio.gather(
                 self.ctx.forecast.aio.seasonal_forecast(invoice_type="sale", date_from=date_from, date_to=date_to),
@@ -646,14 +663,14 @@ class ReportsCenter:
             )
             return documents.inventory_report_html(rows=rows, valuation=valuation, date_from=date_from, date_to=date_to)
         if report == "balances":
-            customers, suppliers, open_customers, open_suppliers, customer_aging, supplier_aging = await asyncio.gather(
+            customers, suppliers, open_customers, open_suppliers = await asyncio.gather(
                 reports.party_balances("customer", as_of=date_to),
                 reports.party_balances("supplier", as_of=date_to),
                 reports.outstanding_invoices("customer", as_of=date_to),
                 reports.outstanding_invoices("supplier", as_of=date_to),
-                reports.aging_summary("customer", as_of=date_to),
-                reports.aging_summary("supplier", as_of=date_to),
             )
+            customer_aging = self.ctx.reports.aging_summary("customer", as_of=date_to, rows=open_customers)
+            supplier_aging = self.ctx.reports.aging_summary("supplier", as_of=date_to, rows=open_suppliers)
             return documents.balances_report_html(
                 customers=customers, suppliers=suppliers,
                 open_customers=open_customers, open_suppliers=open_suppliers, as_of=date_to,
@@ -896,6 +913,8 @@ class ReportsCenter:
         return result
 
     def _render_profitability(self, invoices: list[dict], items: list[dict], top: list[dict]) -> list[ft.Control]:
+        invoices_shown = invoices[: self._rows_limit]
+        items_shown = items[: self._rows_limit]
         top_grid = self._readonly_grid(
             [
                 GridColumn("item_name", "المادة", width=180),
@@ -918,7 +937,7 @@ class ReportsCenter:
                 GridColumn("margin_percent", "الهامش", width=100),
                 GridColumn("markup_percent", "الزيادة", width=100),
             ],
-            invoices,
+            invoices_shown,
             on_row_activate=lambda row: self.on_open_invoice(int(row["id"])) if self.on_open_invoice else None,
             height=360,
         )
@@ -934,17 +953,22 @@ class ReportsCenter:
                 GridColumn("markup_percent", "الزيادة", width=100),
                 GridColumn("invoice_count", "فواتير", kind="number", width=80),
             ],
-            items,
+            items_shown,
             height=360,
         )
+        invoice_more = self._load_more(len(invoices_shown), len(invoices))
+        items_more = self._load_more(len(items_shown), len(items))
         return [
             self._section_title(ft.Icons.WORKSPACE_PREMIUM_ROUNDED, "الأكثر مبيعًا (مرتبة بالإيراد)"), top_grid,
             self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "ربحية الفواتير — اضغط صفًا لفتح الفاتورة"), invoice_grid,
+            *([invoice_more] if invoice_more is not None else []),
             self._section_title(ft.Icons.INVENTORY_2_OUTLINED, "ربحية المواد والخدمات"), item_grid,
+            *([items_more] if items_more is not None else []),
         ]
 
     def _render_inventory(self, rows: list[dict], valuation: dict) -> list[ft.Control]:
         _, date_to = self._dates()
+        rows_shown = rows[: self._rows_limit]
         grid = self._readonly_grid(
             [
                 GridColumn("name", "المادة", width=170),
@@ -956,9 +980,10 @@ class ReportsCenter:
                 GridColumn("closing_unit_cost", "متوسط التكلفة", kind="money", width=125),
                 GridColumn("closing_value", "قيمة المخزون", kind="money", width=135),
             ],
-            rows,
+            rows_shown,
             height=440,
         )
+        rows_more = self._load_more(len(rows_shown), len(rows))
         return [
             metric_row([
                 self._metric("قيمة المخزون", self.money(valuation["total_value"]), icon=ft.Icons.INVENTORY_2_OUTLINED, accent=Colors.PRIMARY, note=f"كما في {date_to or 'آخر حركة'}"),
@@ -966,6 +991,7 @@ class ReportsCenter:
             ], spacing=10),
             self._section_title(ft.Icons.SYNC_ALT_ROUNDED, "حركة المخزون حسب المادة"),
             grid,
+            *([rows_more] if rows_more is not None else []),
         ]
 
     def _render_balances(
@@ -993,6 +1019,7 @@ class ReportsCenter:
             )
 
         def invoice_grid(rows: list[dict]) -> ft.Control:
+            rows = rows[: self._rows_limit]
             return self._readonly_grid(
                 [
                     GridColumn("id", "الفاتورة", kind="number", width=80),
@@ -1032,11 +1059,13 @@ class ReportsCenter:
             party_grid(customers, "customer"),
             self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير العملاء المفتوحة — اضغط صفًا لفتح الفاتورة"),
             invoice_grid(open_customers),
+            *([self._load_more(min(len(open_customers), self._rows_limit), len(open_customers))] if len(open_customers) > self._rows_limit else []),
             *aging_metrics(supplier_aging, "أعمار ذمم الموردين"),
             self._section_title(ft.Icons.LOCAL_SHIPPING_OUTLINED, "الموردون — اضغط صفًا لفتح كشف الحساب"),
             party_grid(suppliers, "supplier"),
             self._section_title(ft.Icons.RECEIPT_LONG_OUTLINED, "فواتير الموردين المفتوحة — اضغط صفًا لفتح الفاتورة"),
             invoice_grid(open_suppliers),
+            *([self._load_more(min(len(open_suppliers), self._rows_limit), len(open_suppliers))] if len(open_suppliers) > self._rows_limit else []),
         ]
 
     def _render_cash(self, report: dict, outlook: dict) -> list[ft.Control]:
@@ -1049,9 +1078,10 @@ class ReportsCenter:
                 GridColumn("credit", "صرف", kind="money", width=130),
                 GridColumn("balance", "الرصيد بعد الحركة", kind="money", width=160),
             ],
-            list(reversed(report["rows"])),
+            list(reversed(report["rows"]))[: self._rows_limit],
             height=420,
         )
+        cash_more = self._load_more(min(len(report["rows"]), self._rows_limit), len(report["rows"]))
         return [
             metric_row([
                 self._metric("رصيد افتتاحي", self.money(report["opening_balance"]), icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, accent=Colors.PRIMARY),
@@ -1071,6 +1101,7 @@ class ReportsCenter:
             ], spacing=10),
             self._section_title(ft.Icons.SWAP_VERT_ROUNDED, "حركات الصندوق"),
             cash_grid,
+            *([cash_more] if cash_more is not None else []),
         ]
 
     # -- seasonal forecast (phase10 wave4, B1) -----------------------------

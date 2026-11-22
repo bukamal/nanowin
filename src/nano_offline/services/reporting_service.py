@@ -104,13 +104,18 @@ class ReportingService(Offloadable):
         invoice_clause, invoice_params = self._date_clause("i.invoice_date", date_from, date_to)
         expense_clause, expense_params = self._date_clause("e.expense_date", date_from, date_to)
         with self.db.connect() as conn:
+            # COGS per invoice comes from one grouped join instead of a
+            # correlated subquery per invoice (which re-scanned invoice_lines
+            # for every one of hundreds of thousands of sales).
             sales_rows = conn.execute(
                 f"""SELECT substr(i.invoice_date,1,7) AS month,
                            SUM(CASE WHEN i.type='sale' THEN i.total ELSE 0 END) AS sales,
-                           SUM(CASE WHEN i.type='sale' THEN
-                               (SELECT COALESCE(SUM(il.cost_amount),0) FROM invoice_lines il WHERE il.invoice_id=i.id)
-                               ELSE 0 END) AS cogs
+                           SUM(CASE WHEN i.type='sale' THEN COALESCE(il_cost.cogs,0) ELSE 0 END) AS cogs
                     FROM invoices i
+                    LEFT JOIN (
+                        SELECT invoice_id, SUM(cost_amount) AS cogs
+                        FROM invoice_lines GROUP BY invoice_id
+                    ) il_cost ON il_cost.invoice_id = i.id
                     WHERE {invoice_clause}
                     GROUP BY substr(i.invoice_date,1,7)""",
                 invoice_params,
@@ -175,7 +180,9 @@ class ReportingService(Offloadable):
         }
 
     @blocking
-    def invoice_profitability(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    def invoice_profitability(
+        self, *, date_from: str | None = None, date_to: str | None = None, limit: int | None = None
+    ) -> list[dict]:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("i.invoice_date", date_from, date_to)
         with self.db.connect() as conn:
@@ -188,8 +195,9 @@ class ReportingService(Offloadable):
                     LEFT JOIN invoice_lines il ON il.invoice_id=i.id
                     WHERE i.type='sale' AND {clause}
                     GROUP BY i.id
-                    ORDER BY i.invoice_date DESC,i.id DESC""",
-                params,
+                    ORDER BY i.invoice_date DESC,i.id DESC"""
+                + (" LIMIT ?" if limit is not None and int(limit) > 0 else ""),
+                (*params, int(limit)) if limit is not None and int(limit) > 0 else params,
             ).fetchall()
             result: list[dict] = []
             for raw in rows:
@@ -257,8 +265,10 @@ class ReportingService(Offloadable):
     def inventory_report(self, *, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
         """Inventory movement and valuation by item for a period.
 
-        Opening inventory is a timeless baseline. Historical value is deterministic
-        because inventory_movements.value_delta stores purchase value and sale COGS.
+        Opening inventory is a timeless baseline. Historical value is
+        deterministic because inventory_movements.value_delta stores purchase
+        value and sale COGS. Aggregated in two grouped queries (not one query
+        per item) so it stays fast with thousands of materials.
         """
         date_from, date_to = self._normalize_dates(date_from, date_to)
         with self.db.connect() as conn:
@@ -268,43 +278,54 @@ class ReportingService(Offloadable):
                    FROM items i LEFT JOIN units u ON u.id=i.base_unit_id
                    WHERE i.item_type='مخزون' ORDER BY i.name"""
             ).fetchall()
+
+            before_map: dict[int, tuple[float, float]] = {}
+            if date_from:
+                for r in conn.execute(
+                    """SELECT item_id, COALESCE(SUM(quantity_delta),0) AS q,
+                              COALESCE(SUM(value_delta),0) AS v
+                       FROM inventory_movements
+                       WHERE invoice_id IS NOT NULL AND movement_date<?
+                       GROUP BY item_id""",
+                    (date_from,),
+                ).fetchall():
+                    before_map[int(r["item_id"])] = (float(r["q"] or 0), float(r["v"] or 0))
+
+            period_map: dict[int, dict] = {}
+            where = ["invoice_id IS NOT NULL"]
+            params: list[object] = []
+            if date_from:
+                where.append("movement_date>=?")
+                params.append(date_from)
+            if date_to:
+                where.append("movement_date<=?")
+                params.append(date_to)
+            for r in conn.execute(
+                f"""SELECT item_id,
+                           COALESCE(SUM(CASE WHEN quantity_delta>0 THEN quantity_delta ELSE 0 END),0) AS in_qty,
+                           COALESCE(SUM(CASE WHEN quantity_delta<0 THEN -quantity_delta ELSE 0 END),0) AS out_qty,
+                           COALESCE(SUM(CASE WHEN value_delta>0 THEN value_delta ELSE 0 END),0) AS in_value,
+                           COALESCE(SUM(CASE WHEN value_delta<0 THEN -value_delta ELSE 0 END),0) AS out_value,
+                           COALESCE(SUM(quantity_delta),0) AS net_qty,
+                           COALESCE(SUM(value_delta),0) AS net_value
+                    FROM inventory_movements WHERE {' AND '.join(where)}
+                    GROUP BY item_id""",
+                params,
+            ).fetchall():
+                period_map[int(r["item_id"])] = dict(r)
+
             result: list[dict] = []
             for raw in items:
                 item = dict(raw)
                 iid = int(item["id"])
                 opening_qty = float(item["opening_quantity"] or 0)
                 opening_value = opening_qty * float(item["opening_unit_cost"] or 0)
-                if date_from:
-                    before = conn.execute(
-                        """SELECT COALESCE(SUM(quantity_delta),0),COALESCE(SUM(value_delta),0)
-                           FROM inventory_movements
-                           WHERE item_id=? AND invoice_id IS NOT NULL AND movement_date<?""",
-                        (iid, date_from),
-                    ).fetchone()
-                    opening_qty += float(before[0] or 0)
-                    opening_value += float(before[1] or 0)
-
-                period_where = ["item_id=?", "invoice_id IS NOT NULL"]
-                p: list[object] = [iid]
-                if date_from:
-                    period_where.append("movement_date>=?")
-                    p.append(date_from)
-                if date_to:
-                    period_where.append("movement_date<=?")
-                    p.append(date_to)
-                stats = conn.execute(
-                    f"""SELECT
-                            COALESCE(SUM(CASE WHEN quantity_delta>0 THEN quantity_delta ELSE 0 END),0) AS in_qty,
-                            COALESCE(SUM(CASE WHEN quantity_delta<0 THEN -quantity_delta ELSE 0 END),0) AS out_qty,
-                            COALESCE(SUM(CASE WHEN value_delta>0 THEN value_delta ELSE 0 END),0) AS in_value,
-                            COALESCE(SUM(CASE WHEN value_delta<0 THEN -value_delta ELSE 0 END),0) AS out_value,
-                            COALESCE(SUM(quantity_delta),0) AS net_qty,
-                            COALESCE(SUM(value_delta),0) AS net_value
-                        FROM inventory_movements WHERE {' AND '.join(period_where)}""",
-                    p,
-                ).fetchone()
-                closing_qty = opening_qty + float(stats["net_qty"] or 0)
-                closing_value = opening_value + float(stats["net_value"] or 0)
+                if date_from and iid in before_map:
+                    opening_qty += before_map[iid][0]
+                    opening_value += before_map[iid][1]
+                stats = period_map.get(iid, {})
+                closing_qty = opening_qty + float(stats.get("net_qty") or 0)
+                closing_value = opening_value + float(stats.get("net_value") or 0)
                 if abs(closing_qty) <= EPSILON:
                     closing_qty = 0.0
                     closing_value = 0.0
@@ -312,10 +333,10 @@ class ReportingService(Offloadable):
                     **item,
                     "opening_quantity_period": opening_qty,
                     "opening_value": opening_value,
-                    "purchases_quantity": float(stats["in_qty"] or 0),
-                    "sales_quantity": float(stats["out_qty"] or 0),
-                    "purchases_value": float(stats["in_value"] or 0),
-                    "cogs_value": float(stats["out_value"] or 0),
+                    "purchases_quantity": float(stats.get("in_qty") or 0),
+                    "sales_quantity": float(stats.get("out_qty") or 0),
+                    "purchases_value": float(stats.get("in_value") or 0),
+                    "cogs_value": float(stats.get("out_value") or 0),
                     "closing_quantity": closing_qty,
                     "closing_value": closing_value,
                     "closing_unit_cost": (closing_value / closing_qty) if closing_qty > EPSILON else 0.0,
@@ -345,30 +366,55 @@ class ReportingService(Offloadable):
             raise ValueError("نوع الحساب غير صحيح")
         with self.db.connect() as conn:
             parties = conn.execute(f"SELECT id,name,phone,address FROM {table} ORDER BY name").fetchall()
+            # One grouped ledger query + one grouped invoice-count query instead
+            # of two lookups per party (which turned into a full scan of the
+            # ledger for every customer/supplier).
+            # Current balances are already maintained on the party row, so a
+            # live report reads them directly. Only a historical (as-of) report
+            # has to re-aggregate the ledger.
+            today = date.today().isoformat()
+            fast_balance = as_of is None or as_of >= today
+            if fast_balance:
+                ledger_map = {
+                    int(r["id"]): float(r["balance"] or 0)
+                    for r in conn.execute(f"SELECT id, balance FROM {table}").fetchall()
+                }
+            else:
+                ledger_where = "party_type=? AND account_code=? AND entry_date<=?"
+                ledger_map = {
+                    int(r["party_id"]): float(r["bal"] or 0)
+                    for r in conn.execute(
+                        f"SELECT party_id, COALESCE(SUM(debit-credit),0) AS bal "
+                        f"FROM ledger_entries WHERE {ledger_where} GROUP BY party_id",
+                        (party_type, account, as_of),
+                    ).fetchall()
+                }
+            inv_where = f"type=? AND {column} IS NOT NULL"
+            inv_params: list[object] = [invoice_type]
+            if as_of:
+                inv_where += " AND invoice_date<=?"
+                inv_params.append(as_of)
+            invoice_map = {
+                int(r["pid"]): int(r["cnt"])
+                for r in conn.execute(
+                    f"SELECT {column} AS pid, COUNT(*) AS cnt FROM invoices "
+                    f"WHERE {inv_where} GROUP BY {column}",
+                    inv_params,
+                ).fetchall()
+            }
             result: list[dict] = []
             positive = 0.0
             credits = 0.0
             for p in parties:
-                ledger_sql = "SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries WHERE party_type=? AND party_id=? AND account_code=?"
-                params: list[object] = [party_type, p["id"], account]
-                if as_of:
-                    ledger_sql += " AND entry_date<=?"
-                    params.append(as_of)
-                raw_balance = float(conn.execute(ledger_sql, params).fetchone()[0])
-                balance = raw_balance if sign == 1 else -raw_balance
-
-                invoice_sql = f"SELECT COUNT(*) FROM invoices WHERE type=? AND {column}=?"
-                ip: list[object] = [invoice_type, p["id"]]
-                if as_of:
-                    invoice_sql += " AND invoice_date<=?"
-                    ip.append(as_of)
-                invoice_count = int(conn.execute(invoice_sql, ip).fetchone()[0])
-
+                raw_balance = ledger_map.get(int(p["id"]), 0.0)
+                # Stored balances are already natural; the ledger sum needs the
+                # supplier sign flip.
+                balance = raw_balance if (fast_balance or sign == 1) else -raw_balance
                 if balance > EPSILON:
                     positive += balance
                 elif balance < -EPSILON:
                     credits += -balance
-                result.append({**dict(p), "balance": balance, "invoice_count": invoice_count})
+                result.append({**dict(p), "balance": balance, "invoice_count": invoice_map.get(int(p["id"]), 0)})
             result.sort(key=lambda r: abs(float(r["balance"])), reverse=True)
             return {
                 "party_type": party_type,
@@ -380,7 +426,7 @@ class ReportingService(Offloadable):
             }
 
     @blocking
-    def outstanding_invoices(self, party_type: str, *, as_of: str | None = None) -> list[dict]:
+    def outstanding_invoices(self, party_type: str, *, as_of: str | None = None, limit: int | None = None) -> list[dict]:
         _, as_of = self._normalize_dates(None, as_of)
         if party_type == "customer":
             invoice_type, column, party_table = "sale", "customer_id", "customers"
@@ -389,7 +435,16 @@ class ReportingService(Offloadable):
         else:
             raise ValueError("نوع الحساب غير صحيح")
         with self.db.connect() as conn:
-            sql = f"""SELECT i.id,i.invoice_date,i.reference,i.total,i.print_options,i.{column} AS party_id,p.name AS party_name,
+            # Paid-per-invoice comes from one grouped allocation join (a
+            # correlated subquery per invoice re-scanned allocations for every
+            # one of hundreds of thousands of invoices), and the
+            # still-outstanding filter is pushed into SQL so only real rows
+            # travel back.
+            # Correlated per-invoice (index-backed) so an ORDER BY + LIMIT can
+            # stop early instead of materializing a grouped allocation table
+            # for every invoice in the database.
+            sql = f"""SELECT i.id,i.invoice_date,i.reference,i.total,i.print_options,
+                              i.{column} AS party_id,p.name AS party_name,
                               COALESCE((SELECT SUM(pa.amount)
                                         FROM payment_allocations pa
                                         JOIN payments pay ON pay.id=pa.payment_id
@@ -407,30 +462,41 @@ class ReportingService(Offloadable):
                 params = [as_of, invoice_type, as_of]
             else:
                 params = [invoice_type]
-            rows = conn.execute(sql.format(pay_date_filter=pay_filter, invoice_date_filter=invoice_filter), params).fetchall()
+            wanted = int(limit) if limit is not None and int(limit) > 0 else None
+            fetch_cap = min(20000, wanted * 6) if wanted else None
+            if fetch_cap:
+                sql += " LIMIT ?"
+                params.append(fetch_cap)
+            rows = conn.execute(
+                sql.format(pay_date_filter=pay_filter, invoice_date_filter=invoice_filter), params
+            ).fetchall()
             result = []
             aged_as_of = date.fromisoformat(as_of or date.today().isoformat())
             for raw in rows:
                 row = dict(raw)
                 remaining = float(row["total"] or 0) - float(row["paid_as_of"] or 0)
-                if remaining > EPSILON:
-                    row["remaining_amount"] = remaining
-                    row["age_days"] = max(
-                        0,
-                        (aged_as_of - date.fromisoformat(str(row["invoice_date"])[:10])).days,
-                    )
-                    row["age_bucket"] = (
-                        "0-30" if row["age_days"] <= 30 else
-                        "31-60" if row["age_days"] <= 60 else
-                        "61-90" if row["age_days"] <= 90 else "90+"
-                    )
-                    result.append(row)
+                if remaining <= EPSILON:
+                    continue
+                row["remaining_amount"] = remaining
+                row["age_days"] = max(
+                    0,
+                    (aged_as_of - date.fromisoformat(str(row["invoice_date"])[:10])).days,
+                )
+                row["age_bucket"] = (
+                    "0-30" if row["age_days"] <= 30 else
+                    "31-60" if row["age_days"] <= 60 else
+                    "61-90" if row["age_days"] <= 90 else "90+"
+                )
+                result.append(row)
+                if wanted and len(result) >= wanted:
+                    break
             return result
 
     @blocking
-    def aging_summary(self, party_type: str, *, as_of: str | None = None) -> dict:
+    def aging_summary(self, party_type: str, *, as_of: str | None = None, rows: list[dict] | None = None) -> dict:
         """Outstanding invoice aging by invoice age (not contractual due date)."""
-        rows = self.outstanding_invoices(party_type, as_of=as_of)
+        if rows is None:
+            rows = self.outstanding_invoices(party_type, as_of=as_of)
         buckets = {"0-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}
         parties: dict[int, dict] = {}
         for row in rows:
@@ -574,7 +640,7 @@ class ReportingService(Offloadable):
         current = {str(row["category"]): float(row["amount"] or 0) for row in current_rows}
         history_by_category: dict[str, list[float]] = {}
         for row in history:
-            category, month = str(row["category"]), str(row["month"])
+            category, _month = str(row["category"]), str(row["month"])
             history_by_category.setdefault(category, []).append(float(row["amount"] or 0))
 
         elapsed_days = end.day
@@ -690,7 +756,14 @@ class ReportingService(Offloadable):
         }
 
     @blocking
-    def cash_movement(self, *, date_from: str | None = None, date_to: str | None = None) -> dict:
+    def cash_movement(
+        self,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> dict:
         date_from, date_to = self._normalize_dates(date_from, date_to)
         clause, params = self._date_clause("entry_date", date_from, date_to)
         with self.db.connect() as conn:
@@ -700,16 +773,42 @@ class ReportingService(Offloadable):
                     "SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries WHERE account_code='CASH' AND entry_date<?",
                     (date_from,),
                 ).fetchone()[0])
-            rows = [dict(r) for r in conn.execute(
-                f"""SELECT entry_date,debit,credit,source_type,source_id,description
+            # Totals come from SQL aggregates, so the KPI row stays correct
+            # even when only a page of movements is fetched for display.
+            totals = conn.execute(
+                f"""SELECT COALESCE(SUM(debit),0) AS receipts, COALESCE(SUM(credit),0) AS payments,
+                           COUNT(*) AS cnt
+                    FROM ledger_entries WHERE account_code='CASH' AND {clause}""",
+                params,
+            ).fetchone()
+            receipts = float(totals["receipts"] or 0)
+            payments = float(totals["payments"] or 0)
+            count = int(totals["cnt"] or 0)
+
+            page_sql = (
+                f"""SELECT id,entry_date,debit,credit,source_type,source_id,description
                     FROM ledger_entries
                     WHERE account_code='CASH' AND {clause}
-                    ORDER BY entry_date,id""",
-                params,
-            ).fetchall()]
-            receipts = sum(float(r["debit"] or 0) for r in rows)
-            payments = sum(float(r["credit"] or 0) for r in rows)
+                    ORDER BY entry_date,id"""
+            )
+            page_params = list(params)
+            if limit is not None and int(limit) > 0:
+                page_sql += " LIMIT ? OFFSET ?"
+                page_params.extend([int(limit), max(0, int(offset))])
+            rows = [dict(r) for r in conn.execute(page_sql, page_params).fetchall()]
+
+            # Running balance starts from the opening balance plus every cash
+            # entry before the first *displayed* row (so a paged view still
+            # shows the right per-row balance).
             running = opening
+            if rows and (limit is not None and int(limit) > 0 or offset):
+                first = rows[0]
+                running += float(conn.execute(
+                    f"""SELECT COALESCE(SUM(debit-credit),0) FROM ledger_entries
+                        WHERE account_code='CASH' AND {clause}
+                          AND (entry_date < ? OR (entry_date = ? AND id < ?))""",
+                    [*params, first["entry_date"], first["entry_date"], int(first["id"])],
+                ).fetchone()[0] or 0.0)
             for row in rows:
                 running += float(row["debit"] or 0) - float(row["credit"] or 0)
                 row["balance"] = running
@@ -720,6 +819,7 @@ class ReportingService(Offloadable):
                 "receipts": receipts,
                 "payments": payments,
                 "net_movement": receipts - payments,
-                "closing_balance": running,
+                "closing_balance": opening + receipts - payments,
+                "count": count,
                 "rows": rows,
             }

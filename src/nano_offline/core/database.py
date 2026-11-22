@@ -519,6 +519,9 @@ CREATE INDEX IF NOT EXISTS idx_stocktake_lines_session ON stocktake_lines(sessio
 CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date);
 CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_supplier ON invoices(supplier_id);
+-- Per-type party grouping (outstanding balances / invoice counts).
+CREATE INDEX IF NOT EXISTS idx_invoices_type_customer ON invoices(type, customer_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_type_supplier ON invoices(type, supplier_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);
 -- Without this, ItemRepository.list()'s per-row "has_activity" check
 -- (EXISTS(SELECT 1 FROM invoice_lines WHERE item_id=...)) full-scans
@@ -537,6 +540,12 @@ CREATE INDEX IF NOT EXISTS idx_allocations_payment ON payment_allocations(paymen
 CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
 CREATE INDEX IF NOT EXISTS idx_inventory_item_date ON inventory_movements(item_id, movement_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_party ON ledger_entries(party_type, party_id, entry_date);
+-- Reporting/statement lookups filter a party's balance by account code as
+-- well, and cash/report scans run by account+date.
+CREATE INDEX IF NOT EXISTS idx_ledger_party_account ON ledger_entries(party_type, party_id, account_code);
+CREATE INDEX IF NOT EXISTS idx_ledger_account_date ON ledger_entries(account_code, entry_date);
+-- Inventory movement reports aggregate per item over a date range.
+CREATE INDEX IF NOT EXISTS idx_inventory_item_invoice ON inventory_movements(item_id, invoice_id, movement_date);
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
