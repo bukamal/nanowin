@@ -53,6 +53,8 @@ _ON_DEMAND_THRESHOLD = 150
 # Nominal width (as a flex weight) for columns that declare no width when
 # fit-to-width is on.
 _FIT_DEFAULT_WEIGHT = 160
+_PICKER_WINDOW = 40
+
 _COLOR_ROLE_TOKENS = {
     "primary": "PRIMARY",
     "success": "SUCCESS_DARKER",
@@ -1649,8 +1651,25 @@ class DataGrid(ft.Column):
     def _picker_paint(self) -> None:
         if self._picker_list is None:
             return
+        total = len(self._picker_visible)
+        # Windowed results: a 10k-item catalogue must not build 10k Flet
+        # controls every time a picker opens. Only the slice around the
+        # current highlight is rendered; typing narrows the list itself.
+        if total > _PICKER_WINDOW:
+            start = max(0, min(self._picker_highlight - _PICKER_WINDOW // 2, total - _PICKER_WINDOW))
+            end = start + _PICKER_WINDOW
+        else:
+            start, end = 0, total
         controls: list[ft.Control] = []
-        for i, (_value, label) in enumerate(self._picker_visible):
+        if start > 0:
+            controls.append(
+                ft.Container(
+                    ft.Text(f"اكتب للبحث · {start:,} نتيجة قبل هذه", size=10, color=Colors.TEXT_FAINT),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                )
+            )
+        for i in range(start, end):
+            label = self._picker_visible[i][1]
             selected = i == self._picker_highlight
             controls.append(
                 ft.Container(
@@ -1669,6 +1688,13 @@ class DataGrid(ft.Column):
                     on_click=lambda _, k=i: self._picker_choose(k),
                 )
             )
+        if end < total:
+            controls.append(
+                ft.Container(
+                    ft.Text(f"اكتب للبحث · {total - end:,} نتيجة أخرى", size=10, color=Colors.TEXT_FAINT),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                )
+            )
         if not controls:
             controls.append(ft.Container(ft.Text("لا نتائج مطابقة", size=12, color=Colors.TEXT_FAINT), padding=10))
         self._picker_list.controls = controls
@@ -1676,7 +1702,7 @@ class DataGrid(ft.Column):
             self._picker_list.update()
         except Exception:
             pass
-        # Keep the keyboard highlight inside the results viewport.
+        # Keep the keyboard highlight inside the (windowed) results viewport.
         self._scroll_list_key(f"{self._uid}-pk{self._picker_highlight}")
 
     def _picker_move(self, delta: int) -> None:

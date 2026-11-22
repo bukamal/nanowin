@@ -863,3 +863,20 @@ def test_commit_with_raising_formatter_does_not_freeze():
     # The editor closed and the cursor advanced despite the failing formatter.
     assert g._edit_field is None
     assert g.nav.cell == (0, 1)
+
+
+def test_picker_paint_windows_large_option_lists():
+    grid = DataGrid(
+        columns=[GridColumn("item", "المادة", editable=True, kind="picker")],
+        rows=[{"item": None}],
+        page=None,
+    )
+    grid._picker_list = ft.Column([])
+    grid._picker_items = [(i, f"item {i}") for i in range(5000)]
+    grid._picker_visible = list(grid._picker_items)
+    grid._picker_highlight = 2500
+
+    grid._picker_paint()
+
+    # A 5000-item catalogue must render only a small window of controls.
+    assert 0 < len(grid._picker_list.controls) <= 42

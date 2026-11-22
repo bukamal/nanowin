@@ -2633,6 +2633,17 @@ class ItemsCenter:
             # dialog/overlay) so it draws above the table and stays interactive
             # while the add-item sheet remains open behind it.
             recipe_overlay_ref: list = []
+            # The recipe editor and its material picker are opened repeatedly in
+            # one bulk session; cache the inventory list once instead of
+            # re-reading all items on every open.
+            recipe_items_cache: dict = {"inventory": None, "by_id": None}
+
+            def _recipe_inventory():
+                if recipe_items_cache["inventory"] is None:
+                    rows = [i for i in ctx.items.list() if i.get("item_type") == "مخزون"]
+                    recipe_items_cache["inventory"] = rows
+                    recipe_items_cache["by_id"] = {int(i["id"]): i for i in rows}
+                return recipe_items_cache["inventory"], recipe_items_cache["by_id"]
             cat_options = [(str(c["id"]), c["name"]) for c in categories]
             sections_for_bulk = ctx.sections.list()
             section_map = {str(s["id"]): s["name"] for s in sections_for_bulk}
@@ -2955,8 +2966,7 @@ class ItemsCenter:
                 """
                 row = bulk_grid.row_at(index) or bulk_grid.rows[index]
                 saved = {"done": False}
-                inventory = [i for i in ctx.items.list() if i.get("item_type") == "مخزون"]
-                by_id = {int(i["id"]): i for i in inventory}
+                inventory, by_id = _recipe_inventory()
 
                 def _material_name(value) -> str:
                     if value in (None, ""):
