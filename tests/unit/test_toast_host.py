@@ -109,3 +109,38 @@ def test_modal_toasts_use_top_placement_and_mount_inside_the_sheet():
 def test_page_toasts_default_to_bottom_placement():
     page = _ToastPage()
     assert toast_mod._prefer_top(page) is False
+
+
+def test_toast_action_button_runs_callback():
+    page = _ToastPage()
+    calls = {"n": 0}
+    toast_mod.toast(
+        page, "تم حذف المادة", kind="info",
+        action=("تراجع", lambda: calls.__setitem__("n", calls["n"] + 1)),
+    )
+
+    def walk(control):
+        yield control
+        for child in getattr(control, "controls", None) or ():
+            yield from walk(child)
+        inner = getattr(control, "content", None)
+        if inner is not None and not isinstance(inner, (str, bytes)):
+            yield from walk(inner)
+
+    buttons = [c for c in walk(page.overlay[-1]) if isinstance(c, ft.TextButton)]
+    assert [b.text for b in buttons] == ["تراجع"]
+    buttons[0].on_click(None)
+    assert calls["n"] == 1
+
+
+def test_progress_toast_updates_and_finishes():
+    page = _ToastPage()
+    handle = toast_mod.toast_progress(page, "جارٍ إنشاء النسخة", subtitle="بدء")
+    assert handle.mode == "progress"
+    handle.update(0.42, subtitle="نسخ قاعدة البيانات")
+    assert handle.bar.value == 0.42
+    assert handle.subtitle_text.value == "نسخ قاعدة البيانات"
+    handle.done("تم إنشاء النسخة", kind="success")
+    assert handle.bar.value == 1.0
+    assert handle.kind == "success"
+    assert handle.title_text.value == "تم إنشاء النسخة"

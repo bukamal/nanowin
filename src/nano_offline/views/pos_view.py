@@ -2801,7 +2801,7 @@ class POSCenter:
                     if now - self._esc_armed_at <= 3.0:
                         self._esc_armed_at = 0.0
                         clear_cart()
-                        self.notify("تم تفريغ السلة — F8 للتراجع")
+                        self._undo_toast("تم تفريغ السلة")
                     else:
                         self._esc_armed_at = now
                         self.notify("اضغط Esc مرة أخرى خلال 3 ثوانٍ لتفريغ السلة")
@@ -3075,6 +3075,7 @@ class POSCenter:
                 self.cart.pop(row_key, None)
                 if row_key in self.cart_order:
                     self.cart_order.remove(row_key)
+                self._undo_toast("تم حذف البند من السلة")
             else:
                 row["qty"] = new_qty
             on_change()
@@ -3147,6 +3148,7 @@ class POSCenter:
             if row_key in self.cart_order:
                 self.cart_order.remove(row_key)
             on_change()
+            self._undo_toast("تم حذف البند من السلة")
 
         line_unit_price = _cart_line_price(row)
         line_total = line_unit_price * float(row["qty"])
@@ -3511,6 +3513,17 @@ class POSCenter:
             "cart": copy.deepcopy(self.cart),
             "order": list(self.cart_order),
         }
+
+    def _undo_toast(self, text: str, *, duration: int = 5200) -> None:
+        """Success/info toast with a real inline «تراجع» action (F8 equivalent)."""
+        if self._undo_state:
+            from nano_offline.core.toast import toast
+            toast(
+                self.page, text, kind="info", duration=duration,
+                action=("تراجع", self._restore_undo),
+            )
+        else:
+            self.notify(text)
 
     def _restore_undo(self) -> bool:
         state = self._undo_state

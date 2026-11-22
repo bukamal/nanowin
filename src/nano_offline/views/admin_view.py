@@ -979,9 +979,33 @@ class AdminCenter:
             )
 
         async def _build_backup_file(target: Path) -> tuple[Path, object]:
-            result = await asyncio.to_thread(self.ctx.backup.create_backup, target)
-            validation = await asyncio.to_thread(self.ctx.backup.validate_backup, result)
-            return result, validation
+            from nano_offline.core.toast import toast_progress
+
+            handle = toast_progress(
+                self.page, "جارٍ إنشاء النسخة الاحتياطية", subtitle=target.name,
+            )
+
+            def _progress(_stage, done, total, _unit, detail=""):
+                try:
+                    if total and float(total) > 0:
+                        handle.update(min(1.0, float(done) / float(total)),
+                                      subtitle=detail or "إنشاء النسخة")
+                    else:
+                        handle.update(None, subtitle=detail or "إنشاء النسخة")
+                except Exception:
+                    pass
+
+            try:
+                result = await asyncio.to_thread(
+                    self.ctx.backup.create_backup, target, progress=_progress
+                )
+                handle.update(1.0, subtitle="التحقق من سلامة النسخة")
+                validation = await asyncio.to_thread(self.ctx.backup.validate_backup, result)
+                handle.done("تم إنشاء النسخة الاحتياطية", kind="success")
+                return result, validation
+            except Exception as exc:
+                handle.done(f"تعذّر إنشاء النسخة: {exc}", kind="error", duration=3200)
+                raise
 
         async def _finalize_backup() -> None:
             keep = backup_settings.retention_count(self.ctx.settings)
