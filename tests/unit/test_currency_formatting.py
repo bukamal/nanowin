@@ -48,6 +48,18 @@ def test_display_value_adds_separators_and_respects_display_decimals():
     assert currency.format_display_value(1234.5, usd) == "1,234.50 $"
 
 
+def test_pinned_currency_ignores_the_display_currency():
+    """A column fixed to one currency (e.g. the items stock-value columns)
+    must format in that currency even when the global display is the other."""
+    usd_display = _settings("USD")
+    syp_display = _settings("SYP")
+
+    # SYP-stock total pinned to SYP while the display currency is USD.
+    assert currency.format_amount(1.0, usd_display, rate=13500, symbol="ل.س", code="SYP") == "13,500 ل.س"
+    # USD-stock total pinned to USD while the display currency is SYP.
+    assert currency.format_amount(1.5, syp_display, rate=1.0, symbol="$", decimals=2) == "1.50 $"
+
+
 def test_parse_display_input_round_trips_with_separators():
     usd = _settings("USD")
     syp = _settings("SYP")

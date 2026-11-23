@@ -4075,14 +4075,26 @@ class ItemsCenter:
                 }
                 if can_view_cost:
                     total_value = float(totals["inventory_value"])
+                    # Each stock-value column keeps its own currency in the
+                    # footer too (USD stays USD, SYP stays SYP) instead of
+                    # following the global display currency.
                     usd_symbol = str(
                         ctx.settings.get(currency.USD_DISPLAY_SYMBOL_KEY)
                         or currency.DEFAULT_USD_DISPLAY_SYMBOL
                     )
+                    syp_symbol = str(
+                        ctx.settings.get(currency.DISPLAY_SYMBOL_KEY)
+                        or currency.DEFAULT_DISPLAY_SYMBOL
+                    )
                     footer["_stock_usd"] = currency.format_amount(
                         total_value, rate=1.0, symbol=usd_symbol, decimals=2
                     )
-                    footer["_stock_syp"] = money(total_value)
+                    footer["_stock_syp"] = currency.format_amount(
+                        total_value,
+                        rate=currency.get_exchange_rate(ctx.settings),
+                        symbol=syp_symbol,
+                        code=currency.DISPLAY_CURRENCY_SYP,
+                    )
                 grid.set_footer(footer)
             else:
                 grid.set_footer(None)
