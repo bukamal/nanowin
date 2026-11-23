@@ -1,0 +1,16 @@
+name = "license"
+main = "worker.js"
+compatibility_date = "2026-05-12"
+
+# Same KV namespace the current Worker uses (LICENSEES / binding LICENSES).
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "9d830730022f40e0b60d0f060987f533"
+
+# Secrets are NOT stored here. Set them once with `wrangler secret put NAME` or
+# via the Cloudflare dashboard (Settings -> Variables and Secrets):
+#   SIGNING_KEY              RSA PKCS8 private key (PEM or base64) for /activate
+#   ADMIN_SECRET             shared secret guarding /admin/*
+#   TELEGRAM_TOKEN           bot token from @BotFather
+#   TELEGRAM_ADMIN_IDS       comma-separated numeric Telegram user ids
+#   TELEGRAM_WEBHOOK_SECRET  optional; must match the setWebhook secret_token
