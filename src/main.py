@@ -41,6 +41,7 @@ from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
 from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
+from nano_offline.services.license_service import REVALIDATE_INTERVAL_HOURS
 
 APP_DB = database_path()
 LEGACY_APP_DB = next((p for p in [Path(__file__).resolve().parent.parent / "data" / "nano.db", Path(__file__).resolve().parent.parent / "data" / "qeid.db"] if p.exists()), Path(__file__).resolve().parent.parent / "data" / "nano.db")
@@ -2166,6 +2167,24 @@ def main(page: ft.Page):
                 show_auth()
         else:
             show_activation()
+
+    async def _license_heartbeat_loop():
+        # Re-validate the license online periodically so a key that is disabled
+        # or expired in the Telegram bot takes effect without waiting for a
+        # manual re-activation. Offline devices keep working inside the grace
+        # window enforced by LicenseService.status(), so this never blocks a
+        # shop that has no connection.
+        await asyncio.sleep(15)
+        while True:
+            try:
+                status = await asyncio.to_thread(ctx.license.revalidate)
+                if status.activated and not status.valid and current_screen["value"] in ("shell", "auth"):
+                    show_activation()
+            except Exception:
+                pass
+            await asyncio.sleep(REVALIDATE_INTERVAL_HOURS * 3600)
+
+    page.run_task(_license_heartbeat_loop)
 
     SplashGate(page, on_ready=route_after_splash).show()
 
