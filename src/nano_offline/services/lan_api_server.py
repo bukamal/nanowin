@@ -30,7 +30,8 @@ log = get_logger("nano.lan.api")
 #: anything not listed here is refused (writes stay local/server-only).
 READ_METHODS = frozenset({
     # items
-    "items.list", "items.get", "items.find_by_barcode", "items.pos_catalog", "items.units",
+    "items.list", "items.get", "items.count", "items.summary",
+    "items.find_by_barcode", "items.pos_catalog", "items.units",
     "items.best_sellers", "items.best_sellers_stale", "items.refresh_best_sellers",
     "items.activity_summary", "items.movements", "items.list_barcodes", "items.components",
     "items.find_similar_names", "items.find_similar_barcodes",

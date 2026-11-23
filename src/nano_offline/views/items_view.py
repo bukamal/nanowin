@@ -293,7 +293,12 @@ class ItemsCenter:
         render_limit = {"n": 60}
         filter_boxes: dict[str, ft.Container] = {}
         sort_state = {"key": "name"}
-        LOW_STOCK = 5.0
+        # Low-stock cutoff is configurable from settings (default 5) so a shop
+        # can tune what "منخفض" means without a code change.
+        try:
+            LOW_STOCK = float(ctx.settings.get("ui.low_stock_threshold") or 5.0)
+        except (TypeError, ValueError):
+            LOW_STOCK = 5.0
 
         # ---- desktop grid (pilot) --------------------------------------
         def _status_tuple(row: dict):
@@ -383,7 +388,7 @@ class ItemsCenter:
         grid_sort = {"key": None, "dir": None}
         density_state = {"compact": ctx.settings.get("ui.items_density", "comfortable") == "compact"}
         selected_state = {"rows": []}
-        export_state = {"rows": []}
+        export_state: dict = {"rows": [], "query": None}
         columns_visibility = ColumnVisibility(
             columns=item_columns,
             settings=ctx.settings,
@@ -397,7 +402,22 @@ class ItemsCenter:
         columns_button = columns_visibility.button()
 
         async def export_csv(_=None) -> None:
-            rows = export_state["rows"]
+            rows = export_state.get("rows") or []
+            if not rows:
+                # The grid only holds one page; for the export pull the whole
+                # filtered set in one query (same search/filter/sort as shown).
+                query_ctx = export_state.get("query")
+                if query_ctx is not None:
+                    query, mode, order_by, descending, ids = query_ctx
+                    try:
+                        rows = await ctx.items.aio.list(
+                            query, None, 0,
+                            mode=mode, low_stock=LOW_STOCK,
+                            order_by=order_by, descending=descending, ids=ids,
+                        )
+                    except Exception as exc:
+                        notify(str(exc), kind="error")
+                        return
             if not rows:
                 notify("لا توجد بيانات للتصدير", kind="warning")
                 return
@@ -2005,13 +2025,18 @@ class ItemsCenter:
                 barcode = parsed.get("barcode")
                 state["match"] = None
                 if barcode:
-                    exact = next((i for i in ctx.items.list() if (i.get("barcode") or "") == barcode), None)
+                    # Indexed point lookup instead of scanning every item.
+                    exact = ctx.items.find_by_barcode(barcode)
                     if exact:
                         state["match"] = exact
                 if state["match"] is None and name:
                     similar = ctx.items.find_similar_names(name)
                     if similar:
-                        found = next((i for i in ctx.items.list() if i.get("name") == similar[0]), None)
+                        found = next(
+                            (i for i in ctx.items.list(search=similar[0], limit=5)
+                             if i.get("name") == similar[0]),
+                            None,
+                        )
                         state["match"] = found
                 state["merge_mode"] = "update" if state["match"] else "new"
                 state["nav"].next()  # advance to the confirm page
@@ -3983,125 +4008,73 @@ class ItemsCenter:
             ]
             page.open(confirm)
 
-        def _quiet_item_ids() -> set[int]:
-            """Stock item ids with no sale movements in the last 30 days."""
-            try:
-                return ctx.items.quiet_item_ids(30)
-            except Exception:
-                return set()
+        # Restock predictions are expensive to recompute; cache the id set for
+        # the lifetime of the screen (a fresh show_center rebuilds the cache).
+        restock_cache: dict = {"ids": None}
 
-        def refresh(_=None):
-            all_items = ctx.items.list()
-            query = (search.value or "").strip().casefold()
-            filtered = [
-                i for i in all_items
-                if not query
-                or query in str(i.get("name") or "").casefold()
-                or query in str(i.get("barcode") or "").casefold()
-            ]
-            mode = filter_state["mode"]
-            if mode == "stock":
-                filtered = [
-                    i for i in filtered
-                    if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0)
-                ]
-            elif mode == "composite":
-                filtered = [
-                    i for i in filtered
-                    if i.get("item_type") == "مخزون" and int(i.get("is_composite") or 0)
-                ]
-            elif mode == "service":
-                filtered = [i for i in filtered if i.get("item_type") == "خدمة"]
-            elif mode == "low":
-                filtered = [
-                    i for i in filtered
-                    if i.get("item_type") == "مخزون"
-                    and not int(i.get("is_composite") or 0)
-                    and float(i.get("quantity") or 0) < LOW_STOCK
-                ]
-            elif mode == "no_barcode":
-                filtered = [i for i in filtered if not str(i.get("barcode") or "").strip()]
-            elif mode == "no_price":
-                filtered = [
-                    i for i in filtered
-                    if i.get("item_type") == "مخزون"
-                    and not int(i.get("is_composite") or 0)
-                    and float(i.get("selling_price") or 0) <= 0
-                ]
-            elif mode == "no_movement":
-                # Items with stock but no sales movement in last 30 days
-                quiet_ids = _quiet_item_ids()
-                filtered = [
-                    i for i in filtered
-                    if i.get("item_type") == "مخزون"
-                    and not int(i.get("is_composite") or 0)
-                    and float(i.get("quantity") or 0) > 0
-                    and int(i.get("id") or 0) in quiet_ids
-                ]
-            elif mode == "restock":
+        async def _restock_ids() -> list[int]:
+            if restock_cache["ids"] is None:
                 try:
-                    preds = self.ctx.dashboard.restock_predictions(limit=200)
-                    pred_ids = {int(p["item_id"]) for p in preds}
+                    preds = await asyncio.to_thread(self.ctx.dashboard.restock_predictions, 200)
+                    restock_cache["ids"] = [int(p["item_id"]) for p in preds]
                 except Exception:
-                    pred_ids = set()
-                filtered = [i for i in filtered if int(i.get("id") or 0) in pred_ids]
-            sort_key = sort_state["key"]
-            if sort_key == "price_desc":
-                filtered.sort(key=lambda i: float(i.get("selling_price") or 0), reverse=True)
-            elif sort_key == "price_asc":
-                filtered.sort(key=lambda i: float(i.get("selling_price") or 0))
-            elif sort_key == "qty_asc":
-                # Services have no meaningful quantity -- push them to the
-                # end instead of letting their 0 look like "needs restock".
-                filtered.sort(key=lambda i: (i.get("item_type") != "مخزون", float(i.get("quantity") or 0)))
-            # "name" is the repository's own default ORDER BY i.name -- no
-            # re-sort needed, and re-sorting would just be casefold(name)
-            # busywork for the common case.
-            # Header-click sort (DataGrid) runs last and overrides the preset
-            # dropdown for the chosen column.
+                    restock_cache["ids"] = []
+            return restock_cache["ids"]
+
+        refresh_token = {"n": 0}
+
+        def _sort_args() -> tuple[str, bool]:
+            """(order_by, descending) for the current header/dropdown sort."""
             if grid_sort["key"]:
-                header_key = grid_sort["key"]
-                reverse = grid_sort["dir"] == "desc"
+                return grid_sort["key"], grid_sort["dir"] == "desc"
+            key = sort_state["key"]
+            if key == "price_desc":
+                return "price_desc", True
+            if key == "price_asc":
+                return "price_asc", False
+            if key == "qty_asc":
+                return "qty_asc", False
+            return "name", False
 
-                def header_sort_value(item):
-                    value = item.get(header_key)
-                    if header_key in ("quantity", "purchase_price", "selling_price"):
-                        try:
-                            return float(value or 0)
-                        except (TypeError, ValueError):
-                            return 0.0
-                    return str(value or "")
-
-                filtered.sort(key=header_sort_value, reverse=reverse)
-            inventory_value = sum(float(i.get("quantity") or 0) * float(i.get("average_cost") or 0) for i in all_items if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0))
-            low_count = sum(1 for i in all_items if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0) and float(i.get("quantity") or 0) < LOW_STOCK)
-            service_count = sum(1 for i in all_items if i.get("item_type") == "خدمة")
+        async def _render_items(token: int) -> None:
+            query = (search.value or "").strip()
+            mode = filter_state["mode"]
+            order_by, descending = _sort_args()
+            ids = await _restock_ids() if mode == "restock" else None
+            try:
+                rows, totals, globals_ = await asyncio.gather(
+                    ctx.items.aio.list(
+                        query, render_limit["n"], 0,
+                        mode=mode, low_stock=LOW_STOCK,
+                        order_by=order_by, descending=descending, ids=ids,
+                    ),
+                    ctx.items.aio.summary(query, mode=mode, low_stock=LOW_STOCK, ids=ids),
+                    ctx.items.aio.summary(),
+                )
+            except Exception as exc:
+                notify(str(exc), kind="error")
+                return
+            if token != refresh_token["n"]:
+                return  # a newer query already landed; drop this stale page
+            total = int(totals["count"])
             summary_row.controls = metric_controls([
-                kpi_card("عدد المواد", str(len(all_items)), ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY),
-                kpi_card("قيمة المخزون", money(inventory_value), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS),
-                kpi_card("مخزون منخفض", str(low_count), ft.Icons.WARNING_AMBER_ROUNDED, Colors.DANGER, on_tap=lambda _: set_filter("low")),
-                kpi_card("الخدمات", str(service_count), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")),
+                kpi_card("عدد المواد", str(int(globals_["count"])), ft.Icons.INVENTORY_2_OUTLINED, Colors.PRIMARY),
+                kpi_card("قيمة المخزون", money(globals_["inventory_value"]), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS),
+                kpi_card("مخزون منخفض", str(int(globals_["low_count"])), ft.Icons.WARNING_AMBER_ROUNDED, Colors.DANGER, on_tap=lambda _: set_filter("low")),
+                kpi_card("الخدمات", str(int(globals_["service_count"])), ft.Icons.HANDYMAN_OUTLINED, Colors.PURPLE, on_tap=lambda _: set_filter("service")),
             ])
             # Desktop spreadsheet grid, driven by search/filters/sort.
-            export_state["rows"] = filtered
+            export_state["rows"] = []
+            export_state["query"] = (query, mode, order_by, descending, ids)
             grid.set_hidden_keys(columns_visibility.hidden_keys)
-            shown = filtered[: render_limit["n"]]
-            grid.set_rows(shown)
-            if filtered:
-                stock_rows = [
-                    i for i in filtered
-                    if i.get("item_type") == "مخزون" and not int(i.get("is_composite") or 0)
-                ]
-                total_qty = sum(float(i.get("quantity") or 0) for i in stock_rows)
+            grid.set_rows(rows)
+            if total:
                 footer = {
-                    "name": f"{len(filtered)} مادة",
-                    "quantity": qty_fmt(total_qty),
+                    "name": f"{total} مادة",
+                    "quantity": qty_fmt(totals["total_quantity"]),
                 }
                 if can_view_cost:
-                    total_value = sum(
-                        float(i.get("quantity") or 0) * float(i.get("average_cost") or 0)
-                        for i in stock_rows
-                    )
+                    total_value = float(totals["inventory_value"])
                     usd_symbol = str(
                         ctx.settings.get(currency.USD_DISPLAY_SYMBOL_KEY)
                         or currency.DEFAULT_USD_DISPLAY_SYMBOL
@@ -4113,11 +4086,11 @@ class ItemsCenter:
                 grid.set_footer(footer)
             else:
                 grid.set_footer(None)
-            if len(filtered) > len(shown):
+            if total > len(rows):
                 from nano_offline.components import load_more_control
                 grid_more.content = load_more_control(
-                    shown=len(shown),
-                    total=len(filtered),
+                    shown=len(rows),
+                    total=total,
                     on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()),
                 )
                 grid_more.visible = True
@@ -4126,14 +4099,45 @@ class ItemsCenter:
             list_switch.content = desktop_list
             update_filter_styles(); page.update()
 
+        def _schedule_render(delay: float) -> None:
+            refresh_token["n"] += 1
+            token = refresh_token["n"]
+
+            async def _task() -> None:
+                if delay:
+                    await asyncio.sleep(delay)
+                    if refresh_token["n"] != token:
+                        return  # coalesced away by a newer keystroke
+                await _render_items(token)
+
+            try:
+                page.run_task(_task)
+            except Exception:
+                # No task runner (headless build/legacy): render inline so the
+                # screen still populates instead of silently staying empty.
+                try:
+                    asyncio.get_event_loop().run_until_complete(_render_items(token))
+                except Exception:
+                    pass
+
+        def refresh(_=None):
+            _schedule_render(0.0)
+
         def refresh_from_search(e=None):
             # A new search term makes the old page size meaningless (it was
             # sized against a different, larger result set) -- start over
             # from the first page so "تحميل المزيد" reflects the new query.
             render_limit["n"] = 60
-            refresh()
+            _schedule_render(0.25)  # coalesce fast typing into one query
 
         search.on_change = refresh_from_search
+
+        def search_submit(_=None):
+            # Enter bypasses the debounce and renders the current query now.
+            render_limit["n"] = 60
+            refresh()
+
+        search.on_submit = search_submit
         # Horizontally scrollable instead of wrap=True: on narrow phones the
         # old wrap=True Row let each chip's Container claim the full row
         # width (one chip per visual line -- "مكتظة جدا" / too crowded).

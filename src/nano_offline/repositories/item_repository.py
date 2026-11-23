@@ -33,88 +33,223 @@ class ItemRepository(Offloadable):
     def __init__(self, db: Database):
         self.db = db
 
+    #: Screen filter modes shared by :meth:`list`/:meth:`count`/:meth:`summary`
+    #: so the whole Materials list is answered by one indexed SQL query per
+    #: refresh instead of pulling every row and filtering it in Python.
+    _FILTER_MODES = frozenset(
+        {"all", "stock", "composite", "service", "low", "no_barcode", "no_price", "no_movement", "restock"}
+    )
+
+    #: Sort keys the grid/screen can request -> SQL expression (alias ``i``).
+    _SORT_EXPRS = {
+        "name": "i.name",
+        "category_name": "COALESCE(c.name, '')",
+        "unit_name": "COALESCE(u.name, '')",
+        "item_type": "i.item_type",
+        "quantity": "COALESCE(i.quantity, 0)",
+        "purchase_price": "COALESCE(i.purchase_price, 0)",
+        "selling_price": "COALESCE(i.selling_price, 0)",
+    }
+
+    def _is_fts(self, conn: sqlite3.Connection, search: str) -> bool:
+        return bool(search) and search_index.is_fts_eligible(conn, "items_fts", search)
+
+    def _where_clauses(
+        self, search: str, use_fts: bool, mode: str, low_stock: float, ids
+    ) -> tuple[str, list]:
+        """WHERE fragment + params for the Materials screen (alias ``i``)."""
+        parts: list[str] = []
+        params: list = []
+        if search:
+            if use_fts:
+                parts.append("items_fts MATCH ?")
+                params.append(search_index.match_expression(search))
+            else:
+                # Literal-substring LIKE (escaped % and _, matching FTS semantics).
+                parts.append("(i.name LIKE ? ESCAPE '\\' OR i.barcode LIKE ? ESCAPE '\\')")
+                params.extend(
+                    [search_index.like_pattern(search), search_index.like_pattern(search)]
+                )
+        mode = (mode or "all").strip().lower()
+        if mode not in self._FILTER_MODES:
+            mode = "all"
+        stock = "(i.item_type = 'مخزون' AND COALESCE(i.is_composite, 0) = 0)"
+        if mode == "stock":
+            parts.append(stock)
+        elif mode == "composite":
+            parts.append("(i.item_type = 'مخزون' AND COALESCE(i.is_composite, 0) = 1)")
+        elif mode == "service":
+            parts.append("i.item_type = 'خدمة'")
+        elif mode == "low":
+            parts.append(stock)
+            parts.append("COALESCE(i.quantity, 0) < ?")
+            params.append(float(low_stock))
+        elif mode == "no_barcode":
+            parts.append("COALESCE(TRIM(i.barcode), '') = ''")
+        elif mode == "no_price":
+            parts.append(stock)
+            parts.append("COALESCE(i.selling_price, 0) <= 0")
+        elif mode == "no_movement":
+            parts.append(stock)
+            parts.append("COALESCE(i.quantity, 0) > 0")
+            parts.append(
+                "NOT EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id "
+                "AND im.movement_type = 'sale' AND im.movement_date >= date('now', ?))"
+            )
+            params.append("-30 day")
+        elif mode == "restock":
+            id_list = [int(x) for x in (ids or [])]
+            if not id_list:
+                parts.append("1 = 0")
+            else:
+                placeholders = ",".join("?" for _ in id_list)
+                parts.append(f"i.id IN ({placeholders})")
+                params.extend(id_list)
+        return (" AND ".join(parts), params)
+
+    def _order_clause(self, order_by: str, descending: bool) -> str:
+        key = (order_by or "name").strip()
+        if key == "price_desc":
+            return "COALESCE(i.selling_price, 0) DESC, i.name"
+        if key == "price_asc":
+            return "COALESCE(i.selling_price, 0) ASC, i.name"
+        if key == "qty_asc":
+            # Services have no meaningful quantity -- push them to the end.
+            return "(i.item_type != 'مخزون') ASC, COALESCE(i.quantity, 0) ASC, i.name"
+        expr = self._SORT_EXPRS.get(key, "i.name")
+        direction = "DESC" if descending else "ASC"
+        if key == "name":
+            return f"i.name {direction}"
+        return f"{expr} {direction}, i.name"
+
+    def _list_sql(
+        self, search: str, use_fts: bool, mode: str, low_stock: float, order_by: str,
+        descending: bool, ids, limit: int | None, offset: int,
+    ) -> tuple[str, list]:
+        sql = _ITEM_LIST_SQL
+        params: list = []
+        if use_fts:
+            # FTS5 trigram index answering the same substring semantics
+            # (name OR barcode) from an index instead of a full scan.
+            sql += " JOIN items_fts ON items_fts.rowid = i.id"
+        where, wparams = self._where_clauses(search, use_fts, mode, low_stock, ids)
+        if where:
+            sql += " WHERE " + where
+            params.extend(wparams)
+        sql += " ORDER BY " + self._order_clause(order_by, descending)
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([int(limit), int(offset)])
+        return sql, params
+
     @blocking
-    def list(self, search: str = "", limit: int | None = None, offset: int = 0) -> list[dict]:
-        """List items, optionally filtered by name/barcode.
+    def list(
+        self,
+        search: str = "",
+        limit: int | None = None,
+        offset: int = 0,
+        *,
+        mode: str = "all",
+        low_stock: float = 5.0,
+        order_by: str = "name",
+        descending: bool = False,
+        ids=None,
+    ) -> list[dict]:
+        """List items, optionally searched/filtered/sorted and paged in SQL.
 
         ``limit``/``offset`` are optional so existing callers that need the
         full set (stats, exports, pickers) keep working unchanged -- but any
         screen rendering this as a scrollable list should pass a ``limit``
         (e.g. 50) and page with ``offset`` instead of pulling every row and
-        building a widget for each one. That's what actually keeps the UI
-        fast once there are thousands of items, not just a fast query.
+        building a widget for each one. ``mode``/``low_stock``/``order_by``
+        push the Materials screen's chip filters and header sort into the
+        query so every keystroke is one bounded, indexed query.
         """
         search = search.strip()
         with self.db.connect() as conn:
-            use_fts = search_index.is_fts_eligible(conn, "items_fts", search)
+            use_fts = self._is_fts(conn, search)
             try:
-                sql = _ITEM_LIST_SQL
-                params = []
-                if use_fts:
-                    # FTS5 trigram index answering the same substring semantics
-                    # (name OR barcode) from an index instead of a full scan.
-                    sql += " JOIN items_fts ON items_fts.rowid = i.id"
-                if search:
-                    if use_fts:
-                        sql += " WHERE items_fts MATCH ?"
-                        params.append(search_index.match_expression(search))
-                    else:
-                        # Literal-substring LIKE (escaped % and _, matching the
-                        # FTS semantics precisely). Full scan -- fine at current
-                        # data sizes given the item_id/invoice_lines index.
-                        sql += " WHERE i.name LIKE ? ESCAPE '\\' OR i.barcode LIKE ? ESCAPE '\\'"
-                        params.extend(
-                            [search_index.like_pattern(search), search_index.like_pattern(search)]
-                        )
-                sql += " ORDER BY i.name"
-                if limit is not None:
-                    sql += " LIMIT ? OFFSET ?"
-                    params.extend([int(limit), int(offset)])
+                sql, params = self._list_sql(
+                    search, use_fts, mode, low_stock, order_by, descending, ids, limit, offset
+                )
                 return [dict(r) for r in conn.execute(sql, params).fetchall()]
             except sqlite3.OperationalError:
                 # Index vanished or cannot be queried (e.g. tokenizer missing on
                 # this build). Fall back to the always-available LIKE path.
-                return self._list_like(conn, search, limit, offset)
+                sql, params = self._list_sql(
+                    search, False, mode, low_stock, order_by, descending, ids, limit, offset
+                )
+                return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
-    def _list_like(
-        self, conn: sqlite3.Connection, search: str, limit: int | None, offset: int
-    ) -> list[dict]:
-        sql = _ITEM_LIST_SQL
-        params: list = []
-        if search:
-            sql += " WHERE i.name LIKE ? ESCAPE '\\' OR i.barcode LIKE ? ESCAPE '\\'"
-            params.extend([search_index.like_pattern(search), search_index.like_pattern(search)])
-        sql += " ORDER BY i.name"
-        if limit is not None:
-            sql += " LIMIT ? OFFSET ?"
-            params.extend([int(limit), int(offset)])
-        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    def _count_sql(
+        self, search: str, use_fts: bool, mode: str, low_stock: float, ids
+    ) -> tuple[str, list]:
+        sql = "SELECT COUNT(*) FROM items i"
+        if use_fts:
+            sql += " JOIN items_fts ON items_fts.rowid = i.id"
+        where, params = self._where_clauses(search, use_fts, mode, low_stock, ids)
+        if where:
+            sql += " WHERE " + where
+        return sql, params
 
     @blocking
-    def count(self, search: str = "") -> int:
-        """Total items matching ``search`` (name/barcode substring) without paging."""
+    def count(self, search: str = "", *, mode: str = "all", low_stock: float = 5.0, ids=None) -> int:
+        """Total items matching ``search`` + chip filter, without paging."""
         search = search.strip()
         with self.db.connect() as conn:
-            if self.db.fts_tokenizer == search_index.TOKENIZER and search_index.is_fts_eligible(
-                conn, "items_fts", search
-            ):
-                try:
-                    return int(
-                        conn.execute(
-                            "SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH ?",
-                            (search_index.match_expression(search),),
-                        ).fetchone()[0]
-                    )
-                except sqlite3.OperationalError:
-                    pass
-            if search:
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM items WHERE name LIKE ? ESCAPE '\\' OR barcode LIKE ? ESCAPE '\\'",
-                    (search_index.like_pattern(search), search_index.like_pattern(search)),
-                ).fetchone()
-            else:
-                row = conn.execute("SELECT COUNT(*) FROM items").fetchone()
-            return int(row[0])
+            use_fts = self._is_fts(conn, search)
+            try:
+                sql, params = self._count_sql(search, use_fts, mode, low_stock, ids)
+                return int(conn.execute(sql, params).fetchone()[0])
+            except sqlite3.OperationalError:
+                sql, params = self._count_sql(search, False, mode, low_stock, ids)
+                return int(conn.execute(sql, params).fetchone()[0])
+
+    @blocking
+    def summary(self, search: str = "", *, mode: str = "all", low_stock: float = 5.0, ids=None) -> dict:
+        """Aggregate stats for the Materials KPIs/footer in one query.
+
+        Returns ``count``, ``total_quantity`` (stock, non-composite),
+        ``inventory_value`` (qty x average cost), ``low_count`` and
+        ``service_count`` over the matching set -- so the screen never has to
+        load every row just to sum a few columns.
+        """
+        search = search.strip()
+        with self.db.connect() as conn:
+            use_fts = self._is_fts(conn, search)
+            try:
+                return self._summary_impl(conn, search, use_fts, mode, low_stock, ids)
+            except sqlite3.OperationalError:
+                return self._summary_impl(conn, search, False, mode, low_stock, ids)
+
+    def _summary_impl(
+        self, conn: sqlite3.Connection, search: str, use_fts: bool, mode: str,
+        low_stock: float, ids,
+    ) -> dict:
+        stock = "(i.item_type = 'مخزون' AND COALESCE(i.is_composite, 0) = 0)"
+        sql = (
+            "SELECT COUNT(*) AS count, "
+            f"COALESCE(SUM(CASE WHEN {stock} THEN i.quantity ELSE 0 END), 0) AS total_quantity, "
+            f"COALESCE(SUM(CASE WHEN {stock} THEN i.quantity * COALESCE(i.average_cost, 0) ELSE 0 END), 0) AS inventory_value, "
+            f"COALESCE(SUM(CASE WHEN {stock} AND COALESCE(i.quantity, 0) < ? THEN 1 ELSE 0 END), 0) AS low_count, "
+            "COALESCE(SUM(CASE WHEN i.item_type = 'خدمة' THEN 1 ELSE 0 END), 0) AS service_count "
+            "FROM items i"
+        )
+        params: list = [float(low_stock)]
+        if use_fts:
+            sql += " JOIN items_fts ON items_fts.rowid = i.id"
+        where, wparams = self._where_clauses(search, use_fts, mode, low_stock, ids)
+        if where:
+            sql += " WHERE " + where
+            params.extend(wparams)
+        row = conn.execute(sql, params).fetchone()
+        return {
+            "count": int(row["count"]),
+            "total_quantity": float(row["total_quantity"]),
+            "inventory_value": float(row["inventory_value"]),
+            "low_count": int(row["low_count"]),
+            "service_count": int(row["service_count"]),
+        }
 
     @blocking
     def get(self, item_id: int) -> dict | None:
