@@ -1778,7 +1778,7 @@ class InvoiceCenter:
         # --------------------------------------------------------------- grid
         def default_display_price(item_row: dict) -> float:
             price_key = "selling_price" if (type_dd.value or "sale") == "sale" else "purchase_price"
-            return round(currency.to_display(float(item_row.get(price_key) or 0), rate), currency.decimals_for(settings, "price"))
+            return currency.display_price(float(item_row.get(price_key) or 0), settings, rate=rate)
 
         def row_formatter(col, value, row):
             if col.key == "item":
@@ -2436,7 +2436,7 @@ class InvoiceCenter:
             lines_grid.set_cell(index, "item", item_id)
             price_usd = line.get("unit_price")
             if price_usd:
-                lines_grid.set_cell(index, "price", round(currency.to_display(float(price_usd), rate), currency.decimals_for(settings, "price")))
+                lines_grid.set_cell(index, "price", currency.display_price(float(price_usd), settings, rate=rate))
             elif item_row is not None:
                 lines_grid.set_cell(index, "price", default_display_price(item_row))
             _fill_derived(index)
@@ -2622,7 +2622,7 @@ class InvoiceCenter:
             if unit_row is not None:
                 override = unit_row.get(key)
                 if override not in (None, ""):
-                    return round(currency.to_display(float(override), rate), currency.decimals_for(settings, "price"))
+                    return currency.display_price(float(override), settings, rate=rate)
             base = currency.to_display(float(item_row.get(key) or 0), rate)
             factor = float((unit_row or {}).get("conversion_factor") or 1)
             return round(base * factor, currency.decimals_for(settings, "price"))
@@ -3739,7 +3739,7 @@ class InvoiceCenter:
                     "unit": unit_id,
                     "_factor": float(line.get("conversion_factor") or 1),
                     "qty": float(line.get("quantity") or 1),
-                    "price": round(currency.to_display(float(line.get("unit_price") or 0), rate), currency.decimals_for(settings, "price")),
+                    "price": currency.display_price(float(line.get("unit_price") or 0), settings, rate=rate),
                 })
             initial_tab = {
                 "invoice_id": int(existing["id"]),
@@ -4992,7 +4992,7 @@ class InvoiceCenter:
             price_key = "selling_price" if (type_dd.value or self.invoice_type) == "sale" else "purchase_price"
             def default_display_price(item_row: dict) -> float:
                 price_usd = float(item_row.get(price_key) or 0)
-                return round(currency.to_display(price_usd, rate), currency.decimals_for(self.ctx.settings, "price"))
+                return currency.display_price(price_usd, self.ctx.settings, rate=rate)
 
             def row_formatter(col, value, row):
                 if col.key == "item":

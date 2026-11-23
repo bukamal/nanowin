@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,11 +16,13 @@ from nano_offline.core.fsutil import tempdir
 
 def main() -> None:
     # --- money module basics: the classical 0.1+0.2 and 0.1*3 traps --------
+    tenth = money.CENTS_PER_UNIT // 10
     assert money.quantized(0.1 + 0.2) == 0.3
     assert money.quantized(0.1 * 3) == 0.3
-    assert money.to_cents(0.3) == 300000 and money.to_cents(money.from_cents(300000)) == 300000
+    assert money.to_cents(0.3) == 3 * tenth and money.to_cents(money.from_cents(3 * tenth)) == 3 * tenth
     assert float(money.quantize_sum([0.1, 0.2, 0.4])) == 0.7
-    assert float(money.quantize("0.0000005")) == 0.000001  # round-half-up
+    # round-half-up at the storage quantum (1e-8 at 8 places)
+    assert money.quantize(Decimal(5).scaleb(-money.MONEY_DECIMALS - 1)) == Decimal(1).scaleb(-money.MONEY_DECIMALS)
 
     with tempdir(prefix="nano-money-consist-") as td:
         ctx = AppContext.create(Path(td) / "nano.db")
@@ -66,12 +69,12 @@ def main() -> None:
         # Sanity: stored values must already be clean cents even for the
         # float-prone amounts the services received.
         with ctx.db.connect() as conn:
-            assert money.to_cents(float(conn.execute("SELECT total FROM invoices WHERE id=?", (sale_stock,)).fetchone()[0])) == 300000
-            assert money.to_cents(float(conn.execute("SELECT total FROM invoices WHERE id=?", (sale_service,)).fetchone()[0])) == 600000
+            assert money.to_cents(float(conn.execute("SELECT total FROM invoices WHERE id=?", (sale_stock,)).fetchone()[0])) == 3 * tenth
+            assert money.to_cents(float(conn.execute("SELECT total FROM invoices WHERE id=?", (sale_service,)).fetchone()[0])) == 6 * tenth
             line_total = conn.execute(
                 "SELECT total FROM invoice_lines WHERE invoice_id=?", (sale_stock,)
             ).fetchone()[0]
-            assert money.to_cents(float(line_total)) == 300000
+            assert money.to_cents(float(line_total)) == 3 * tenth
 
         # 1) A database written through the services must be fully consistent.
         issues = money_consistency.run_checks(ctx.db.connect())
@@ -79,8 +82,11 @@ def main() -> None:
 
         # 2) Injecting sub-quantum noise must be caught immediately.
         with ctx.db.transaction() as conn:
+            # A non-quantum delta (7.5e-8, i.e. 0.75 of a 1e-7 storage quantum)
+            # must be flagged as unclean storage and, once rounded, break both
+            # the line and invoice total checks.
             conn.execute(
-                "UPDATE invoice_lines SET total=total+0.03456789 WHERE invoice_id=?",
+                "UPDATE invoice_lines SET total=total+0.000000075 WHERE invoice_id=?",
                 (sale_stock,),
             )
         issues = money_consistency.run_checks(ctx.db.connect())

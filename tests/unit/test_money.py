@@ -13,8 +13,8 @@ from nano_offline.core import money
     [
         (0.1 + 0.2, 0.3),
         (0.1 * 3, 0.3),
-        (1.0000005, 1.000001),  # half-up, not banker's
-        (2.6750005, 2.675001),
+        (1.00000005, 1.0000001),  # half-up, not banker's
+        (2.67500005, 2.6750001),
         ("10.00", 10.0),
         (None, 0.0),
         ("", 0.0),
@@ -27,7 +27,7 @@ def test_quantized_half_up(raw, expected):
 
 
 def test_quantize_returns_decimal():
-    assert money.quantize("0.0000005") == Decimal("0.000001")
+    assert money.quantize("0.00000005") == Decimal("0.0000001")
     assert isinstance(money.quantize(1), Decimal)
 
 
@@ -42,8 +42,8 @@ def test_cents_roundtrip():
 
 
 def test_to_cents_exact_int():
-    assert money.to_cents(0.3) == 300000
-    assert money.to_cents("1.10") == 1100000
+    assert money.to_cents(0.3) == 3 * money.CENTS_PER_UNIT // 10
+    assert money.to_cents("1.10") == 11 * money.CENTS_PER_UNIT // 10
     assert isinstance(money.to_cents(2.222), int)
 
 
@@ -53,10 +53,11 @@ def test_higher_decimals_allowed():
     # sub-quantum precision only survives via str/Decimal inputs.
     assert money.quantize(Decimal("1.234567891"), decimals=8) == Decimal("1.23456789")
     assert money.quantize("1.234567891", decimals=8) == Decimal("1.23456789")
-    assert money.quantize(1.234567891, decimals=8) == Decimal("1.23456800")
+    # A float input is first snapped to the 7-place storage quantum.
+    assert money.quantize(1.234567891, decimals=8) == Decimal("1.23456790")
 
 
 def test_float_repr_edge_cases():
     # 2.0 must read as the integer 2, not 1.99999... expansions
     assert money.quantized(2.0) == 2.0
-    assert money.to_cents(1000000.01) == 1000000010000
+    assert money.to_cents(1000000.01) == 100000001 * money.CENTS_PER_UNIT // 100

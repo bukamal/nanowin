@@ -12,14 +12,15 @@ money value computed and stored by the accounting services is quantized to
 ever holds clean quantum values. Reads/sums then have nothing exotic left
 to accumulate.
 
-Why 6 and not 2: the stored currency is USD but the primary display
-currency is SYP (≈13500 per USD), so one USD cent spans ~135 SYP -- any
-SYP price that is not a multiple of 135 lost up to 134 SYP on every
-write/read round-trip (e.g. 15000 SYP came back as 14985). Six places
-keep every whole-pound figure exact both in 0-decimal displays and in
-2-decimal input fields (worst-case error ≈ 0.007 SYP, far below either
-display step), while ledger sums stay uniformly quantized, exactly as
-before.
+Why so many places: the stored currency is USD but the primary display
+currency is SYP (thousands per USD), so a typed whole-pound price is a
+USD value with a long decimal tail (5000 / 13000 = 0.3846153846...). If it
+is quantized too coarsely the round-trip drifts: at six places the
+worst-case error is ``rate * 0.5e-6`` SYP ≈ 0.007 at rate 13000, which is
+enough to render a whole 5000 as 4999.99 (and 6000 as 5999.99). Seven
+places push the error to ``rate * 0.5e-7`` SYP (≈0.0007 at rate 13000), so
+whole-pound figures survive the round-trip while float64 still has enough
+headroom for large balances; ledger sums stay uniformly quantized.
 
 Helpers:
 
@@ -46,7 +47,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Iterable
 
-MONEY_DECIMALS = 6
+MONEY_DECIMALS = 7
 CENTS_PER_UNIT = 10**MONEY_DECIMALS
 _CENTS_QUANTUM = Decimal(1).scaleb(-MONEY_DECIMALS)
 

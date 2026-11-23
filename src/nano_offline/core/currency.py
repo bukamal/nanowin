@@ -27,6 +27,8 @@ instead of rounding to zero. USD always shows two decimals.
 
 from __future__ import annotations
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from nano_offline.core import precision_settings
 
 STORED_CURRENCY_CODE = "USD"
@@ -219,6 +221,69 @@ def _trim_trailing_zeros(text: str) -> str:
     return text
 
 
+def _round_half_up(value: float | int | None, decimals: int) -> Decimal:
+    """Round a display amount half-up, the way money is normally rounded.
+
+    ``f"{v:.2f}"`` uses binary floating point + round-half-even, so a stored
+    value that should read 5000.00 (e.g. 4999.995 after a USD<->SYP
+    round-trip) formats as "4999.99". Decimal half-up turns it back into
+    "5000.00" regardless of the underlying binary representation.
+    """
+    quantum = Decimal(1).scaleb(-int(decimals))
+    return Decimal(repr(float(value or 0))).quantize(quantum, rounding=ROUND_HALF_UP)
+
+
+def round_half_up(value: float | int | None, decimals: int) -> float:
+    """Half-up rounding to ``decimals`` places, as a float.
+
+    Use instead of the builtin ``round`` (round-half-even + binary skew) when
+    seeding an editable cell with a display amount, so a stored price that
+    should read 5000.0 does not become 4999.99.
+    """
+    return float(_round_half_up(value, decimals))
+
+
+def _snap_display(value: float, code: str, rate: float | None) -> float:
+    """Snap a SYP display value to the nearest whole pound when it sits within
+    the USD<->SYP storage round-trip margin.
+
+    Rows written before the storage quantum was widened hold whole-pound
+    prices that read back a hair off (e.g. 5000 stored at 6 places reads
+    4999.99..5000.01 depending on the rate). A SYP price that is within
+    ``rate * 1e-6`` of a whole pound was clearly entered as that whole pound,
+    so it is shown as such; fractional SYP (small rates) is untouched.
+    """
+    if str(code or "").upper() != DISPLAY_CURRENCY_SYP:
+        return float(value)
+    try:
+        rate_value = float(rate or 0)
+    except (TypeError, ValueError):
+        return float(value)
+    if rate_value <= 0:
+        return float(value)
+    nearest = float(round(float(value)))
+    if abs(float(value) - nearest) <= rate_value * 1e-6:
+        return nearest
+    return float(value)
+
+
+def display_price(amount_usd: float | int | None, settings=None, *, rate: float | None = None, field: str = "price") -> float:
+    """Stored USD -> display-currency price, snapped and rounded half-up.
+
+    This is what editable price cells are seeded with: it applies the same
+    whole-pound snapping as the display formatters so the cell value and the
+    formatted text agree.
+    """
+    if rate is None:
+        rate = get_effective_rate(settings)
+    code = get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
+    value = _snap_display(to_display(amount_usd, rate), code, rate)
+    decimals = precision_settings.decimals(settings, field) if settings is not None else None
+    if decimals is None:
+        decimals = _default_decimals(settings) if settings is not None else 2
+    return round_half_up(value, decimals)
+
+
 def decimals_for(settings, field: str = "total") -> int:
     """Decimal places used for arithmetic rounding for ``field``.
 
@@ -339,7 +404,7 @@ def format_amount(
     target_code = str(code or "").upper() if code else (
         get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
     )
-    value = to_display(amount_usd, rate)
+    value = _snap_display(to_display(amount_usd, rate), target_code, rate)
     explicit = precision_settings.decimals(settings, field) if settings is not None else None
     trim = False
     if decimals is None:
@@ -348,14 +413,17 @@ def format_amount(
             trim = target_code == DISPLAY_CURRENCY_SYP
         else:
             decimals = explicit
-    text = f"{value:,.{decimals}f}"
+    text = f"{_round_half_up(value, decimals):,.{decimals}f}"
     if trim:
         text = _trim_trailing_zeros(text)
     return _amount_with_symbol(text, symbol) if with_symbol else text
 
 
 def _round_for_input(value: float, *, decimals: int = 2) -> str:
-    return f"{value:.0f}" if abs(value - round(value)) < 0.005 else f"{value:.{decimals}f}"
+    rounded = _round_half_up(value, decimals)
+    if rounded == rounded.to_integral_value():
+        return f"{int(rounded)}"
+    return f"{rounded:.{decimals}f}"
 
 
 def to_input_text(amount_usd: float | int | None, settings=None, *, rate: float | None = None) -> str:
@@ -363,7 +431,8 @@ def to_input_text(amount_usd: float | int | None, settings=None, *, rate: float 
     in the currently displayed currency."""
     if rate is None:
         rate = get_effective_rate(settings)
-    value = to_display(amount_usd, rate)
+    code = get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
+    value = _snap_display(to_display(amount_usd, rate), code, rate)
     # Whole figures are the common case; keep decimals only when they matter.
     return _round_for_input(value)
 
@@ -376,17 +445,16 @@ def format_display_input(value: float | int | None, settings=None, *, field: str
     the value can be read back with ``float(...)``. Keeps wide-denomination
     figures like a SYP total whole so the paid field matches the shown total.
     """
-    numeric = float(value or 0)
+    code = get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
+    rate = get_exchange_rate(settings) if settings is not None else None
+    numeric = _snap_display(float(value or 0), code, rate)
     explicit = precision_settings.decimals(settings, field) if settings is not None else None
     if decimals is None:
         if explicit is None:
-            decimals = _auto_decimals(
-                get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY,
-                numeric,
-            )
+            decimals = _auto_decimals(code, numeric)
         else:
             decimals = explicit
-    text = f"{numeric:.{decimals}f}"
+    text = f"{_round_half_up(numeric, decimals):.{decimals}f}"
     if explicit is None and decimals:
         text = text.rstrip("0").rstrip(".")
     return text or "0"
@@ -420,7 +488,8 @@ def format_display_value(value: float | int | None, settings=None, *, symbol: st
     if symbol is None:
         symbol = get_display_symbol(settings)
     target_code = get_display_currency(settings) if settings is not None else DEFAULT_DISPLAY_CURRENCY
-    numeric = float(value or 0)
+    snap_rate = get_exchange_rate(settings) if settings is not None else None
+    numeric = _snap_display(float(value or 0), target_code, snap_rate)
     explicit = precision_settings.decimals(settings, field) if settings is not None else None
     trim = False
     if decimals is None:
@@ -429,7 +498,7 @@ def format_display_value(value: float | int | None, settings=None, *, symbol: st
             trim = target_code == DISPLAY_CURRENCY_SYP
         else:
             decimals = explicit
-    text = f"{numeric:,.{decimals}f}"
+    text = f"{_round_half_up(numeric, decimals):,.{decimals}f}"
     if trim:
         text = _trim_trailing_zeros(text)
     return _amount_with_symbol(text, symbol) if with_symbol else text
@@ -491,6 +560,8 @@ __all__ = [
     "effective_rate_for",
     "to_display",
     "to_stored",
+    "round_half_up",
+    "display_price",
     "amount_field_label",
     "decimals_for",
     "format_amount",

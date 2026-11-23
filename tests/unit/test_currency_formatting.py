@@ -106,6 +106,30 @@ def test_format_display_input_rounds_to_display_decimals_without_separators():
     assert "," not in currency.format_display_input(1099999.6, syp)
 
 
+def test_whole_syp_prices_survive_the_storage_round_trip():
+    """A price typed as 5000 ل.س must read back as 5,000 ل.س, not 4,999.99.
+
+    The value round-trips through USD storage (5000/13000 = 0.38461538...);
+    with coarse storage quantization the read-back was 4999.995 and the old
+    float formatting rendered "4,999.99".
+    """
+    from nano_offline.core import money
+
+    s = _with(_settings("SYP"), **{currency.EXCHANGE_RATE_KEY: "13000"})
+    for pounds in (5000, 6000, 12345, 15000):
+        stored = money.quantized(currency.to_stored(pounds, 13000))
+        assert currency.format_amount(stored, s, field="price") == f"{pounds:,} ل.س"
+        assert currency.to_input_text(stored, s) == str(pounds)
+        assert currency.format_display_input(currency.to_display(stored, 13000), s) == str(pounds)
+
+    # Legacy rows stored with the old 6-decimal quantum still render as whole
+    # pounds thanks to half-up rounding + whole-pound snapping, at any rate.
+    for rate, stored in ((13000, 0.384615), (14500, 0.344828), (15000, 0.333333), (11000, 0.454545)):
+        legacy = _with(_settings("SYP"), **{currency.EXCHANGE_RATE_KEY: str(rate)})
+        assert currency.format_amount(stored, legacy, field="price") == "5,000 ل.س"
+        assert currency.format_amount(round(stored * 1.2, 6), legacy, field="price") == "6,000 ل.س"
+
+
 def test_small_rate_keeps_fractional_syp_prices():
     s = _with(_settings("SYP"), **{currency.EXCHANGE_RATE_KEY: "1.5"})
 
