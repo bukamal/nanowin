@@ -457,12 +457,19 @@ class BackupService:
             progress("finalize", 1, 1, "", "تم الاسترجاع")
         return safety_path
 
-    def initialize_fresh_database(self) -> Path:
+    def initialize_fresh_database(self, progress=None, cancel=None) -> Path:
         """Replace the current database with a fresh schema after a safety backup.
 
         The device-bound license is retained, matching restore behavior. All
         business data, users, and settings are removed.
         """
+        def _p(stage, done=0, total=1, unit="", detail=""):
+            if progress:
+                try:
+                    progress(stage, done, total, unit, detail)
+                except Exception:
+                    pass
+
         self.db.checkpoint()
         with self.db.connect() as conn:
             current_license = conn.execute("SELECT * FROM license_state WHERE id=1").fetchone()
@@ -471,8 +478,11 @@ class BackupService:
         safety_dir = self.db.path.parent / "backups"
         safety_dir.mkdir(parents=True, exist_ok=True)
         safety_path = safety_dir / f"pre_initialize_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{PRIMARY_BACKUP_EXT}"
-        self.create_backup(safety_path)
+        _p("safety_backup", 0, 1, "", "إنشاء نسخة أمان قبل التهيئة")
+        self.create_backup(safety_path, progress=progress, cancel=cancel)
+        _p("safety_backup", 1, 1, "", "تم إنشاء نسخة الأمان")
 
+        _p("candidate", 0, 1, "", "تهيئة قاعدة بيانات فارغة")
         temp_target = self.db.path.with_name(f".{self.db.path.name}.{uuid4().hex}.fresh")
         try:
             candidate = Database(temp_target)
@@ -492,6 +502,7 @@ class BackupService:
                 raise RuntimeError("فشل فحص قاعدة البيانات الجديدة")
             candidate.checkpoint()
             gc.collect()
+            _p("candidate", 1, 1, "", "تمت تهيئة قاعدة البيانات الفارغة")
 
             for suffix in ("-wal", "-shm"):
                 candidate_sidecar = Path(f"{temp_target}{suffix}")
@@ -500,14 +511,18 @@ class BackupService:
                 live_sidecar = Path(f"{self.db.path}{suffix}")
                 if live_sidecar.exists():
                     unlink_retry(live_sidecar)
+            _p("swap", 0, 1, "", "استبدال قاعدة البيانات")
             replace_retry(temp_target, self.db.path)
+            _p("swap", 1, 1, "", "تم استبدال قاعدة البيانات")
         finally:
             for suffix in ("", "-wal", "-shm"):
                 leftover = Path(f"{temp_target}{suffix}")
                 if leftover.exists():
                     unlink_retry(leftover)
 
+        _p("finalize", 0, 1, "", "تجهيز قاعدة البيانات")
         self.db.initialize()
         if self.db.integrity_check().lower() != "ok":
             raise RuntimeError("فشل فحص قاعدة البيانات بعد التهيئة")
+        _p("finalize", 1, 1, "", "اكتملت التهيئة")
         return safety_path

@@ -19,6 +19,7 @@ from nano_offline.components.restaurant_boards import open_kitchen_board
 from nano_offline.components.tables_admin import open_tables_admin
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.restore_flow import RestoreFlow
+from nano_offline.components.init_flow import InitDatabaseFlow
 from nano_offline.services.auth_service import CAPABILITIES, ROLE_LABELS, ROLE_PERMISSIONS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
@@ -68,6 +69,13 @@ class AdminCenter:
             page, ctx, native_files,
             notify=self._notify,
             on_logout=self.on_logout,
+        )
+        # Single, guarded "تهيئة قاعدة البيانات" window (advanced, horizontal).
+        self._init_flow = InitDatabaseFlow(
+            page, ctx,
+            verify_password=self.ctx.auth.verify_current_password,
+            notify=self._notify,
+            on_done=self.on_logout,
         )
         # Backup-list validation runs lazily in the background and is cached
         # per (size, mtime) so opening the backup section never blocks on a
@@ -2233,70 +2241,10 @@ class AdminCenter:
             self.page.open(confirm)
 
         def initialize_database_guarded(_):
-            password_field = SelectAllTextField(
-                label="كلمة مرور المدير", password=True, can_reveal_password=True, autofocus=True
-            )
-            status_line = ft.Text("", size=11, color=Colors.DANGER_DARKER)
-            initialize_button = danger_button("تهيئة قاعدة البيانات", icon=ft.Icons.RESTART_ALT)
-            confirm = ft.AlertDialog(
-                modal=True,
-                title=ft.Text("تهيئة قاعدة البيانات"),
-                content=ft.Column(
-                    [
-                        ft.Text(
-                            "سيتم إنشاء نسخة أمان ثم استبدال قاعدة البيانات بقاعدة فارغة. "
-                            "سيُحذف المستخدمون والمواد والفواتير والعملاء والموردون والإعدادات. "
-                            "يُحتفظ بترخيص هذا الجهاز.",
-                            size=12,
-                        ),
-                        password_field,
-                        status_line,
-                    ],
-                    tight=True,
-                    width=380,
-                ),
-                actions=[
-                    ft.TextButton("إلغاء", on_click=lambda _: self.page.close(confirm)),
-                    initialize_button,
-                ],
-            )
-
-            async def initialize_database():
-                try:
-                    safety_path = await asyncio.to_thread(self.ctx.backup.initialize_fresh_database)
-                    self.ctx.reload(self.ctx.database_path())
-                    confirm.title = ft.Text("تمت تهيئة قاعدة البيانات")
-                    confirm.content = ft.Column(
-                        [
-                            ft.Text("أُنشئت قاعدة فارغة بنجاح. نسخة الأمان المحفوظة:"),
-                            ft.Text(safety_path.name, selectable=True),
-                        ],
-                        tight=True,
-                        width=380,
-                    )
-                    confirm.actions = [
-                        primary_button("متابعة", on_click=lambda _: (self.page.close(confirm), self.on_logout()), width=None, size="md")
-                    ]
-                    self.page.update()
-                except Exception as exc:
-                    status_line.value = str(exc)
-                    initialize_button.disabled = False
-                    self.page.update()
-
-            def do_initialize(_ev=None):
-                try:
-                    self.ctx.auth.verify_current_password(password_field.value or "")
-                except Exception as exc:
-                    status_line.value = str(exc)
-                    self.page.update()
-                    return
-                status_line.value = "جارٍ إنشاء نسخة الأمان وتهيئة القاعدة..."
-                initialize_button.disabled = True
-                self.page.update()
-                self.page.run_task(initialize_database)
-
-            initialize_button.on_click = do_initialize
-            self.page.open(confirm)
+            # Advanced, horizontal window in the restore/import visual language
+            # (password gate + real stage progress) instead of the old stacked
+            # two-line confirmation dialog.
+            self._init_flow.open()
 
         # --- Reports center: which report and date range are pre-selected
         # the moment it opens -- admin-tunable and read via

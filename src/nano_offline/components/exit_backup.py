@@ -172,7 +172,7 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
                 info_row(ft.Icons.RULE, "سياسة الاحتفاظ", retention_text),
             ], spacing=10),
             padding=14, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER),
-            border_radius=Radius.MD, expand=True,
+            border_radius=Radius.MD,
         )
         controls["remember"] = ft.Switch(
             label="أنشئ نسخة تلقائيًا في المرات القادمة", value=False,
@@ -188,11 +188,12 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
                 ft.Text(f"المجلد: {ctx.backup.default_dir().name}", size=10, color=Colors.TEXT_FAINT),
             ], spacing=10),
             padding=14, bgcolor=Colors.BACKGROUND_ALT, border=ft.border.all(1, Colors.BORDER),
-            border_radius=Radius.MD, expand=True,
+            border_radius=Radius.MD,
         )
-        controls["info_section"] = ft.Row(
-            [controls["info_left"], controls["info_right"]],
-            spacing=12, vertical_alignment=ft.CrossAxisAlignment.START, visible=True,
+        # Summary pane (start side): health + hint + backup facts. Laid out
+        # vertically so the window reads as two side-by-side columns.
+        controls["info_section"] = ft.Column(
+            [controls["info_left"], controls["info_right"]], spacing=10, visible=True,
         )
 
         # progress ---------------------------------------------------------
@@ -243,6 +244,20 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
             bgcolor=tone_bg, border_radius=Radius.MD,
         )
 
+        # idle call-to-action (fills the work pane before the backup starts)
+        controls["idle_panel"] = ft.Container(
+            ft.Column([
+                ft.Container(ft.Icon(ft.Icons.CLOUD_DONE_OUTLINED, size=32, color=Colors.PRIMARY),
+                             width=64, height=64, alignment=ft.alignment.center,
+                             bgcolor=Colors.PRIMARY_BG, border_radius=20),
+                ft.Text("جاهز للنسخ الاحتياطي", size=14, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                ft.Text("اضغط «إنشاء نسخة والخروج» لحفظ بياناتك بأمان، أو اخرج مباشرة.",
+                        size=11, color=Colors.TEXT_SECONDARY, text_align=ft.TextAlign.CENTER),
+            ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=18, bgcolor=Colors.BACKGROUND_ALT, border=ft.border.all(1, Colors.BORDER),
+            border_radius=Radius.MD, alignment=ft.alignment.center, expand=True, visible=True,
+        )
+
         # actions ----------------------------------------------------------
         controls["cancel_btn"] = ft.TextButton("إلغاء", on_click=_on_cancel)
         controls["exit_btn"] = ft.OutlinedButton("خروج بدون نسخة", icon=ft.Icons.LOGOUT, on_click=lambda _=None: _exit_now())
@@ -257,20 +272,32 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
             available = int(getattr(page, "width", 0) or 0)
         except Exception:
             available = 0
-        dialog_width = 760 if available <= 0 else max(340, min(760, available - 48))
-        body = ft.Container(
-            ft.Column([
-                ft.Container(ft.Column([controls["status_chip"], controls["hint"]], spacing=8),
-                             padding=ft.padding.only(left=16, right=16, top=14, bottom=2)),
-                ft.Container(controls["info_section"], padding=ft.padding.only(left=16, right=16, top=10, bottom=6)),
-                ft.Container(controls["progress_section"], padding=ft.padding.symmetric(horizontal=16)),
-                ft.Container(controls["success_section"], padding=ft.padding.symmetric(horizontal=16)),
-                ft.Container(controls["error_section"], padding=ft.padding.symmetric(horizontal=16)),
-            ], spacing=4), width=dialog_width,
+        dialog_width = 820 if available <= 0 else max(360, min(820, available - 48))
+
+        # Two horizontal panes: the facts/health on one side, the live work
+        # (progress / success / error) on the other. Falls back to a stacked
+        # column only on very narrow screens.
+        controls["aside"] = ft.Column(
+            [controls["status_chip"], controls["hint"], controls["info_section"]],
+            spacing=10, expand=True,
         )
-        root = ft.Container(ft.Column([header, body, ft.Container(controls["actions"], padding=ft.padding.only(left=16, right=16, top=6, bottom=14))],
-                                     spacing=0),
-                            width=dialog_width, bgcolor=Colors.WHITE, border_radius=18, shadow=Shadow.LG, rtl=True)
+        controls["work"] = ft.Column(
+            [controls["idle_panel"], controls["progress_section"],
+             controls["success_section"], controls["error_section"]],
+            spacing=10, expand=True,
+        )
+        controls["body_cols"] = (
+            ft.Row([controls["aside"], controls["work"]], spacing=16,
+                   vertical_alignment=ft.CrossAxisAlignment.START, expand=True)
+            if dialog_width >= 660
+            else ft.Column([controls["aside"], controls["work"]], spacing=12)
+        )
+        body = ft.Container(controls["body_cols"], width=dialog_width,
+                            padding=ft.padding.only(left=16, right=16, top=14, bottom=6))
+        root = ft.Container(
+            ft.Column([header, body, ft.Container(controls["actions"], padding=ft.padding.only(left=16, right=16, top=6, bottom=14))],
+                      spacing=0),
+            width=dialog_width, bgcolor=Colors.WHITE, border_radius=18, shadow=Shadow.LG, rtl=True)
         controls["root"] = root
         dialog = ft.AlertDialog(modal=True, content=root, content_padding=0)
         controls["dialog"] = dialog
@@ -286,6 +313,8 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
         auto = state["auto"]
         idle = not busy and not done and not err
         controls["info_section"].visible = idle and not auto
+        if controls.get("idle_panel") is not None:
+            controls["idle_panel"].visible = idle and not auto
         controls["progress_section"].visible = (busy or (auto and not done and not err))
         controls["success_section"].visible = done and not err
         controls["error_section"].visible = err and not busy
