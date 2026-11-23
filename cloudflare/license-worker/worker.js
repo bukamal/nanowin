@@ -166,6 +166,19 @@ async function writeIndex(env) {
   return codes;
 }
 
+// Drop a code from the allow-list index (used by /del). writeIndex() recomputes
+// from allCodes(), which still reads the old index — so it can never remove an
+// entry on its own.
+async function removeFromIndex(env, code) {
+  const index = await kvGet(env, INDEX_KEY);
+  const set = new Set(Array.isArray(index) ? index : []);
+  set.delete(code);
+  set.delete(INDEX_KEY);
+  const codes = [...set].sort();
+  await kvPut(env, INDEX_KEY, codes);
+  return codes;
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -235,7 +248,7 @@ const HELP_TEXT = [
   "/list — كل المفاتيح",
   "/stats — ملخص",
   "/add &lt;code&gt; [أجهزة] [أيام] — إنشاء مفتاح",
-  "/del &lt;code&gt; — حذف",
+  "/del &lt;code&gt; [force] — حذف",
   "/disable &lt;code&gt; / /enable &lt;code&gt;",
   "/extend &lt;code&gt; &lt;أيام&gt;",
   "/devices &lt;code&gt; — الأجهزة",
@@ -324,12 +337,23 @@ async function handleTelegramCommand(env, chatId, text) {
 
   if (command === "del") {
     const code = (args[0] || "").trim();
+    const force = args.includes("force");
     if (!code) {
-      await tgSend(env, chatId, "الصيغة: /del &lt;code&gt;");
+      await tgSend(env, chatId, "الصيغة: /del &lt;code&gt; [force]");
+      return;
+    }
+    const record = upgradeRecord(code, await kvGet(env, code));
+    if (record.devices.length && !force) {
+      await tgSend(
+        env,
+        chatId,
+        `المفتاح <code>${escapeHtml(code)}</code> مرتبط بـ ${record.devices.length} جهاز.\n` +
+          `استخدم /disable لإيقافه، أو <code>/del ${escapeHtml(code)} force</code> للحذف النهائي.`,
+      );
       return;
     }
     await kvDelete(env, code);
-    await writeIndex(env);
+    await removeFromIndex(env, code);
     await tgSend(env, chatId, `تم حذف <code>${escapeHtml(code)}</code>.`);
     return;
   }
