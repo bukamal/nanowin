@@ -467,8 +467,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ("فاتورة مشتريات", ft.Icons.ADD_SHOPPING_CART, lambda: open_table_invoice("purchase")),
             ("المواد", icon_map["items"], lambda: navigate("items")),
             ("نقطة البيع", ft.Icons.POINT_OF_SALE, open_pos),
-            ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("invoices", initial_type="sale")),
-            ("المشتريات", ft.Icons.LOCAL_SHIPPING_OUTLINED, lambda: navigate("invoices", initial_type="purchase")),
+            ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("sales")),
+            ("المشتريات", ft.Icons.LOCAL_SHIPPING_OUTLINED, lambda: navigate("purchases")),
         ]
         for label, icon, cb in shortcuts:
             tiles.append(_module_tile(icon, label, (lambda _e=None, c=cb: c())))

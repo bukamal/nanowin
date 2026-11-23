@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -69,6 +70,20 @@ def test_shell_navigation_applies_aliases_and_resets_top_level_sections():
         ("items", {"prefill_barcode": "123"}),
     ]
     assert router.path == ["items"]
+
+
+def test_home_shortcuts_target_the_dedicated_sales_and_purchases_routes():
+    """The home module board must not pass kwargs to the legacy combined route.
+
+    ``navigate("invoices", initial_type=...)`` raised
+    "<lambda>() got an unexpected keyword argument 'initial_type'" because the
+    legacy ``invoices`` route renders without kwargs — the dedicated ``sales``
+    and ``purchases`` routes are the real targets now.
+    """
+    source = (Path(__file__).resolve().parents[2] / "src" / "main.py").read_text(encoding="utf-8")
+    assert 'navigate("invoices"' not in source
+    assert 'navigate("sales")' in source
+    assert 'navigate("purchases")' in source
 
 
 def test_shell_navigation_routes_notifications_without_changing_history():
