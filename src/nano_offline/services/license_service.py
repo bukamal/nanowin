@@ -416,7 +416,9 @@ class LicenseService:
             last_raw = str(row["last_verified_at"] or "")
             if last_raw:
                 try:
-                    if (today - datetime.fromisoformat(last_raw).date()).days > OFFLINE_GRACE_DAYS:
+                    # Real elapsed time since the last online check (the test
+                    # ``now`` only simulates the license expiry clock).
+                    if (date.today() - datetime.fromisoformat(last_raw).date()).days > OFFLINE_GRACE_DAYS:
                         return LicenseStatus(
                             True, False, row["license_key"],
                             str(payload.get("edition") or "standard"),
