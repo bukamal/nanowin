@@ -4,6 +4,7 @@ import asyncio
 import csv as _csv
 import json
 import tempfile
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -816,7 +817,7 @@ class InvoiceCenter:
             list_state["done"] = len(invoices) < list_state["page"]
             # Same reasoning as the items screen: build only a page of cards
             # at a time instead of all (up to 250) on every keystroke.
-            render_limit = {"n": 60}
+            render_limit = {"n": 100}
             type_row = ft.Row(spacing=6, wrap=True)
             status_row = ft.Row(spacing=6, wrap=True)
 
@@ -1050,7 +1051,7 @@ class InvoiceCenter:
 
             def apply_grid_sort(key: str | None, direction: str | None) -> None:
                 grid_sort["key"], grid_sort["dir"] = key, direction
-                render_limit["n"] = 60
+                render_limit["n"] = 100
                 refresh_cards()
 
             def row_menu(row: dict) -> list:
@@ -1275,6 +1276,23 @@ class InvoiceCenter:
             # leads to the detail sheet, which carries payment/print/PDF/
             # edit/delete. The bounded viewport keeps the header pinned even
             # though the invoice screen itself scrolls as one page.
+            # Infinite scroll: the grid asks for more when the user reaches the
+            # bottom; the current refresh pass publishes its ``load_more`` here.
+            scroll_gate = {"fn": None, "t": 0.0}
+
+            def _scroll_load_more() -> None:
+                fn = scroll_gate["fn"]
+                if fn is None:
+                    return
+                now = time.monotonic()
+                if now - scroll_gate["t"] < 0.35:
+                    return
+                scroll_gate["t"] = now
+                try:
+                    fn()
+                except Exception:
+                    pass
+
             invoice_grid = DataGrid(
                 columns=invoice_columns,
                 rows=[],
@@ -1292,6 +1310,7 @@ class InvoiceCenter:
                 on_row_expand=invoice_expand_panel,
                 on_search_shortcut=focus_search,
                 on_new_shortcut=lambda: self.show_editor(None, "sale"),
+                on_load_more=_scroll_load_more,
                 formatter=_grid_formatter,
                 boxed=True,
                 center_cells=True,
@@ -1329,7 +1348,10 @@ class InvoiceCenter:
                 def load_more(_=None) -> None:
                     # One stable action: reveal the next batch, and pull the
                     # next server page as soon as the loaded set runs out, so a
-                    # 300k database is reachable without a second button type.
+                    # 300k database is reachable. Triggered by scrolling to the
+                    # bottom (no button).
+                    if list_state["done"] and len(matched) <= render_limit["n"]:
+                        return
                     render_limit["n"] += 100
                     if len(matched) <= render_limit["n"] and not list_state["done"]:
                         fetched = self.ctx.invoices.list_invoices(
@@ -1357,7 +1379,11 @@ class InvoiceCenter:
                             total=(len(matched) if (filters["status"] != "all" or bool((search.value or "").strip())) else total_invoices_count),
                             on_click=load_more,
                         )
+                        # Empty page but more server rows exist: keep the tiny
+                        # button here (a 0-row grid can't fire scroll), and arm
+                        # the scroll path too.
                         grid_more.visible = True
+                        scroll_gate["fn"] = load_more
                     else:
                         grid_more.visible = False
                     if invoices:
@@ -1393,23 +1419,15 @@ class InvoiceCenter:
                         sum(float(i.get("profit_amount") or 0) for i in matched)
                     )
                 invoice_grid.set_footer(footer_values)
-                client_filtered = filters["status"] != "all" or bool((search.value or "").strip())
-                caption_total = len(matched) if client_filtered else total_invoices_count
-                if len(matched) > render_limit["n"] or not list_state["done"]:
-                    from nano_offline.components import load_more_control
-                    grid_more.content = load_more_control(
-                        shown=len(shown),
-                        total=caption_total,
-                        on_click=load_more,
-                    )
-                    grid_more.visible = True
-                else:
-                    grid_more.visible = False
+                # Infinite scroll replaces the old "عرض المزيد" button: the grid
+                # asks for the next batch when the user reaches the bottom.
+                scroll_gate["fn"] = load_more
+                grid_more.visible = False
                 cards.content = desktop_list
                 self.page.update()
 
             def refresh_from_search(e=None):
-                render_limit["n"] = 60
+                render_limit["n"] = 100
                 refresh_cards()
 
             def chip(text: str, key: str, value: str, row: ft.Row):
@@ -1446,7 +1464,7 @@ class InvoiceCenter:
 
             def set_filter(key: str, value: str) -> None:
                 filters[key] = value
-                render_limit["n"] = 60
+                render_limit["n"] = 100
                 if key == "type":
                     # Re-query from the server with the new type so the whole
                     # database of that type is reachable (not just the page we

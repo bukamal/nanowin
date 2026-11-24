@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv as _csv
 import tempfile
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +26,27 @@ from nano_offline.core.home_widget import refresh_home_widget
 
 
 # Compatibility terminology: «سند دفع» هو نفسه «سند صرف» في الإصدارات السابقة.
+
+
+def _make_scroll_loader():
+    """Infinite-scroll glue: a throttled dispatcher the grid calls near the
+    bottom, which runs whatever ``load_more`` the last refresh published."""
+    gate = {"fn": None, "t": 0.0}
+
+    def _load() -> None:
+        fn = gate["fn"]
+        if fn is None:
+            return
+        now = time.monotonic()
+        if now - gate["t"] < 0.35:
+            return
+        gate["t"] = now
+        try:
+            fn()
+        except Exception:
+            pass
+
+    return gate, _load
 
 
 def _grid_density_button(page, settings, grid, key: str) -> ft.IconButton:
@@ -628,7 +650,7 @@ class FinanceCenter:
         # parties_view.py): vouchers only accumulate over the life of the
         # business, so building a card for every single one on every
         # refresh does not scale. Render a page at a time instead.
-        render_limit = {"n": 60}
+        render_limit = {"n": 100}
         # Filter chips (same language as the invoices/parties toolbars) instead
         # of a dropdown, so the vouchers screen reads like every other list.
         type_row = ft.Row(spacing=6, wrap=True)
@@ -653,7 +675,7 @@ class FinanceCenter:
 
         def set_filter(key: str):
             filter_state["type"] = key if key in ("all", "receipt", "payment") else "all"
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             render_type_chips()
             try:
                 type_row.update()
@@ -753,7 +775,7 @@ class FinanceCenter:
 
         def apply_grid_sort(key: str | None, direction: str | None) -> None:
             grid_sort["key"], grid_sort["dir"] = key, direction
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         def render_bulk_bar(rows_out: list[dict]) -> None:
@@ -838,6 +860,7 @@ class FinanceCenter:
             ]
 
         grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
+        scroll_gate, _scroll_load_more = _make_scroll_loader()
         grid = DataGrid(
             columns=VOUCHER_GRID_COLUMNS,
             rows=[],
@@ -854,6 +877,7 @@ class FinanceCenter:
             on_row_expand=voucher_expand_panel,
             on_search_shortcut=focus_search,
             on_new_shortcut=lambda: self.show_voucher_dialog(None, "receipt"),
+            on_load_more=_scroll_load_more,
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -947,27 +971,19 @@ class FinanceCenter:
                     vouchers_state["done"] = len(fetched) < vouchers_state["page"]
                     vouchers_state["rows"].extend(fetched)
                     render_limit["n"] += 100
+                else:
+                    return
                 refresh(reload_first=False)
 
-            filters_active = bool((search.value or "").strip()) or filter_state["type"] != "all" or bool((date_from.value or "").strip()) or bool((date_to.value or "").strip())
-            try:
-                caption_total = len(filtered) if filters_active else self.ctx.payments.count_vouchers()
-            except Exception:
-                caption_total = len(filtered)
-            if len(filtered) > len(shown) or not vouchers_state["done"]:
-                from nano_offline.components import load_more_control
-                grid_more.content = load_more_control(
-                    shown=len(shown), total=max(caption_total, len(shown)),
-                    on_click=load_more_vouchers,
-                )
-                grid_more.visible = True
-            else:
-                grid_more.visible = False
+            # Infinite scroll: fetch the next batch when the user reaches the
+            # bottom (no "عرض المزيد" button).
+            scroll_gate["fn"] = load_more_vouchers
+            grid_more.visible = False
             list_switch.content = desktop_list
             self.page.update()
 
         def refresh_from_search(_=None):
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         search.on_change = refresh_from_search
@@ -980,7 +996,7 @@ class FinanceCenter:
                 date_from.value, date_to.value = (today_value - timedelta(days=29)).isoformat(), today_value.isoformat()
             else:
                 date_from.value, date_to.value = "", ""
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         # Same sticky-header / scrolling-body split as invoice_view and
@@ -1438,7 +1454,7 @@ class FinanceCenter:
         summary_toggle = self._summary_toggle(summary)
         # Same client-visible paging as parties/items/invoices/vouchers —
         # see parties_view.py.
-        render_limit = {"n": 60}
+        render_limit = {"n": 100}
 
         # ---- desktop grid (same spreadsheet treatment as items/invoices) --
         grid_sort = {"key": None, "dir": None}
@@ -1522,7 +1538,7 @@ class FinanceCenter:
 
         def apply_grid_sort(key: str | None, direction: str | None) -> None:
             grid_sort["key"], grid_sort["dir"] = key, direction
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         def render_bulk_bar(rows_out: list[dict]) -> None:
@@ -1606,6 +1622,7 @@ class FinanceCenter:
             return items
 
         grid_height = max(300, min(560, int((self.page.height or 760) * 0.52)))
+        scroll_gate, _scroll_load_more = _make_scroll_loader()
         grid = DataGrid(
             columns=EXPENSE_GRID_COLUMNS,
             rows=[],
@@ -1621,6 +1638,7 @@ class FinanceCenter:
             on_row_expand=expense_expand_panel,
             on_search_shortcut=focus_search,
             on_new_shortcut=lambda: self.show_expense_dialog(),
+            on_load_more=_scroll_load_more,
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -1639,7 +1657,7 @@ class FinanceCenter:
                 date_from.value, date_to.value = (today_value - timedelta(days=29)).isoformat(), today_value.isoformat()
             else:
                 date_from.value, date_to.value = "", ""
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         expenses_state = {"page": 300, "offset": 0, "done": False, "rows": []}
@@ -1717,27 +1735,18 @@ class FinanceCenter:
                     expenses_state["done"] = len(fetched) < expenses_state["page"]
                     expenses_state["rows"].extend(fetched)
                     render_limit["n"] += 100
+                else:
+                    return
                 refresh(reload_first=False)
 
-            filters_active = bool((search.value or "").strip()) or bool((date_from.value or "").strip()) or bool((date_to.value or "").strip())
-            try:
-                caption_total = len(filtered) if filters_active else self.ctx.expenses.count_expenses()
-            except Exception:
-                caption_total = len(filtered)
-            if len(filtered) > len(shown) or not expenses_state["done"]:
-                from nano_offline.components import load_more_control
-                grid_more.content = load_more_control(
-                    shown=len(shown), total=max(caption_total, len(shown)),
-                    on_click=load_more_expenses,
-                )
-                grid_more.visible = True
-            else:
-                grid_more.visible = False
+            # Infinite scroll (no button).
+            scroll_gate["fn"] = load_more_expenses
+            grid_more.visible = False
             list_switch.content = desktop_list
             self.page.update()
 
         def refresh_from_search(_=None):
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         search.on_change = refresh_from_search

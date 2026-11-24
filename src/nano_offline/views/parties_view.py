@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv as _csv
 import tempfile
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -81,7 +82,7 @@ class PartyCenter:
         )
         # Same paging as the items/invoices screens: build only a page of
         # rows at a time instead of every matching customer/supplier.
-        render_limit = {"n": 60}
+        render_limit = {"n": 100}
         summary_row = ft.ResponsiveRow(spacing=8, run_spacing=8)
 
         # ---- desktop grid (same spreadsheet treatment as items/invoices) --
@@ -200,7 +201,7 @@ class PartyCenter:
 
         def apply_grid_sort(key: str | None, direction: str | None) -> None:
             grid_sort["key"], grid_sort["dir"] = key, direction
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         def small_metric(label: str, value: str, icon, accent: str):
@@ -1020,6 +1021,21 @@ class PartyCenter:
             return items
 
         grid_height = max(300, min(560, int((page.height or 760) * 0.52)))
+        scroll_gate = {"fn": None, "t": 0.0}
+
+        def _scroll_load_more() -> None:
+            fn = scroll_gate["fn"]
+            if fn is None:
+                return
+            now = time.monotonic()
+            if now - scroll_gate["t"] < 0.35:
+                return
+            scroll_gate["t"] = now
+            try:
+                fn()
+            except Exception:
+                pass
+
         grid = DataGrid(
             columns=PARTY_GRID_COLUMNS,
             rows=[],
@@ -1036,6 +1052,7 @@ class PartyCenter:
             on_row_expand=party_expand_panel,
             on_search_shortcut=focus_search,
             on_new_shortcut=lambda: open_editor(),
+            on_load_more=_scroll_load_more,
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -1093,21 +1110,21 @@ class PartyCenter:
                 return
             shown = parties[: render_limit["n"]]
             grid.set_rows(shown)
-            if len(parties) > len(shown):
-                from nano_offline.components import load_more_control
-                grid_more.content = load_more_control(
-                    shown=len(shown),
-                    total=len(parties),
-                    on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()),
-                )
-                grid_more.visible = True
-            else:
-                grid_more.visible = False
+
+            def load_more(_=None) -> None:
+                if len(parties) <= render_limit["n"]:
+                    return
+                render_limit["n"] += 100
+                refresh()
+
+            # Infinite scroll replaces the button.
+            scroll_gate["fn"] = load_more
+            grid_more.visible = False
             list_switch.content = desktop_list
             page.update()
 
         def refresh_from_search(e=None):
-            render_limit["n"] = 60
+            render_limit["n"] = 100
             refresh()
 
         search.on_change = refresh_from_search
