@@ -2166,27 +2166,14 @@ class ItemsCenter:
             )
 
         def open_bulk_barcode_sheet(_=None) -> None:
-            all_items = ctx.items.list()
-            with_barcode = [i for i in all_items if str(i.get("barcode") or "").strip()]
-            if not with_barcode:
-                notify("لا توجد مواد لها باركود بعد — أضف باركودًا من نافذة تعديل المادة أولًا")
-                return
-            copies_fields: dict[int, ft.TextField] = {}
-            checkboxes: dict[int, ft.Checkbox] = {}
-            row_wrappers: dict[int, ft.Container] = {}
-            # Nothing pre-selected on entry: printing labels for every item
-            # in the catalog by default is rarely what's wanted, and it's
-            # too easy to hit "متابعة" without noticing every row was
-            # already ticked. The user picks what they actually want to
-            # print, with "تحديد الكل" available for the (now opt-in) case
-            # where that really is everything.
-            selected: dict[int, bool] = {int(i["id"]): False for i in with_barcode}
+            PAGE = 60
+            state = {"search": "", "offset": 0, "total": 0}
+            selected: set[int] = set()
+            copies: dict[int, int] = {}
+            row_checks: dict[int, ft.Checkbox] = {}
+
             sheet, _sheet_w = sheets.new_desktop_sheet(self.page)
 
-            # Printer profile chosen here travels with the selection into
-            # open_barcode_print_dialog() below -- the admin's saved default
-            # (core.barcode_settings) just seeds the initial chip state, it
-            # doesn't lock the choice for this one print run.
             printer_layout = SegmentedToggle(
                 options=[SegmentOption(k, v) for k, v in barcode_settings.LABEL_LAYOUT_LABELS.items()],
                 value=barcode_settings.label_layout(ctx.settings),
@@ -2195,7 +2182,11 @@ class ItemsCenter:
                 options=[SegmentOption(k, v) for k, v in barcode_settings.LABEL_ROLL_WIDTH_LABELS.items()],
                 value=barcode_settings.label_roll_width(ctx.settings),
             )
-            roll_width_row = ft.Row([ft.Text("عرض اللفة:", size=11, color=Colors.TEXT_SECONDARY), roll_width_toggle], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, visible=printer_layout.value == "roll")
+            roll_width_row = ft.Row(
+                [ft.Text("عرض اللفة:", size=11, color=Colors.TEXT_SECONDARY), roll_width_toggle],
+                spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                visible=printer_layout.value == "roll",
+            )
 
             def on_layout_change(_=None) -> None:
                 roll_width_row.visible = printer_layout.value == "roll"
@@ -2206,97 +2197,163 @@ class ItemsCenter:
             def close(_=None):
                 page.close(sheet)
 
-            def update_summary():
-                n = sum(1 for v in selected.values() if v)
-                counter_text.value = f"{n} من {len(with_barcode)} محدّدة للطباعة" if n else "لم يتم تحديد أي مادة بعد"
-                counter_badge.bgcolor = Colors.PRIMARY_BG if n else Colors.BACKGROUND_ALT
-                counter_badge.border = ft.border.all(1, Colors.PRIMARY_BORDER if n else Colors.BORDER)
-                confirm_button.disabled = n == 0
-                confirm_button.text = f"متابعة ({n})" if n else "متابعة"
-                select_all_box.value = n == len(with_barcode)
-                counter_text.update()
-                counter_badge.update()
-                confirm_button.update()
-                select_all_box.update()
+            def copies_value(item_id: int) -> int:
+                try:
+                    return max(1, int(float(copies.get(item_id, 1))))
+                except Exception:
+                    return 1
 
-            def toggle(item_id: int, value: bool):
-                selected[item_id] = value
-                update_summary()
-
-            def toggle_all(e):
-                value = bool(e.control.value)
-                for item_id, cb in checkboxes.items():
-                    if not row_wrappers[item_id].visible:
-                        continue  # search-filtered out: leave its state alone
-                    selected[item_id] = value
-                    cb.value = value
-                    cb.update()
-                update_summary()
-
-            def confirm(_=None):
-                entries = []
-                for it in with_barcode:
-                    item_id = int(it["id"])
-                    if not selected.get(item_id):
-                        continue
-                    field = copies_fields.get(item_id)
-                    try:
-                        copies = int(float(field.value or 1))
-                    except Exception:
-                        copies = 1
-                    entries.append((it, copies))
-                if not entries:
-                    notify("اختر مادة واحدة على الأقل للطباعة")
-                    return
-                layout = printer_layout.value or barcode_settings.DEFAULT_LABEL_LAYOUT
-                roll_width_mm = barcode_settings.LABEL_ROLL_WIDTH_MM.get(roll_width_toggle.value or "", barcode_settings.label_roll_width_mm(ctx.settings))
-                close()
-                open_barcode_print_dialog(entries, layout=layout, roll_width_mm=roll_width_mm)
-
-            def apply_search(e=None):
-                term = (search_field.value or "").strip().lower()
-                for it in with_barcode:
-                    item_id = int(it["id"])
-                    hay = f"{it.get('name', '')} {it.get('barcode', '')}".lower()
-                    row_wrappers[item_id].visible = term in hay
-                list_column.update()
-
-            rows_ctrl = []
-            for it in with_barcode:
+            def _row(it: dict) -> ft.Control:
                 item_id = int(it["id"])
-                copies_field = SelectAllTextField(value="1", width=56, text_align=ft.TextAlign.CENTER, keyboard_type=ft.KeyboardType.NUMBER, dense=True)
-                copies_fields[item_id] = copies_field
-                cb = ft.Checkbox(value=False, on_change=lambda e, i=item_id: toggle(i, bool(e.control.value)))
-                checkboxes[item_id] = cb
-                row = ft.Container(
+                cb = ft.Checkbox(
+                    value=item_id in selected,
+                    on_change=lambda e, i=item_id: _toggle(i, bool(e.control.value)),
+                )
+                row_checks[item_id] = cb
+                copies_field = SelectAllTextField(
+                    value=str(copies_value(item_id)), width=56,
+                    text_align=ft.TextAlign.CENTER, keyboard_type=ft.KeyboardType.NUMBER, dense=True,
+                    on_change=lambda e, i=item_id: _set_copies(i, e.control.value),
+                )
+                return ft.Container(
                     ft.Row(
                         [
                             cb,
-                            ft.Column([ft.Text(it["name"], size=12, weight=ft.FontWeight.W_600), ft.Text(str(it.get("barcode")), size=9, color=Colors.TEXT_SECONDARY, font_family="monospace")], expand=True, spacing=1),
-                            ft.Column([ft.Text("نسخ", size=9, color=Colors.TEXT_FAINT), copies_field], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                            ft.Column(
+                                [
+                                    ft.Text(it["name"], size=12, weight=ft.FontWeight.W_600),
+                                    ft.Text(str(it.get("barcode") or ""), size=9, color=Colors.TEXT_SECONDARY, font_family="monospace"),
+                                ],
+                                expand=True, spacing=1,
+                            ),
+                            ft.Column(
+                                [ft.Text("نسخ", size=9, color=Colors.TEXT_FAINT), copies_field],
+                                spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8,
                     ),
                     padding=ft.padding.symmetric(horizontal=10, vertical=8),
                     bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=14, shadow=Shadow.SM,
-                    visible=True,
                 )
-                row_wrappers[item_id] = row
-                rows_ctrl.append(row)
 
-            search_field = SelectAllTextField(
-                hint_text="ابحث بالاسم أو الباركود…", prefix_icon=ft.Icons.SEARCH, dense=True,
-                border_radius=20, content_padding=ft.padding.symmetric(horizontal=14, vertical=8),
-                border_color=Colors.BORDER, on_change=apply_search,
-            )
-            select_all_box = ft.Checkbox(value=False, label="تحديد الكل", on_change=toggle_all)
+            list_column = ft.Column(spacing=8)
+            load_more_btn = ft.TextButton("عرض المزيد", icon=ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED)
+            more_wrap = ft.Container(load_more_btn, visible=False)
+
             counter_text = ft.Text("لم يتم تحديد أي مادة بعد", size=11, color=Colors.TEXT_SECONDARY)
             counter_badge = ft.Container(
                 counter_text, padding=ft.padding.symmetric(horizontal=10, vertical=6),
                 bgcolor=Colors.BACKGROUND_ALT, border=ft.border.all(1, Colors.BORDER), border_radius=20,
             )
-            confirm_button = ft.FilledButton("متابعة", icon=ft.Icons.QR_CODE_2, on_click=confirm, expand=True, disabled=True)
-            list_column = ft.Column(rows_ctrl, spacing=8, scroll=ft.ScrollMode.AUTO)
+            confirm_button = ft.FilledButton("متابعة", icon=ft.Icons.QR_CODE_2, expand=True, disabled=True)
+            select_all_box = ft.Checkbox(value=False, label="تحديد الكل")
+
+            def _safe_update(*controls):
+                for control in controls:
+                    try:
+                        control.update()
+                    except Exception:
+                        pass
+
+            def _update_summary():
+                n = len(selected)
+                counter_text.value = f"{n} محدّدة للطباعة" if n else "لم يتم تحديد أي مادة بعد"
+                counter_badge.bgcolor = Colors.PRIMARY_BG if n else Colors.BACKGROUND_ALT
+                counter_badge.border = ft.border.all(1, Colors.PRIMARY_BORDER if n else Colors.BORDER)
+                confirm_button.disabled = n == 0
+                confirm_button.text = f"متابعة ({n})" if n else "متابعة"
+                _safe_update(counter_text, counter_badge, confirm_button)
+
+            def _toggle(item_id: int, value: bool):
+                if value:
+                    selected.add(item_id)
+                    copies.setdefault(item_id, 1)
+                else:
+                    selected.discard(item_id)
+                _update_summary()
+
+            def _set_copies(item_id: int, raw):
+                try:
+                    copies[item_id] = max(1, int(float(raw or 1)))
+                except Exception:
+                    copies[item_id] = 1
+
+            def _toggle_all(e):
+                value = bool(e.control.value)
+                try:
+                    ids = ctx.items.list_ids(state["search"], mode="has_barcode")
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                if value:
+                    selected.update(ids)
+                else:
+                    selected.difference_update(ids)
+                for item_id, cb in row_checks.items():
+                    cb.value = item_id in selected
+                    try:
+                        cb.update()
+                    except Exception:
+                        pass
+                _update_summary()
+
+            def _page(reset: bool):
+                if reset:
+                    state["offset"] = 0
+                    list_column.controls.clear()
+                    row_checks.clear()
+                try:
+                    state["total"] = ctx.items.count(state["search"], mode="has_barcode")
+                    rows = ctx.items.list(state["search"], PAGE, state["offset"], mode="has_barcode")
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                for it in rows:
+                    list_column.controls.append(_row(it))
+                state["offset"] += len(rows)
+                more_wrap.visible = state["offset"] < state["total"]
+                _safe_update(list_column, more_wrap)
+                _update_summary()
+
+            def confirm(_=None):
+                if not selected:
+                    notify("اختر مادة واحدة على الأقل للطباعة")
+                    return
+                try:
+                    rows = ctx.items.list_by_ids(list(selected))
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                entries = [
+                    (row, copies_value(int(row["id"])))
+                    for row in rows if str(row.get("barcode") or "").strip()
+                ]
+                if not entries:
+                    notify("المواد المحددة بلا باركود")
+                    return
+                layout = printer_layout.value or barcode_settings.DEFAULT_LABEL_LAYOUT
+                roll_width_mm = barcode_settings.LABEL_ROLL_WIDTH_MM.get(
+                    roll_width_toggle.value or "", barcode_settings.label_roll_width_mm(ctx.settings)
+                )
+                close()
+                open_barcode_print_dialog(entries, layout=layout, roll_width_mm=roll_width_mm)
+
+            confirm_button.on_click = confirm
+            select_all_box.on_change = _toggle_all
+            load_more_btn.on_click = lambda _=None: _page(reset=False)
+
+            search_field = SelectAllTextField(
+                hint_text="ابحث بالاسم أو الباركود...", prefix_icon=ft.Icons.SEARCH, dense=True,
+                border_radius=20, content_padding=ft.padding.symmetric(horizontal=14, vertical=8),
+                border_color=Colors.BORDER,
+            )
+
+            def _search(_=None):
+                state["search"] = (search_field.value or "").strip()
+                _page(reset=True)
+
+            search_field.on_change = _search
 
             printer_section = ft.Container(
                 ft.Column(
@@ -2320,7 +2377,7 @@ class ItemsCenter:
                                 ft.Column(
                                     [
                                         ft.Text("طباعة ملصقات الباركود", size=17, weight=ft.FontWeight.BOLD),
-                                        ft.Text("اختر المواد وعدد النسخ لكل ملصق ثم نوع الطابعة", size=11, color=Colors.TEXT_SECONDARY),
+                                        ft.Text("ابحث عن المواد وحددها ثم اختر عدد النسخ ونوع الطابعة", size=11, color=Colors.TEXT_SECONDARY),
                                     ],
                                     spacing=1, expand=True,
                                 ),
@@ -2331,14 +2388,8 @@ class ItemsCenter:
                         printer_section,
                         search_field,
                         ft.Row([select_all_box, ft.Container(expand=True), counter_badge], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        # This inner list keeps its own bounded height and
-                        # scroll (same as the categories/units list in
-                        # definitions_sheet) since it's a genuinely long
-                        # repeating list, not a form -- the fix below is
-                        # about letting the whole SHEET rise above the
-                        # keyboard, not about how tall this particular list
-                        # is.
                         ft.Container(list_column, height=300),
+                        more_wrap,
                         ft.Row(
                             [
                                 ft.OutlinedButton("إلغاء", on_click=close, expand=True),
@@ -2347,17 +2398,6 @@ class ItemsCenter:
                             spacing=10,
                         ),
                     ],
-                    # tight + scroll instead of a fixed pixel height on the
-                    # outer Container (see the note in
-                    # components/form_sheet.py for the full reasoning):
-                    # combined with is_scroll_controlled +
-                    # maintain_bottom_view_insets_padding on the sheet
-                    # itself above, this lets the sheet grow to whatever
-                    # height it needs and rise above the on-screen keyboard
-                    # on its own, with Flutter auto-scrolling whichever
-                    # "نسخ" field the user taps into view -- no manual
-                    # height math to keep in sync as this sheet's content
-                    # changes.
                     spacing=12, tight=True, scroll=ft.ScrollMode.AUTO,
                     horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 ),
@@ -2368,169 +2408,127 @@ class ItemsCenter:
             )
             sheet.content.width = _sheet_w
             page.open(sheet)
-
-        def _bulk_apply_update(item_id: int, **overrides) -> None:
-            """Full-record update helper for the bulk sheet below.
-
-            ItemRepository.update() takes every field at once (no partial
-            update) -- exactly what open_item_editor()'s perform_save()
-            sends from open form fields for a single item. This reloads an
-            item's current stored values instead and reapplies them
-            unchanged except for whatever ``overrides`` actually asks to
-            change, so a bulk category move never accidentally clears an
-            item's alternate unit or barcode.
-            """
-            data = ctx.items.get(item_id)
-            if not data:
-                return
-            current_units = ctx.items.units(item_id)
-            alternate_units = [
-                {"unit_id": int(u["id"]), "conversion_factor": float(u.get("conversion_factor") or 1), "selling_price": u.get("selling_price"), "purchase_price": u.get("purchase_price")}
-                for u in current_units if not u.get("is_base")
-            ]
-            kwargs = dict(
-                name=data["name"], item_type=data["item_type"],
-                category_id=data.get("category_id"),
-                purchase_price=data.get("purchase_price") or 0,
-                selling_price=data.get("selling_price") or 0,
-                base_unit_id=data.get("base_unit_id"),
-                item_units=alternate_units,
-                barcode=data.get("barcode"),
-            )
-            kwargs.update(overrides)
-            ctx.items.update(item_id, **kwargs)
+            _page(reset=True)
 
         def open_bulk_edit_sheet(_=None) -> None:
-            all_items = ctx.items.list()
-            if not all_items:
-                notify("لا توجد مواد بعد")
-                return
-            selected: dict[int, bool] = {int(i["id"]): False for i in all_items}
-            row_wrappers: dict[int, ft.Container] = {}
-            checkboxes: dict[int, ft.Checkbox] = {}
+            PAGE = 60
+            state = {"search": "", "offset": 0, "total": 0}
+            selected: set[int] = set()
+            row_checks: dict[int, ft.Checkbox] = {}
             sheet, _sheet_w = sheets.new_desktop_sheet(self.page)
 
             def close(_=None):
                 page.close(sheet)
 
-            def update_summary():
-                n = sum(1 for v in selected.values() if v)
-                counter_text.value = f"{n} من {len(all_items)} محدّدة" if n else "لم يتم تحديد أي مادة"
-                counter_badge.bgcolor = Colors.PRIMARY_BG if n else Colors.BACKGROUND_ALT
-                counter_badge.border = ft.border.all(1, Colors.PRIMARY_BORDER if n else Colors.BORDER)
-                move_button.disabled = n == 0 or not move_category.value
-                price_button.disabled = n == 0
-                select_all_box.value = n == len(all_items)
-                counter_text.update(); counter_badge.update(); move_button.update(); price_button.update(); select_all_box.update()
-
-            def toggle(item_id: int, value: bool):
-                selected[item_id] = value
-                update_summary()
-
-            def toggle_all(e):
-                value = bool(e.control.value)
-                for item_id, cb in checkboxes.items():
-                    if not row_wrappers[item_id].visible:
-                        continue  # search-filtered out: leave its state alone
-                    selected[item_id] = value
-                    cb.value = value
-                    cb.update()
-                update_summary()
-
-            def apply_search(e=None):
-                term = (bulk_search.value or "").strip().lower()
-                for it in all_items:
-                    item_id = int(it["id"])
-                    hay = f"{it.get('name', '')} {it.get('barcode', '')}".lower()
-                    row_wrappers[item_id].visible = term in hay
-                list_column.update()
-
-            def selected_ids() -> list[int]:
-                return [i for i, v in selected.items() if v]
-
-            def apply_category_move(_=None):
-                ids = selected_ids()
-                if not ids or not move_category.value:
-                    return
-                new_cat_id = int(move_category.value)
-                try:
-                    for item_id in ids:
-                        _bulk_apply_update(item_id, category_id=new_cat_id)
-                except Exception as exc:
-                    notify(str(exc), kind="error")
-                    return
-                notify(f"تم نقل {len(ids)} مادة إلى التصنيف الجديد")
-                close()
-                refresh()
-
-            def apply_price_change(_=None):
-                ids = selected_ids()
-                if not ids:
-                    return
-                try:
-                    pct = float(price_pct.value or 0)
-                except ValueError:
-                    notify("النسبة يجب أن تكون رقمًا")
-                    return
-                if pct == 0:
-                    notify("أدخل نسبة تغيير غير صفرية")
-                    return
-                sign = 1 if price_mode["value"] == "up" else -1
-                try:
-                    for item_id in ids:
-                        data = ctx.items.get(item_id)
-                        if not data:
-                            continue
-                        old_price = float(data.get("selling_price") or 0)
-                        new_price = max(0.0, old_price * (1 + sign * pct / 100))
-                        _bulk_apply_update(item_id, selling_price=round(new_price, 2))
-                except Exception as exc:
-                    notify(str(exc), kind="error")
-                    return
-                notify(f"تم تعديل سعر البيع لـ {len(ids)} مادة")
-                close()
-                refresh()
-
-            rows_ctrl = []
-            for it in all_items:
+            def _row(it: dict) -> ft.Control:
                 item_id = int(it["id"])
-                cb = ft.Checkbox(value=False, on_change=lambda e, i=item_id: toggle(i, bool(e.control.value)))
-                checkboxes[item_id] = cb
-                row = ft.Container(
+                cb = ft.Checkbox(
+                    value=item_id in selected,
+                    on_change=lambda e, i=item_id: _toggle(i, bool(e.control.value)),
+                )
+                row_checks[item_id] = cb
+                return ft.Container(
                     ft.Row(
                         [
                             cb,
-                            ft.Column([ft.Text(it["name"], size=12, weight=ft.FontWeight.W_600), ft.Text(it.get("category_name") or "بلا تصنيف", size=9, color=Colors.TEXT_SECONDARY)], expand=True, spacing=1),
+                            ft.Column(
+                                [
+                                    ft.Text(it["name"], size=12, weight=ft.FontWeight.W_600),
+                                    ft.Text(it.get("category_name") or "بلا تصنيف", size=9, color=Colors.TEXT_SECONDARY),
+                                ],
+                                expand=True, spacing=1,
+                            ),
                             ft.Text(money(it.get("selling_price")), size=12, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8,
                     ),
                     padding=ft.padding.symmetric(horizontal=10, vertical=8),
                     bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER), border_radius=14, shadow=Shadow.SM,
-                    visible=True,
                 )
-                row_wrappers[item_id] = row
-                rows_ctrl.append(row)
 
-            bulk_search = SelectAllTextField(
-                hint_text="ابحث بالاسم أو الباركود…", prefix_icon=ft.Icons.SEARCH, dense=True,
-                border_radius=20, content_padding=ft.padding.symmetric(horizontal=14, vertical=8),
-                border_color=Colors.BORDER, on_change=apply_search,
-            )
-            select_all_box = ft.Checkbox(value=False, label="تحديد الكل", on_change=toggle_all)
+            list_column = ft.Column(spacing=8)
+            load_more_btn = ft.TextButton("عرض المزيد", icon=ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED)
+            more_wrap = ft.Container(load_more_btn, visible=False)
+
             counter_text = ft.Text("لم يتم تحديد أي مادة", size=11, color=Colors.TEXT_SECONDARY)
             counter_badge = ft.Container(
                 counter_text, padding=ft.padding.symmetric(horizontal=10, vertical=6),
                 bgcolor=Colors.BACKGROUND_ALT, border=ft.border.all(1, Colors.BORDER), border_radius=20,
             )
-            list_column = ft.Column(rows_ctrl, spacing=8, scroll=ft.ScrollMode.AUTO)
+            select_all_box = ft.Checkbox(value=False, label="تحديد الكل")
 
-            # Real dropdown instead of the search-style field: it showed no
-            # options until the user typed something and its expanding
-            # results box left a large empty gap in the sheet once focused.
-            # A native ft.Dropdown lists every category immediately on tap,
-            # matching "ترتيب حسب" on this same screen and "نوع السند" on
-            # the finance screen.
+            def _safe_update(*controls):
+                for control in controls:
+                    try:
+                        control.update()
+                    except Exception:
+                        pass
+
+            def _update_summary():
+                n = len(selected)
+                counter_text.value = f"{n} محدّدة" if n else "لم يتم تحديد أي مادة"
+                counter_badge.bgcolor = Colors.PRIMARY_BG if n else Colors.BACKGROUND_ALT
+                counter_badge.border = ft.border.all(1, Colors.PRIMARY_BORDER if n else Colors.BORDER)
+                move_button.disabled = n == 0 or not move_category.value
+                price_button.disabled = n == 0
+                _safe_update(counter_text, counter_badge, move_button, price_button)
+
+            def _toggle(item_id: int, value: bool):
+                if value:
+                    selected.add(item_id)
+                else:
+                    selected.discard(item_id)
+                _update_summary()
+
+            def _toggle_all(e):
+                value = bool(e.control.value)
+                try:
+                    ids = ctx.items.list_ids(state["search"])
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                if value:
+                    selected.update(ids)
+                else:
+                    selected.difference_update(ids)
+                for item_id, cb in row_checks.items():
+                    cb.value = item_id in selected
+                    try:
+                        cb.update()
+                    except Exception:
+                        pass
+                _update_summary()
+
+            def _page(reset: bool):
+                if reset:
+                    state["offset"] = 0
+                    list_column.controls.clear()
+                    row_checks.clear()
+                try:
+                    state["total"] = ctx.items.count(state["search"])
+                    rows = ctx.items.list(state["search"], PAGE, state["offset"])
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                for it in rows:
+                    list_column.controls.append(_row(it))
+                state["offset"] += len(rows)
+                more_wrap.visible = state["offset"] < state["total"]
+                _safe_update(list_column, more_wrap)
+                _update_summary()
+
+            search_field = SelectAllTextField(
+                hint_text="ابحث بالاسم أو الباركود...", prefix_icon=ft.Icons.SEARCH, dense=True,
+                border_radius=20, content_padding=ft.padding.symmetric(horizontal=14, vertical=8),
+                border_color=Colors.BORDER,
+            )
+
+            def _search(_=None):
+                state["search"] = (search_field.value or "").strip()
+                _page(reset=True)
+
+            search_field.on_change = _search
+
             move_category = ft.Dropdown(
                 label="نقل التصنيف إلى",
                 options=[ft.dropdown.Option(key=str(c["id"]), text=c["name"]) for c in categories],
@@ -2540,16 +2538,9 @@ class ItemsCenter:
                 border_color=Colors.BORDER,
                 expand=2,
             )
-            move_category.on_change = lambda _=None: update_summary()
-            move_button = ft.FilledButton("نقل المحدد", icon=ft.Icons.DRIVE_FILE_MOVE_OUTLINED, on_click=apply_category_move, disabled=True, expand=1)
+            move_category.on_change = lambda _=None: _update_summary()
+            move_button = ft.FilledButton("نقل المحدد", icon=ft.Icons.DRIVE_FILE_MOVE_OUTLINED, disabled=True, expand=1)
 
-            # Percentage only (not a fixed amount): a flat +500 makes sense
-            # for one price scale and is meaningless for another, while a
-            # percentage bump ("+10%" from a supplier) applies correctly
-            # regardless of the item's current price. Purchase price/cost
-            # is deliberately left untouched here -- that feeds average-cost
-            # COGS accounting elsewhere, so it stays a one-item-at-a-time
-            # edit in the regular item editor rather than a bulk action.
             price_mode = {"value": "up"}
             price_pct = SelectAllTextField(label="النسبة %", value="10", keyboard_type=ft.KeyboardType.NUMBER, width=90)
             up_chip = ft.Container(ft.Text("رفع", size=12, weight=ft.FontWeight.W_600), padding=ft.padding.symmetric(horizontal=14, vertical=9), border_radius=12, ink=True)
@@ -2562,12 +2553,6 @@ class ItemsCenter:
                 down_chip.bgcolor = Colors.DANGER if price_mode["value"] == "down" else Colors.WHITE
                 down_chip.content.color = Colors.WHITE if price_mode["value"] == "down" else Colors.TEXT_MUTED
                 down_chip.border = ft.border.all(1, Colors.DANGER if price_mode["value"] == "down" else Colors.BORDER)
-                # Only call update() once these chips are actually on the
-                # page (i.e. after page.open(sheet) below) -- calling
-                # update() on a freshly-created control that isn't attached
-                # to the page tree yet raises in Flet, which was silently
-                # aborting this whole function before it ever reached
-                # page.open(sheet), so the sheet never opened.
                 if do_update:
                     up_chip.update(); down_chip.update()
 
@@ -2578,7 +2563,44 @@ class ItemsCenter:
             up_chip.on_click = lambda _: set_price_mode("up")
             down_chip.on_click = lambda _: set_price_mode("down")
             style_price_mode(do_update=False)
-            price_button = ft.FilledButton("تطبيق على سعر البيع", icon=ft.Icons.PERCENT, on_click=apply_price_change, disabled=True, expand=True)
+            price_button = ft.FilledButton("تطبيق على سعر البيع", icon=ft.Icons.PERCENT, disabled=True, expand=True)
+
+            def apply_category_move(_=None):
+                ids = list(selected)
+                if not ids or not move_category.value:
+                    return
+                try:
+                    moved = ctx.items.bulk_set_category(ids, int(move_category.value))
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                notify(f"تم نقل {moved} مادة إلى التصنيف الجديد", sound_kind="success")
+                close()
+                refresh()
+
+            def apply_price_change(_=None):
+                ids = list(selected)
+                if not ids:
+                    return
+                try:
+                    pct = float(price_pct.value or 0)
+                except ValueError:
+                    notify("النسبة يجب أن تكون رقمًا")
+                    return
+                if pct == 0:
+                    notify("أدخل نسبة تغيير غير صفرية")
+                    return
+                try:
+                    changed = ctx.items.bulk_scale_selling_price(ids, pct, up=price_mode["value"] == "up")
+                except Exception as exc:
+                    notify(str(exc), kind="error")
+                    return
+                notify(f"تم تعديل سعر البيع لـ {changed} مادة", sound_kind="success")
+                close()
+                refresh()
+
+            move_button.on_click = apply_category_move
+            price_button.on_click = apply_price_change
 
             def _action_card(icon: str, title: str, controls: list[ft.Control]) -> ft.Container:
                 return ft.Container(
@@ -2601,6 +2623,9 @@ class ItemsCenter:
                 [ft.Row([up_chip, down_chip, price_pct, price_button], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)],
             )
 
+            select_all_box.on_change = _toggle_all
+            load_more_btn.on_click = lambda _=None: _page(reset=False)
+
             sheet.content = ft.Container(
                 ft.Column(
                     [
@@ -2611,7 +2636,7 @@ class ItemsCenter:
                                 ft.Column(
                                     [
                                         ft.Text("تعديل جماعي", size=17, weight=ft.FontWeight.BOLD),
-                                        ft.Text("اختر مواد ثم طبّق نقل تصنيف أو تعديل سعر بيع على المحدد دفعة واحدة", size=11, color=Colors.TEXT_SECONDARY),
+                                        ft.Text("ابحث وحدّد مواد ثم طبّق نقل تصنيف أو تعديل سعر بيع على المحدد", size=11, color=Colors.TEXT_SECONDARY),
                                     ],
                                     spacing=1, expand=True,
                                 ),
@@ -2619,9 +2644,10 @@ class ItemsCenter:
                             ],
                             spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        bulk_search,
+                        search_field,
                         ft.Row([select_all_box, ft.Container(expand=True), counter_badge], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         ft.Container(list_column, height=240),
+                        more_wrap,
                         ft.Divider(height=1, color=Colors.BORDER),
                         move_card,
                         price_card,
@@ -2636,6 +2662,7 @@ class ItemsCenter:
             )
             sheet.content.width = _sheet_w
             page.open(sheet)
+            _page(reset=True)
 
         def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None) -> None:
             """Comprehensive multi-item entry: a full table in a wide sheet.
@@ -3054,9 +3081,18 @@ class ItemsCenter:
                         pass
                     return 1.0
 
+                recipe_picker_options_cache: dict = {"options": None}
+
                 def recipe_picker_options(col, row_values):
                     if col.key == "component":
-                        return [(int(i["id"]), str(i["name"])) for i in inventory]
+                        # Build the id/name option list once per bulk session
+                        # instead of re-mapping every inventory row on each
+                        # picker open (thousands of items in a big database).
+                        if recipe_picker_options_cache["options"] is None:
+                            recipe_picker_options_cache["options"] = [
+                                (int(i["id"]), str(i["name"])) for i in inventory
+                            ]
+                        return recipe_picker_options_cache["options"]
                     if col.key == "unit_id":
                         return _component_units(row_values.get("component"))
                     return []

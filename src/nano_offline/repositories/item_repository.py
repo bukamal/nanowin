@@ -37,7 +37,7 @@ class ItemRepository(Offloadable):
     #: so the whole Materials list is answered by one indexed SQL query per
     #: refresh instead of pulling every row and filtering it in Python.
     _FILTER_MODES = frozenset(
-        {"all", "stock", "composite", "service", "low", "no_barcode", "no_price", "no_movement", "restock"}
+        {"all", "stock", "composite", "service", "low", "no_barcode", "has_barcode", "no_price", "no_movement", "restock"}
     )
 
     #: Sort keys the grid/screen can request -> SQL expression (alias ``i``).
@@ -86,6 +86,8 @@ class ItemRepository(Offloadable):
             params.append(float(low_stock))
         elif mode == "no_barcode":
             parts.append("COALESCE(TRIM(i.barcode), '') = ''")
+        elif mode == "has_barcode":
+            parts.append("COALESCE(TRIM(i.barcode), '') != ''")
         elif mode == "no_price":
             parts.append(stock)
             parts.append("COALESCE(i.selling_price, 0) <= 0")
@@ -180,6 +182,85 @@ class ItemRepository(Offloadable):
                     search, False, mode, low_stock, order_by, descending, ids, limit, offset
                 )
                 return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def list_ids(
+        self,
+        search: str = "",
+        *,
+        mode: str = "all",
+        low_stock: float = 5.0,
+        ids=None,
+    ) -> list[int]:
+        """Every matching id as an int list, without materialising rows.
+
+        Lets a "select all" act on the whole filtered set (tens of thousands of
+        items) without loading or building a widget per row.
+        """
+        search = search.strip()
+        mode = (mode or "all").strip().lower()
+        if mode not in self._FILTER_MODES:
+            mode = "all"
+        with self.db.connect() as conn:
+            use_fts = self._is_fts(conn, search)
+
+            def _run(fts: bool) -> list[int]:
+                sql = "SELECT i.id FROM items i"
+                if fts:
+                    sql += " JOIN items_fts ON items_fts.rowid = i.id"
+                where, params = self._where_clauses(search, fts, mode, low_stock, ids)
+                if where:
+                    sql += " WHERE " + where
+                sql += " ORDER BY i.name"
+                return [int(r[0]) for r in conn.execute(sql, params).fetchall()]
+
+            try:
+                return _run(use_fts)
+            except sqlite3.OperationalError:
+                return _run(False)
+
+    def list_by_ids(self, ids) -> list[dict]:
+        """Full rows for a set of ids (chunked), used by bulk print/confirm."""
+        out: list[dict] = []
+        with self.db.connect() as conn:
+            for chunk in self._id_chunks(ids):
+                sql, params = self._list_sql("", False, "restock", 5.0, "name", False, chunk, None, 0)
+                out.extend(dict(r) for r in conn.execute(sql, params).fetchall())
+        return out
+
+    @staticmethod
+    def _id_chunks(ids, size: int = 800):
+        values = [int(i) for i in ids]
+        for start in range(0, len(values), size):
+            yield values[start:start + size]
+
+    def bulk_set_category(self, ids, category_id: int | None) -> int:
+        """Move every given item to ``category_id`` in one transaction."""
+        updated = 0
+        with self.db.transaction() as conn:
+            for chunk in self._id_chunks(ids):
+                placeholders = ",".join("?" for _ in chunk)
+                cur = conn.execute(
+                    "UPDATE items SET category_id=?, updated_at=CURRENT_TIMESTAMP "
+                    f"WHERE id IN ({placeholders})",
+                    [category_id, *chunk],
+                )
+                updated += cur.rowcount
+        return updated
+
+    def bulk_scale_selling_price(self, ids, percent: float, *, up: bool = True) -> int:
+        """Scale ``selling_price`` by ±percent for every item, in one transaction."""
+        factor = 1 + (float(percent) if up else -float(percent)) / 100.0
+        updated = 0
+        with self.db.transaction() as conn:
+            for chunk in self._id_chunks(ids):
+                placeholders = ",".join("?" for _ in chunk)
+                cur = conn.execute(
+                    "UPDATE items SET selling_price=ROUND(MAX(0.0, COALESCE(selling_price, 0) * ?), 2), "
+                    f"updated_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
+                    [factor, *chunk],
+                )
+                updated += cur.rowcount
+        return updated
 
     def _count_sql(
         self, search: str, use_fts: bool, mode: str, low_stock: float, ids
