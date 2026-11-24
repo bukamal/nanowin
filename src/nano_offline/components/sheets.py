@@ -134,7 +134,7 @@ def sheet_header(
             bgcolor=Colors.PRIMARY if use_gradient else icon_bg,
             gradient=brand_gradient() if use_gradient else None,
             border_radius=14,
-            shadow=Shadow.SM,
+            shadow=Shadow.GLOW if use_gradient else Shadow.SM,
         ),
         left,
     ]

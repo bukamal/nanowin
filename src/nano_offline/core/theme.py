@@ -347,6 +347,9 @@ _SHADOW_RECIPES: dict[str, tuple[int, int, tuple[int, int], str]] = {
     "SOFT": (14, 0, (0, 3), "BORDER"),  # used by the smart barcode scanner's floating chips/dock
     "MD": (18, 0, (0, 5), "BORDER"),
     "LG": (26, 0, (0, 9), "BORDER_STRONG"),
+    # A soft tinted "glow" for brand-gradient chips/headers — reads as depth in
+    # light mode and a gentle halo in dark mode without a hard edge.
+    "GLOW": (28, 0, (0, 6), "PRIMARY"),
 }
 
 

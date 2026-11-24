@@ -225,7 +225,7 @@ class AdminCenter:
                                 bgcolor=Colors.PRIMARY,
                                 gradient=brand_gradient(),
                                 border_radius=13,
-                                shadow=Shadow.SM,
+                                shadow=Shadow.GLOW,
                             ),
                             ft.Text(title, size=17, weight=ft.FontWeight.BOLD, expand=True),
                         ],
