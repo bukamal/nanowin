@@ -345,3 +345,49 @@ def test_pos_grid_renders_only_a_page_of_tiles():
         assert len(getattr(center, "_tile_cache", {})) <= 60
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_items_bulk_sheets_page_queries_instead_of_loading_all():
+    # Windowing guard for the bulk-edit / bulk-barcode sheets: opening them on a
+    # large catalog must query a bounded page, never ``items.list()` with no
+    # limit (which used to pull every item and build a widget per row).
+    from nano_offline.views.items_view import ItemsCenter
+
+    ctx, tmp = _ctx()
+    try:
+        unit = ctx.definitions.create_unit("قطعة", "ق")
+        for i in range(150):
+            ctx.items.create(
+                name=f"مادة {i:03d}", purchase_price=1.0, selling_price=2.0,
+                quantity=5.0, base_unit_id=unit, barcode=f"BC-{i:03d}",
+            )
+
+        page, content = FakePage(), ft.Container(expand=True)
+        actions: dict = {}
+        center = ItemsCenter(
+            page, ctx, content, native_files=None, on_title_change=lambda *a: None,
+            on_context_actions=lambda acts: actions.update({a.key: a for a in acts}),
+        )
+        center.show_center()
+
+        calls: list = []
+        original = ctx.items.list
+
+        def recording(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        ctx.items.list = recording
+        try:
+            for key in ("bulk_barcode", "bulk_edit"):
+                calls.clear()
+                actions[key].on_click(None)
+                assert page.opened and getattr(page.opened[-1], "content", None) is not None
+                assert calls, f"{key} did not query items"
+                for args, kwargs in calls:
+                    limit = args[1] if len(args) > 1 else kwargs.get("limit")
+                    assert limit is not None and limit <= 60, (key, args, kwargs)
+        finally:
+            ctx.items.list = original
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
