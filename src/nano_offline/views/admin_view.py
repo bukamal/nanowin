@@ -23,7 +23,18 @@ from nano_offline.components.init_flow import InitDatabaseFlow
 from nano_offline.services.auth_service import CAPABILITIES, ROLE_LABELS, ROLE_PERMISSIONS
 from nano_offline.services import lan_api_server, lan_price_server, remote_client
 from nano_offline.version import APP_VERSION
-from nano_offline.core.theme import BRAND_PRESETS, Colors, Radius, Shadow, normalize_brand_accent, set_brand_accent
+from nano_offline.core.theme import (
+    BRAND_PRESETS,
+    Colors,
+    Radius,
+    Shadow,
+    brand_gradient,
+    normalize_brand_accent,
+    set_brand_accent,
+    shade,
+    tile_gradient,
+    tint,
+)
 from nano_offline.core import theme_settings
 from nano_offline.core import currency
 from nano_offline.core import font_settings
@@ -207,18 +218,25 @@ class AdminCenter:
                     ft.Row(
                         [
                             ft.Container(
-                                ft.Icon(icon, size=19, color=Colors.PRIMARY),
+                                ft.Icon(icon, size=19, color=Colors.WHITE),
                                 width=40,
                                 height=40,
                                 alignment=ft.alignment.center,
-                                bgcolor=Colors.PRIMARY_BG,
+                                bgcolor=Colors.PRIMARY,
+                                gradient=brand_gradient(),
                                 border_radius=13,
+                                shadow=Shadow.SM,
                             ),
                             ft.Text(title, size=17, weight=ft.FontWeight.BOLD, expand=True),
                         ],
                         spacing=10,
                     ),
-                    ft.Divider(height=1, color=Colors.BORDER_ALT),
+                    ft.Container(
+                        height=2,
+                        gradient=brand_gradient(diagonal=False),
+                        border_radius=2,
+                        opacity=0.30,
+                    ),
                     self._settings_columns(controls)
                     if responsive
                     else ft.Column(controls, spacing=10),
@@ -1435,15 +1453,19 @@ class AdminCenter:
         )
 
         def update_brand_preview():
+            accent = brand_state["color"]
             selected_name = next(
-                (label for color, label in brand_presets if color.upper() == brand_state["color"].upper()),
+                (label for color, label in brand_presets if color.upper() == accent.upper()),
                 "لون مخصص",
             )
             brand_preview_name.value = f"معاينة الهوية — {selected_name}"
-            brand_preview_primary.bgcolor = brand_state["color"]
-            brand_preview_selected.bgcolor = Colors.PRIMARY_BG
-            brand_preview_selected.border = ft.border.all(1, Colors.PRIMARY_BORDER)
-            brand_preview_selected.content.color = Colors.PRIMARY_DARK
+            # Live preview reflects the *picked* accent (not the saved one) with
+            # the same gradient language used across the app.
+            brand_preview_primary.bgcolor = accent
+            brand_preview_primary.gradient = tile_gradient(accent)
+            brand_preview_selected.bgcolor = tint(accent, 0.90)
+            brand_preview_selected.border = ft.border.all(1, tint(accent, 0.68))
+            brand_preview_selected.content.color = shade(accent, 0.20)
 
         def update_swatch_styles():
             for hexcode, (box, marker, label) in swatch_boxes.items():

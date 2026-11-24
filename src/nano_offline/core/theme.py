@@ -495,6 +495,16 @@ def tile_gradient(accent: str, *, diagonal: bool = True) -> ft.LinearGradient:
 TILE_ACCENTS = ("#0B5FCC", "#7C3AED", "#059669", "#EA580C", "#0891B2", "#BE185D")
 
 
+def tint(accent: str, amount: float = 0.90) -> str:
+    """Lighten ``accent`` towards white — for tinted backgrounds/borders."""
+    return _blend_color(accent, "#FFFFFF", amount)
+
+
+def shade(accent: str, amount: float = 0.25) -> str:
+    """Darken ``accent`` towards black — for text over tinted surfaces."""
+    return _blend_color(accent, "#000000", amount)
+
+
 def surface_gradient() -> ft.LinearGradient:
     """A soft wash (card surface -> faint brand tint) for elevated cards."""
     if _state["mode"] == "dark":
@@ -512,5 +522,5 @@ __all__ = [
     "Colors", "Spacing", "Radius", "IconSize", "Shadow", "SEVERITY_STYLE", "STATUS_STYLES", "LazyPalette",
     "BRAND_PRESETS", "get_brand_accent", "set_brand_accent", "normalize_brand_accent",
     "get_mode", "set_mode", "is_dark", "brand_gradient", "surface_gradient",
-    "tile_gradient", "TILE_ACCENTS",
+    "tile_gradient", "TILE_ACCENTS", "tint", "shade",
 ]

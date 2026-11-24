@@ -23,7 +23,7 @@ from nano_offline.components.print_profile import (
 )
 from nano_offline.components.buttons import hero_button, stepper_icon_button
 from nano_offline.services.invoice_service import InvoiceLineInput
-from nano_offline.core.theme import Colors, IconSize, LazyPalette, Radius, Shadow
+from nano_offline.core.theme import Colors, IconSize, LazyPalette, Radius, Shadow, tile_gradient
 from nano_offline.core import currency
 from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_margin
 from nano_offline.core import barcode_settings
@@ -2904,6 +2904,7 @@ class POSCenter:
             ),
             padding=ft.padding.symmetric(horizontal=8, vertical=6),
             bgcolor=color if active else Colors.WHITE,
+            gradient=tile_gradient(color) if active else None,
             border=ft.border.all(1, color if active else Colors.BORDER),
             border_radius=Radius.SM,
             on_click=on_click,
@@ -3016,7 +3017,7 @@ class POSCenter:
         content = ft.Column(
             [
                 ft.Container(
-                    height=strip_h, bgcolor=color,
+                    height=strip_h, bgcolor=color, gradient=tile_gradient(color),
                     border_radius=ft.border_radius.only(top_left=Radius.MD, top_right=Radius.MD),
                 ),
                 ft.Container(
