@@ -591,6 +591,31 @@ class ItemRepository(Offloadable):
             conn.execute("DELETE FROM item_barcodes WHERE id=?", (barcode_row_id,))
 
     @blocking
+    def set_barcode(self, item_id: int, barcode: str | None) -> None:
+        """Set (or clear, with an empty value) an item's *primary* barcode.
+
+        Lightweight on purpose: the barcode-assignment sheet edits this one
+        field for many rows in a row, so it must not pay for the full-record
+        ``update()`` (units, composite checks, opening-cost maths).
+        """
+        code = (barcode or "").strip() or None
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT id FROM items WHERE id=?", (item_id,)).fetchone()
+            if row is None:
+                raise ValueError("المادة غير موجودة")
+            if code is not None:
+                self._check_barcode_free(conn, code, exclude_item_id=item_id)
+            try:
+                conn.execute(
+                    "UPDATE items SET barcode=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (code, item_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "barcode" in str(exc):
+                    raise ValueError("هذا الباركود مستخدم بالفعل لمادة أخرى") from exc
+                raise
+
+    @blocking
     def find_similar_barcodes(self, code: str, *, exclude_item_id: int | None = None) -> list[str]:
         """Item names whose primary or secondary barcode is a likely
         typo/scan-glitch away from ``code`` (see

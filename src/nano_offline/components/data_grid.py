@@ -142,6 +142,8 @@ class DataGrid(ft.Column):
         on_new_shortcut: Callable[[], None] | None = None,
         on_edit_error: Callable[[str], None] | None = None,
         on_enter: Callable[[], None] | None = None,
+        on_load_more: Callable[[], None] | None = None,
+        single_column_edit: bool = False,
         top_row: ft.Control | None = None,
         fit_width: bool | None = None,
     ):
@@ -179,6 +181,15 @@ class DataGrid(ft.Column):
         self._on_search_shortcut = on_search_shortcut
         self._on_new_shortcut = on_new_shortcut
         self._on_enter = on_enter
+        # Infinite-scroll paging: the view passes a callback that fetches the
+        # next page and calls ``append_rows``. Debouncing/in-flight guarding is
+        # the view's job (it knows the total); the grid just reports "near the
+        # bottom" from the ListView scroll event.
+        self._on_load_more = on_load_more
+        # When True, Enter/Tab keep the cursor inside a single editable column
+        # (moving down/up the rows) instead of tabbing across every column —
+        # used by the barcode-assignment sheet for fast top-to-bottom entry.
+        self._single_column_edit = bool(single_column_edit)
         # An optional control pinned as the very first row *inside* the body
         # (below the column headers) -- e.g. an invoice's party selector, so
         # it reads as a row of the table rather than a field above it.
@@ -234,6 +245,7 @@ class DataGrid(ft.Column):
         # Flutter widgets on demand -- scrolling thousands of rows stays
         # smooth. Small grids behave exactly as before (eager, all visible).
         self._body = ft.ListView(spacing=0, padding=0, expand=True)
+        self._body.on_scroll = self._on_body_scroll
         # Stable per-instance prefix so row/picker keys stay unique across the
         # page when several grids coexist (used for scroll-into-view).
         self._uid = f"dg{id(self)}"
@@ -307,9 +319,19 @@ class DataGrid(ft.Column):
             key = _norm_key(e.key)
             shift = bool(getattr(e, "shift", False))
             if key == "enter":
-                self._commit_edit(move="next")
+                if self._single_column_edit:
+                    self._commit_edit(move=None)
+                    if self._edit_field is None:
+                        self._advance_vertical(1)
+                else:
+                    self._commit_edit(move="next")
             elif key == "tab":
-                self._commit_edit(move="prev" if shift else "next")
+                if self._single_column_edit:
+                    self._commit_edit(move=None)
+                    if self._edit_field is None:
+                        self._advance_vertical(-1 if shift else 1)
+                else:
+                    self._commit_edit(move="prev" if shift else "next")
             elif key in ("escape", "esc"):
                 self._cancel_edit()
             return
@@ -435,7 +457,11 @@ class DataGrid(ft.Column):
         elif key == "tab":
             # Tab mirrors Enter (forward): step across every column, wrapping
             # to the next row and appending a fresh row at the very end.
-            # Shift+Tab steps backwards.
+            # Shift+Tab steps backwards. In single-column mode it stays in the
+            # editable column, moving down the rows instead.
+            if self._single_column_edit:
+                self._advance_vertical(-1 if shift else 1)
+                return
             if shift:
                 moved = self.nav.tab(shift=True)
             else:
@@ -460,6 +486,9 @@ class DataGrid(ft.Column):
                     handled = self._on_enter()
                 if handled:
                     return
+            if self._single_column_edit:
+                self._advance_vertical(1)
+                return
             # Enter always navigates to the next editable cell, wrapping to the
             # next row (appending a row at the very end). Pickers open on
             # click/double-click or F2, never by Enter.
@@ -1297,6 +1326,73 @@ class DataGrid(ft.Column):
         if any(col.editable for col in self._all_columns):
             self._armed = True
 
+    def append_rows(self, rows: list[dict]) -> None:
+        """Append a page of rows without rebuilding the ones already shown.
+
+        Used by infinite-scroll paging so scrolling down grows the table in
+        O(page) instead of re-rendering every row (which also reset the scroll
+        position). Falls back to a full rebuild only when the grid groups rows.
+        """
+        new = [dict(r) for r in rows]
+        if not new:
+            return
+        start = len(self._rows)
+        self._rows.extend(new)
+        self.nav.set_rows(len(self._rows))
+        try:
+            self._body.build_controls_on_demand = len(self._rows) > _ON_DEMAND_THRESHOLD
+        except Exception:
+            pass
+        if self._group_by is not None:
+            self._render_body()
+            self._safe_update(self._body)
+            return
+        try:
+            added = [self._make_row(start + i, row) for i, row in enumerate(new)]
+            self._body.controls.extend(added)
+        except Exception:
+            self._render_body()
+        self._sync_select_all()
+        self._safe_update(self._body)
+
+    def _on_body_scroll(self, e) -> None:
+        if self._on_load_more is None:
+            return
+        try:
+            pixels = float(getattr(e, "pixels", 0) or 0)
+            maxse = float(getattr(e, "max_scroll_extent", 0) or 0)
+            vd = float(getattr(e, "viewport_dimension", 0) or 0)
+        except Exception:
+            return
+        if maxse <= 0:
+            return
+        if (maxse - pixels) <= max(160.0, vd * 0.6):
+            try:
+                self._on_load_more()
+            except Exception:
+                pass
+
+    def start_editing(self, *, row: int = 0, key: str | None = None) -> None:
+        """Focus (and open the editor for) a cell — used to begin fast entry."""
+        col = 0
+        if key is not None:
+            for i, c in enumerate(self._columns):
+                if c.key == key:
+                    col = i
+                    break
+        else:
+            editable = self.nav.editable_cols
+            col = editable[0] if editable else 0
+        if not self._rows:
+            return
+        row = max(0, min(int(row), len(self._rows) - 1))
+        self.nav.select(row, col)
+        self._paint_selection()
+        self._notify_cell_selected()
+        if self.nav.is_editable:
+            self._begin_edit()
+        self._scroll_row_into_view(row)
+
     def set_row_height(self, height: int) -> None:
         """Switch density ("comfortable" 48px vs "compact" 36px)."""
         self._row_height = max(28, int(height))
@@ -1799,6 +1895,37 @@ class DataGrid(ft.Column):
             return
         if self.nav.editable_cols:
             self.add_row()
+
+    def _advance_vertical(self, delta: int) -> None:
+        """Move down/up inside the single editable column (barcode mode).
+
+        If the cursor is on a read-only column it first jumps to the editable
+        one on the same row and opens its editor, so Enter/Tab always land on
+        the column the user is filling. At the last row, moving forward asks
+        the view for the next page (infinite scroll).
+        """
+        cols = self.nav.editable_cols
+        if not cols:
+            return
+        target = cols[0]
+        if self.nav.col != target:
+            self.nav.select(self.nav.row, target)
+            self._paint_selection()
+            self._notify_cell_selected()
+            self._begin_edit()
+            return
+        nr = self.nav.row + int(delta)
+        if 0 <= nr < len(self._rows):
+            self.nav.select(nr, target)
+            self._paint_selection()
+            self._notify_cell_selected()
+            self._begin_edit()
+            self._scroll_row_into_view(nr)
+        elif delta > 0 and self._on_load_more is not None:
+            try:
+                self._on_load_more()
+            except Exception:
+                pass
 
     def _advance_backward(self) -> None:
         """Step to the previous cell (Shift+Tab); stops at the very start."""

@@ -290,7 +290,12 @@ class ItemsCenter:
         # المزيد" grows this on demand instead of paying for everything
         # up front. Reset to the first page whenever the search/filter
         # changes, so results don't stay capped on the un-refined match.
-        render_limit = {"n": 60}
+        PAGE_SIZE = 100
+        render_limit = {"n": PAGE_SIZE}
+        # Infinite-scroll state for the desktop grid: the first page loads
+        # eagerly; scrolling near the bottom appends the next offset page
+        # (no "عرض المزيد" button).
+        paging = {"offset": 0, "done": False, "loading": False}
         filter_boxes: dict[str, ft.Container] = {}
         sort_state = {"key": "name"}
         # Low-stock cutoff is configurable from settings (default 5) so a shop
@@ -518,7 +523,7 @@ class ItemsCenter:
 
         def apply_grid_sort(key: str | None, direction: str | None) -> None:
             grid_sort["key"], grid_sort["dir"] = key, direction
-            render_limit["n"] = 60
+            render_limit["n"] = PAGE_SIZE
             refresh()
 
         def render_bulk_bar(rows: list[dict]) -> None:
@@ -619,6 +624,7 @@ class ItemsCenter:
             on_row_expand=item_expand_panel,
             on_search_shortcut=focus_search,
             on_new_shortcut=lambda: _choose_item_form(),
+            on_load_more=lambda: _load_more_dispatch(),
             formatter=_grid_formatter,
             boxed=True,
             center_cells=True,
@@ -650,7 +656,7 @@ class ItemsCenter:
 
         def set_filter(key: str):
             filter_state["mode"] = key
-            render_limit["n"] = 60
+            render_limit["n"] = PAGE_SIZE
             update_filter_styles()
             refresh()
 
@@ -2664,6 +2670,175 @@ class ItemsCenter:
             page.open(sheet)
             _page(reset=True)
 
+        def open_barcode_assign_sheet(_=None) -> None:
+            """Fast barcode assignment table.
+
+            Two columns (name, barcode) with the row number; the barcode cell
+            is the only editable one and Enter/Tab move *down inside that
+            column* (see DataGrid single_column_edit) so a whole page can be
+            filled top-to-bottom without touching the mouse. Rows load 100 at a
+            time and more arrive on scroll. Default filter: items with no
+            barcode yet.
+            """
+            PAGE = 100
+            state = {"search": "", "only_missing": True, "offset": 0, "done": False,
+                     "loading": False, "total": 0, "token": 0}
+            sheet, _sheet_w = sheets.new_desktop_sheet(self.page)
+
+            def close(_=None):
+                try:
+                    assign_grid.detach()
+                    grid.attach()
+                except Exception:
+                    pass
+                page.close(sheet)
+
+            def _mode() -> str:
+                return "no_barcode" if state["only_missing"] else "all"
+
+            def _numbered(rows: list[dict], start: int) -> list[dict]:
+                out = []
+                for i, raw in enumerate(rows):
+                    row = dict(raw)
+                    row["_row_no"] = start + i + 1
+                    out.append(row)
+                return out
+
+            def _commit(row_index, key, value):
+                if key != "barcode":
+                    return
+                row = assign_grid.row_at(row_index) or {}
+                item_id = int(row.get("id") or 0)
+                if item_id:
+                    # Raises on a duplicate -> the grid restores the cell and
+                    # reports via on_edit_error, and the cursor stays put.
+                    ctx.items.set_barcode(item_id, str(value or "").strip() or None)
+
+            def _edit_error(message: str) -> None:
+                notify(message, kind="error")
+
+            async def _load(reset: bool) -> None:
+                if state["loading"] and not reset:
+                    return
+                state["token"] += 1
+                token = state["token"]
+                state["loading"] = True
+                offset = 0 if reset else state["offset"]
+                try:
+                    total, rows = await asyncio.gather(
+                        ctx.items.aio.count(state["search"], mode=_mode()),
+                        ctx.items.aio.list(state["search"], PAGE, offset, mode=_mode()),
+                    )
+                except Exception as exc:
+                    state["loading"] = False
+                    notify(str(exc), kind="error")
+                    return
+                if token != state["token"]:
+                    return
+                state["total"] = int(total)
+                if reset:
+                    state["offset"] = 0
+                    assign_grid.set_rows(_numbered(rows, 0))
+                else:
+                    assign_grid.append_rows(_numbered(rows, state["offset"]))
+                state["offset"] += len(rows)
+                state["done"] = state["offset"] >= state["total"] or len(rows) < PAGE
+                state["loading"] = False
+                counter.value = f"{state['offset']} من {state['total']}"
+                try:
+                    counter.update()
+                    page.update()
+                except Exception:
+                    pass
+                if reset and rows:
+                    assign_grid.start_editing(row=0, key="barcode")
+
+            def _load_more() -> None:
+                if state["done"] or state["loading"]:
+                    return
+                try:
+                    page.run_task(_load, False)
+                except Exception:
+                    pass
+
+            assign_grid = DataGrid(
+                columns=[
+                    GridColumn("_row_no", "#", width=54, align="center", sortable=False),
+                    GridColumn("name", "اسم المادة"),
+                    GridColumn("barcode", "الباركود", width=300, editable=True,
+                               tooltip="اكتب الباركود ثم Enter/Tab للانتقال للصف التالي"),
+                ],
+                rows=[],
+                page=page,
+                on_cell_commit=_commit,
+                on_edit_error=_edit_error,
+                on_load_more=_load_more,
+                single_column_edit=True,
+                center_cells=True,
+                boxed=True,
+                viewport_height=max(320, int((self.page.height or 800) * 0.60)),
+                empty_text="لا توجد مواد",
+            )
+
+            search = SelectAllTextField(
+                hint_text="ابحث بالاسم أو الباركود...", prefix_icon=ft.Icons.SEARCH, dense=True,
+                border_radius=20, content_padding=ft.padding.symmetric(horizontal=14, vertical=8),
+                border_color=Colors.BORDER,
+            )
+            search.on_focus = lambda e: assign_grid.disarm()
+
+            def _on_search(_=None):
+                state["search"] = (search.value or "").strip()
+                state["done"] = False
+                page.run_task(_load, True)
+
+            search.on_change = _on_search
+
+            only_missing = ft.Switch(label="بلا باركود فقط", value=True, active_color=Colors.PRIMARY)
+
+            def _on_filter(_=None):
+                state["only_missing"] = bool(only_missing.value)
+                state["done"] = False
+                page.run_task(_load, True)
+
+            only_missing.on_change = _on_filter
+            counter = ft.Text("", size=11, color=Colors.TEXT_SECONDARY)
+
+            sheet.content = ft.Container(
+                ft.Column(
+                    [
+                        ft.Container(width=44, height=5, bgcolor=Colors.BORDER_STRONG, border_radius=10, alignment=ft.alignment.center),
+                        ft.Row(
+                            [
+                                _icon_bubble(ft.Icons.QR_CODE_2, color=Colors.PRIMARY, bgcolor=Colors.PRIMARY_BG),
+                                ft.Column(
+                                    [
+                                        ft.Text("إسناد الباركودات", size=17, weight=ft.FontWeight.BOLD),
+                                        ft.Text("أسنِد باركودًا لكل مادة — Enter/Tab ينتقل للصف التالي داخل عمود الباركود", size=11, color=Colors.TEXT_SECONDARY),
+                                    ],
+                                    spacing=1, expand=True,
+                                ),
+                                header_close_button(close),
+                            ],
+                            spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Row(
+                            [ft.Container(search, expand=True), only_missing, counter],
+                            spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Container(assign_grid, expand=True),
+                    ],
+                    spacing=12, tight=True, expand=True,
+                ),
+                padding=ft.padding.only(left=18, right=18, top=12, bottom=20),
+                bgcolor=Colors.WHITE,
+                border_radius=ft.border_radius.only(top_left=28, top_right=28),
+                shadow=Shadow.LG,
+            )
+            sheet.content.width = _sheet_w
+            page.open(sheet)
+            page.run_task(_load, True)
+
         def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None) -> None:
             """Comprehensive multi-item entry: a full table in a wide sheet.
 
@@ -4134,18 +4309,58 @@ class ItemsCenter:
                 grid.set_footer(footer)
             else:
                 grid.set_footer(None)
-            if total > len(rows):
-                from nano_offline.components import load_more_control
-                grid_more.content = load_more_control(
-                    shown=len(rows),
-                    total=total,
-                    on_click=lambda _=None: (render_limit.__setitem__("n", render_limit["n"] + 100), refresh()),
-                )
-                grid_more.visible = True
-            else:
-                grid_more.visible = False
+            # First page loaded: remember how far we got so scrolling can fetch
+            # the next offset page (no button).
+            paging["offset"] = len(rows)
+            paging["done"] = len(rows) < render_limit["n"] or len(rows) >= total
+            paging["loading"] = False
+            grid_more.visible = False
             list_switch.content = desktop_list
             update_filter_styles(); page.update()
+
+        async def _load_more_page() -> None:
+            if paging["done"] or paging["loading"]:
+                return
+            paging["loading"] = True
+            token = refresh_token["n"]
+            query = (search.value or "").strip()
+            mode = filter_state["mode"]
+            order_by, descending = _sort_args()
+            ids = await _restock_ids() if mode == "restock" else None
+            offset = paging["offset"]
+            try:
+                rows = await ctx.items.aio.list(
+                    query, PAGE_SIZE, offset,
+                    mode=mode, low_stock=LOW_STOCK,
+                    order_by=order_by, descending=descending, ids=ids,
+                )
+            except Exception as exc:
+                paging["loading"] = False
+                notify(str(exc), kind="error")
+                return
+            if token != refresh_token["n"]:
+                paging["loading"] = False
+                return
+            if rows:
+                grid.append_rows(rows)
+                paging["offset"] = offset + len(rows)
+                if len(rows) < PAGE_SIZE:
+                    paging["done"] = True
+            else:
+                paging["done"] = True
+            paging["loading"] = False
+            try:
+                page.update()
+            except Exception:
+                pass
+
+        def _load_more_dispatch() -> None:
+            if paging["done"] or paging["loading"]:
+                return
+            try:
+                page.run_task(_load_more_page)
+            except Exception:
+                pass
 
         def _schedule_render(delay: float) -> None:
             refresh_token["n"] += 1
@@ -4175,14 +4390,14 @@ class ItemsCenter:
             # A new search term makes the old page size meaningless (it was
             # sized against a different, larger result set) -- start over
             # from the first page so "تحميل المزيد" reflects the new query.
-            render_limit["n"] = 60
+            render_limit["n"] = PAGE_SIZE
             _schedule_render(0.25)  # coalesce fast typing into one query
 
         search.on_change = refresh_from_search
 
         def search_submit(_=None):
             # Enter bypasses the debounce and renders the current query now.
-            render_limit["n"] = 60
+            render_limit["n"] = PAGE_SIZE
             refresh()
 
         search.on_submit = search_submit
@@ -4347,6 +4562,7 @@ class ItemsCenter:
                     if self.on_verify_invoice is not None
                     else []
                 ),
+                RibbonAction("assign_barcodes", "إسناد الباركودات", ft.Icons.QR_CODE_2, on_click=lambda _=None: open_barcode_assign_sheet()),
                 *(
                     [RibbonAction("import_card", "استيراد بطاقة", ft.Icons.QR_CODE_SCANNER, on_click=lambda _=None: open_import_card_sheet())]
                     if supports("barcode_camera_scan")

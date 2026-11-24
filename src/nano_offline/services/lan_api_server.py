@@ -101,6 +101,7 @@ WRITE_METHODS: dict[str, str] = {
     "items.delete_opening_balance": "items",
     "items.bulk_set_category": "items",
     "items.bulk_scale_selling_price": "items",
+    "items.set_barcode": "items",
     "definitions.create_category": "items",
     "definitions.rename_category": "items",
     "definitions.delete_category": "items",

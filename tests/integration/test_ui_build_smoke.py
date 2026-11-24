@@ -391,3 +391,27 @@ def test_items_bulk_sheets_page_queries_instead_of_loading_all():
             ctx.items.list = original
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_items_barcode_assign_sheet_opens():
+    from nano_offline.views.items_view import ItemsCenter
+
+    ctx, tmp = _ctx()
+    try:
+        unit = ctx.definitions.create_unit("قطعة", "ق")
+        for i in range(5):
+            ctx.items.create(
+                name=f"مادة {i}", purchase_price=1.0, selling_price=2.0,
+                quantity=1.0, base_unit_id=unit,
+            )
+        page, content = FakePage(), ft.Container(expand=True)
+        actions: dict = {}
+        center = ItemsCenter(
+            page, ctx, content, native_files=None, on_title_change=lambda *a: None,
+            on_context_actions=lambda acts: actions.update({a.key: a for a in acts}),
+        )
+        center.show_center()
+        actions["assign_barcodes"].on_click(None)
+        assert page.opened and getattr(page.opened[-1], "content", None) is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
