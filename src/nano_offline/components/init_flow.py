@@ -162,13 +162,21 @@ class InitDatabaseFlow:
             bgcolor=Colors.DANGER_BG, border=ft.border.all(1, Colors.DANGER), border_radius=Radius.MD,
         )
 
-        c["gate_col"] = ft.Column([
-            c["password"], c["status"],
-            ft.Row([c["confirm_btn"], c["retry_btn"]], spacing=8),
-        ], spacing=12, expand=True)
+        c["gate_col"] = ft.Column([c["password"], c["status"]], spacing=12, expand=True)
         c["work_col"] = ft.Column([
-            c["idle"], c["progress_section"], c["success"], c["error"], c["continue_btn"],
+            c["idle"], c["progress_section"], c["success"], c["error"],
         ], spacing=10, expand=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+
+        # Every action lives in one bottom bar so the buttons are never
+        # scattered between the columns.
+        c["footer"] = ft.Container(
+            ft.Row(
+                [c["cancel_btn"], c["retry_btn"], c["confirm_btn"], c["continue_btn"]],
+                spacing=8, alignment=ft.MainAxisAlignment.END, wrap=True, run_spacing=8,
+            ),
+            padding=ft.padding.only(left=16, right=16, top=10, bottom=14),
+            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER_ALT)),
+        )
 
         try:
             available = int(getattr(self.page, "width", 0) or 0)
@@ -187,10 +195,7 @@ class InitDatabaseFlow:
             width=width, padding=ft.padding.only(left=16, right=16, top=14, bottom=6),
         )
         root = ft.Container(
-            ft.Column([header, body,
-                       ft.Container(ft.Row([c["cancel_btn"]], alignment=ft.MainAxisAlignment.END),
-                                    padding=ft.padding.only(left=16, right=16, top=0, bottom=12))],
-                      spacing=0),
+            ft.Column([header, body, c["footer"]], spacing=0),
             width=width, bgcolor=Colors.WHITE, border_radius=18, shadow=Shadow.LG, rtl=True,
         )
         self._controls["root"] = root

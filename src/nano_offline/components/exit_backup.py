@@ -263,9 +263,11 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
         controls["exit_btn"] = ft.OutlinedButton("خروج بدون نسخة", icon=ft.Icons.LOGOUT, on_click=lambda _=None: _exit_now())
         controls["create_btn"] = ft.FilledButton("إنشاء نسخة والخروج", icon=ft.Icons.SHIELD_OUTLINED, on_click=_on_create)
         controls["retry_btn"] = ft.FilledButton("إعادة المحاولة", icon=ft.Icons.REFRESH, on_click=_on_create, visible=False)
+        # All actions live in one bottom bar (wrap so they never overflow the
+        # width on a phone).
         controls["actions"] = ft.Row(
             [controls["cancel_exit_btn"], controls["cancel_btn"], controls["exit_btn"], controls["retry_btn"], controls["create_btn"]],
-            spacing=8, alignment=ft.MainAxisAlignment.END,
+            spacing=8, alignment=ft.MainAxisAlignment.END, wrap=True, run_spacing=8,
         )
 
         try:
@@ -294,9 +296,13 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
         )
         body = ft.Container(controls["body_cols"], width=dialog_width,
                             padding=ft.padding.only(left=16, right=16, top=14, bottom=6))
+        controls["footer"] = ft.Container(
+            controls["actions"],
+            padding=ft.padding.only(left=16, right=16, top=10, bottom=14),
+            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER_ALT)),
+        )
         root = ft.Container(
-            ft.Column([header, body, ft.Container(controls["actions"], padding=ft.padding.only(left=16, right=16, top=6, bottom=14))],
-                      spacing=0),
+            ft.Column([header, body, controls["footer"]], spacing=0),
             width=dialog_width, bgcolor=Colors.WHITE, border_radius=18, shadow=Shadow.LG, rtl=True)
         controls["root"] = root
         dialog = ft.AlertDialog(modal=True, content=root, content_padding=0)
