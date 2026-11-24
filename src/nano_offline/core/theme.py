@@ -478,6 +478,23 @@ def brand_gradient(*, soft: bool = False, diagonal: bool = True) -> ft.LinearGra
     return ft.LinearGradient(colors=colors, begin=begin, end=end)
 
 
+def tile_gradient(accent: str, *, diagonal: bool = True) -> ft.LinearGradient:
+    """A dark -> accent -> bright ramp that stays white-text safe.
+
+    Shortcut tiles/first-run cards put white labels straight on the gradient,
+    so unlike ``brand_gradient`` this keeps every stop dark enough for AA text.
+    """
+    deep = _blend_color(accent, "#000000", 0.32)
+    bright = _blend_color(accent, "#FFFFFF", 0.10)
+    begin = ft.alignment.top_left if diagonal else ft.alignment.center_left
+    end = ft.alignment.bottom_right if diagonal else ft.alignment.center_right
+    return ft.LinearGradient(colors=[deep, accent, bright], begin=begin, end=end)
+
+
+# Distinct white-text-safe accent hues for the home shortcut tiles.
+TILE_ACCENTS = ("#0B5FCC", "#7C3AED", "#059669", "#EA580C", "#0891B2", "#BE185D")
+
+
 def surface_gradient() -> ft.LinearGradient:
     """A soft wash (card surface -> faint brand tint) for elevated cards."""
     if _state["mode"] == "dark":
@@ -495,4 +512,5 @@ __all__ = [
     "Colors", "Spacing", "Radius", "IconSize", "Shadow", "SEVERITY_STYLE", "STATUS_STYLES", "LazyPalette",
     "BRAND_PRESETS", "get_brand_accent", "set_brand_accent", "normalize_brand_accent",
     "get_mode", "set_mode", "is_dark", "brand_gradient", "surface_gradient",
+    "tile_gradient", "TILE_ACCENTS",
 ]

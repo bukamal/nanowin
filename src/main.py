@@ -37,7 +37,15 @@ from nano_offline.core import theme_settings
 from nano_offline.core import font_settings
 from nano_offline.core import ui_scale
 from nano_offline.core.design import theme_builder
-from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.theme import (
+    TILE_ACCENTS,
+    Colors,
+    Radius,
+    Shadow,
+    brand_gradient,
+    surface_gradient,
+    tile_gradient,
+)
 from nano_offline.core.platform_capabilities import IS_WINDOWS, supports
 from nano_offline.core.platform_native_files import PlatformNativeFiles
 from nano_offline.core.shell_routes import ShellNavigation, ShellRouteCoordinator, register_shell_routes
@@ -430,11 +438,16 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     label_map = {k: v[0] for k, v in page_meta.items()}
     allowed_keys = [k for k in actions if session.can(k)]
 
-    def _module_tile(icon, label: str, on_click) -> ft.Control:
+    def _module_tile(icon, label: str, on_click, accent: str | None = None) -> ft.Control:
+        accent = accent or Colors.PRIMARY
         return ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(icon, size=30, color=Colors.WHITE),
+                    ft.Container(
+                        ft.Icon(icon, size=26, color=Colors.WHITE),
+                        width=46, height=46, alignment=ft.alignment.center,
+                        bgcolor=ft.Colors.with_opacity(0.20, ft.Colors.WHITE), border_radius=14,
+                    ),
                     ft.Text(label, size=12.5, weight=ft.FontWeight.W_700, color=Colors.WHITE, text_align=ft.TextAlign.CENTER),
                 ],
                 spacing=8,
@@ -442,7 +455,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 alignment=ft.MainAxisAlignment.CENTER,
             ),
-            bgcolor=Colors.PRIMARY,
+            bgcolor=accent,
+            gradient=tile_gradient(accent),
             border_radius=16,
             padding=14,
             height=112,
@@ -450,7 +464,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             on_click=on_click,
             alignment=ft.alignment.center,
             col={"xs": 12, "sm": 6, "md": 4},
-            shadow=Shadow.SM,
+            shadow=Shadow.MD,
         )
 
     def _render_module_board() -> None:
@@ -471,8 +485,9 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             ("المبيعات", ft.Icons.RECEIPT_LONG_OUTLINED, lambda: navigate("sales")),
             ("المشتريات", ft.Icons.LOCAL_SHIPPING_OUTLINED, lambda: navigate("purchases")),
         ]
-        for label, icon, cb in shortcuts:
-            tiles.append(_module_tile(icon, label, (lambda _e=None, c=cb: c())))
+        for index, (label, icon, cb) in enumerate(shortcuts):
+            accent = TILE_ACCENTS[index % len(TILE_ACCENTS)]
+            tiles.append(_module_tile(icon, label, (lambda _e=None, c=cb: c()), accent))
 
         def _money(value) -> str:
             try:
@@ -571,8 +586,12 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 [
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.SEARCH, size=16, color=Colors.TEXT_SECONDARY),
-                            ft.Text("الاستعلام السريع عن مادة", size=12, weight=ft.FontWeight.W_600),
+                            ft.Container(
+                                ft.Icon(ft.Icons.SEARCH, size=15, color=Colors.WHITE),
+                                width=30, height=30, alignment=ft.alignment.center,
+                                bgcolor=Colors.PRIMARY, gradient=brand_gradient(), border_radius=9,
+                            ),
+                            ft.Text("الاستعلام السريع عن مادة", size=12.5, weight=ft.FontWeight.W_700),
                         ],
                         spacing=8,
                     ),
@@ -586,9 +605,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 spacing=8,
             ),
             bgcolor=Colors.WHITE,
+            gradient=surface_gradient(),
             border=ft.border.all(1, Colors.BORDER),
             border_radius=14,
             padding=14,
+            shadow=Shadow.SM,
         )
 
         # ---- right info panel (company + day/overall movement + summary) ----
@@ -747,6 +768,7 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=Colors.WHITE,
+            gradient=surface_gradient(),
             border=ft.border.all(1, Colors.BORDER),
             border_radius=16,
             padding=16,
@@ -759,7 +781,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 [
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, size=16, color=Colors.PRIMARY),
+                            ft.Container(
+                                ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, size=15, color=Colors.WHITE),
+                                width=30, height=30, alignment=ft.alignment.center,
+                                bgcolor=Colors.PRIMARY, gradient=brand_gradient(), border_radius=9,
+                            ),
                             ft.Text(company_name, size=13, weight=ft.FontWeight.W_700),
                         ],
                         spacing=8,
@@ -779,9 +805,11 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 spacing=10,
             ),
             bgcolor=Colors.WHITE,
+            gradient=surface_gradient(),
             border=ft.border.all(1, Colors.BORDER),
             border_radius=14,
             padding=14,
+            shadow=Shadow.SM,
         )
 
         # ---- "الاختصارات" (left): 6 shortcut cards (3x2) + quick inquiry
