@@ -37,6 +37,7 @@ READ_METHODS = frozenset({
     "items.find_similar_names", "items.find_similar_barcodes",
     "items.purchased_by_party", "items.quiet_item_ids",
     "items.build_item_card", "items.verify_item_card",
+    "items.list_ids", "items.list_by_ids",
     # invoices
     "invoices.list_invoices", "invoices.get_invoice", "invoices.check_purchase_price",
     "invoices.count_invoices", "invoices.invoice_totals",
@@ -98,6 +99,8 @@ WRITE_METHODS: dict[str, str] = {
     "items.add_barcode": "items",
     "items.remove_barcode": "items",
     "items.delete_opening_balance": "items",
+    "items.bulk_set_category": "items",
+    "items.bulk_scale_selling_price": "items",
     "definitions.create_category": "items",
     "definitions.rename_category": "items",
     "definitions.delete_category": "items",
