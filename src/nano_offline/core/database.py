@@ -531,6 +531,11 @@ CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id
 -- lookup instead.
 CREATE INDEX IF NOT EXISTS idx_invoice_lines_item ON invoice_lines(item_id);
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category_id);
+-- The category/unit definitions screen shows a per-definition item count and
+-- the unit picker filters by these columns. Without these indexes each
+-- per-unit COUNT(*) full-scans items / item_units (x number of units).
+CREATE INDEX IF NOT EXISTS idx_items_base_unit ON items(base_unit_id);
+CREATE INDEX IF NOT EXISTS idx_item_units_unit ON item_units(unit_id);
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments(customer_id, payment_date);
 CREATE INDEX IF NOT EXISTS idx_payments_supplier ON payments(supplier_id, payment_date);
