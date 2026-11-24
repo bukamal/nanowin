@@ -1021,7 +1021,7 @@ class AdminCenter:
                                     ], spacing=1, expand=True, tight=True),
                                 ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                                 padding=ft.padding.symmetric(horizontal=16, vertical=14),
-                                gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
+                                gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN],
                                                            begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
                                 border_radius=ft.border_radius.only(top_left=18, top_right=18),
                             ),

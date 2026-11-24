@@ -82,7 +82,7 @@ class ActivationGate:
             height=50,
             border_radius=Radius.MD,
             gradient=ft.LinearGradient(
-                colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
+                colors=[Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN],
                 begin=ft.alignment.center_left,
                 end=ft.alignment.center_right,
             ),
@@ -162,7 +162,7 @@ class ActivationGate:
             alignment=ft.alignment.center,
             border_radius=32,
             gradient=ft.LinearGradient(
-                colors=[Colors.BRAND_START, Colors.BRAND_CYAN],
+                colors=[Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN],
                 begin=ft.alignment.top_left,
                 end=ft.alignment.bottom_right,
             ),

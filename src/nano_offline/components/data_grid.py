@@ -33,7 +33,7 @@ from typing import Callable
 
 import flet as ft
 
-from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.theme import Colors, Radius, Shadow, brand_gradient
 from nano_offline.components.grid_model import ColorRole, GridColumn, GridNavigator
 from nano_offline.components.status_pill import status_pill
 
@@ -663,6 +663,7 @@ class DataGrid(ft.Column):
         self._header = ft.Container(
             ft.Row(self._header_cells(), spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=Colors.BACKGROUND_ALT,
+            gradient=brand_gradient(soft=True),
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER_STRONG)),
         )
         return self._header

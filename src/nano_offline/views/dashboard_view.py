@@ -7,7 +7,7 @@ from typing import Callable
 import flet as ft
 
 from nano_offline.core import branding
-from nano_offline.core.theme import Colors, Radius, SEVERITY_STYLE, Shadow
+from nano_offline.core.theme import Colors, Radius, SEVERITY_STYLE, Shadow, brand_gradient
 from nano_offline.core import currency
 from nano_offline.core import privacy
 from nano_offline.core.expiring import cached_insight
@@ -508,9 +508,12 @@ class DashboardCenter:
                     ft.Row(
                         [
                             ft.Container(
-                                ft.Icon(icon, size=22, color=color),
+                                ft.Icon(icon, size=22, color=Colors.WHITE),
                                 width=44, height=44, alignment=ft.alignment.center,
-                                bgcolor=Colors.WHITE, border_radius=14,
+                                bgcolor=color,
+                                gradient=brand_gradient() if severity == "info" else None,
+                                border_radius=14,
+                                shadow=Shadow.SM,
                             ),
                             ft.Column(
                                 [

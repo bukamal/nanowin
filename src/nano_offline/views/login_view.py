@@ -103,7 +103,7 @@ class LoginGate:
             expand=True,
             height=50,
             border_radius=Radius.MD,
-            gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_CYAN], begin=ft.alignment.center_left, end=ft.alignment.center_right),
+            gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN], begin=ft.alignment.center_left, end=ft.alignment.center_right),
             shadow=ft.BoxShadow(blur_radius=18, spread_radius=0, color=Colors.PRIMARY_BORDER, offset=ft.Offset(0, 6)),
             alignment=ft.alignment.center,
             ink=True,
@@ -521,7 +521,7 @@ class LoginGate:
             height=112,
             alignment=ft.alignment.center,
             border_radius=32,
-            gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_CYAN], begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
+            gradient=ft.LinearGradient(colors=[Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN], begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
             shadow=ft.BoxShadow(blur_radius=28, spread_radius=2, color=Colors.PRIMARY_BORDER, offset=ft.Offset(0, 10)),
         )
         subtitle = "إنشاء المدير الأول" if self.first_run else "تسجيل الدخول المحلي"
