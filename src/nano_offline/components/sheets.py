@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import flet as ft
 
-from nano_offline.core.theme import Colors, Radius, Shadow
+from nano_offline.core.theme import Colors, Radius, Shadow, brand_gradient
 
 TABLE_HEIGHT_RATIO = 0.88
 DETAIL_HEIGHT_RATIO = 0.74
@@ -124,11 +124,17 @@ def sheet_header(
         expand=True,
         tight=True,
     )
+    # Default brand header uses the shared gradient; a caller that passes an
+    # explicit semantic colour (e.g. danger) keeps its solid bubble.
+    use_gradient = icon_bg == Colors.PRIMARY_BG and icon_color == Colors.PRIMARY
     controls: list[ft.Control] = [
         ft.Container(
-            ft.Icon(icon, color=icon_color, size=22),
+            ft.Icon(icon, color=Colors.WHITE if use_gradient else icon_color, size=22),
             width=44, height=44, alignment=ft.alignment.center,
-            bgcolor=icon_bg, border_radius=14,
+            bgcolor=Colors.PRIMARY if use_gradient else icon_bg,
+            gradient=brand_gradient() if use_gradient else None,
+            border_radius=14,
+            shadow=Shadow.SM,
         ),
         left,
     ]

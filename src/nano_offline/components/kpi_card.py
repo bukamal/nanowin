@@ -15,7 +15,7 @@ from typing import Callable
 
 import flet as ft
 
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import Colors, Shadow, surface_gradient, tint
 from nano_offline.components.money_text import money_row
 
 
@@ -57,7 +57,7 @@ def kpi_card(
                 ft.Container(
                     ft.Icon(icon, color=accent, size=20),
                     width=40, height=40, alignment=ft.alignment.center,
-                    bgcolor=Colors.BACKGROUND, border_radius=13,
+                    bgcolor=tint(accent, 0.88), border_radius=13,
                 ),
                 ft.Column(
                     [
@@ -75,7 +75,8 @@ def kpi_card(
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        padding=11, bgcolor=Colors.WHITE, border=ft.border.all(1, Colors.BORDER),
+        padding=11, bgcolor=Colors.WHITE, gradient=surface_gradient(),
+        border=ft.border.all(1, Colors.BORDER),
         border_radius=16, shadow=Shadow.SM,
         ink=bool(on_tap), on_click=on_tap,
     )
