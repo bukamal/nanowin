@@ -21,7 +21,7 @@ from typing import Callable
 import flet as ft
 
 from nano_offline.core import branding
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import Colors, Shadow, brand_gradient
 from nano_offline.core.design.tokens import radius_for
 
 
@@ -158,6 +158,9 @@ class CommandBar(ft.Container):
         super().__init__(
             content=ft.Column([top, self._docs_wrap, self._actions_wrap], spacing=0),
             bgcolor=Colors.WHITE,
+            # A very light brand wash so the command bar reads as part of the
+            # new gradient language instead of a flat white strip.
+            gradient=brand_gradient(soft=True),
             padding=ft.padding.symmetric(horizontal=14, vertical=8),
             border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
             shadow=Shadow.SM,
@@ -397,6 +400,7 @@ class CommandBar(ft.Container):
             row = box.content
             icon, label = row.controls[0], row.controls[1]
             box.bgcolor = Colors.WHITE if active else None
+            box.gradient = brand_gradient(soft=True) if active else None
             box.border = (
                 ft.border.only(
                     left=ft.BorderSide(1, Colors.BORDER),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import flet as ft
 
 from nano_offline.core.design.tokens import SPACING, action_color, radius_for
-from nano_offline.core.theme import Colors
+from nano_offline.core.theme import Colors, Shadow, surface_gradient
 
 __all__ = ["card", "badge", "skeleton", "section_title"]
 
@@ -15,8 +15,10 @@ def card(content: ft.Control, *, padding: int | None = None, shape: str = "stand
         content,
         padding=padding if padding is not None else SPACING["lg"],
         bgcolor=Colors.WHITE,
+        gradient=surface_gradient(),
         border=ft.border.all(1, Colors.BORDER_ALT),
         border_radius=radius_for("lg", shape),
+        shadow=Shadow.SM,
     )
 
 

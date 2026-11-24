@@ -91,9 +91,13 @@ def _brand_tokens(accent: str) -> tuple[dict[str, str], dict[str, str]]:
         "PRIMARY_DARK": _blend_color(accent, "#000000", 0.20),
         "PRIMARY_BG": _blend_color(accent, "#FFFFFF", 0.92),
         "PRIMARY_BORDER": _blend_color(accent, "#FFFFFF", 0.68),
+        # Three-stop brand ramp (deep -> primary -> sky) used by every gradient
+        # header/hero, derived from the accent so a single Appearance choice
+        # repaints the whole gradient language.
         "BRAND_START": accent,
+        "BRAND_MID": _blend_color(accent, "#2563EB", 0.45),
         "BRAND_DEEP": _blend_color(accent, "#000000", 0.18),
-        "BRAND_CYAN": _blend_color(accent, "#FFFFFF", 0.20),
+        "BRAND_CYAN": _blend_color(accent, "#22D3EE", 0.55),
     }
     dark = {
         "PRIMARY": _blend_color(accent, "#FFFFFF", 0.32),
@@ -101,8 +105,9 @@ def _brand_tokens(accent: str) -> tuple[dict[str, str], dict[str, str]]:
         "PRIMARY_BG": _blend_color(accent, "#000000", 0.82),
         "PRIMARY_BORDER": _blend_color(accent, "#000000", 0.52),
         "BRAND_START": accent,
+        "BRAND_MID": _blend_color(accent, "#3B82F6", 0.42),
         "BRAND_DEEP": _blend_color(accent, "#000000", 0.18),
-        "BRAND_CYAN": _blend_color(accent, "#FFFFFF", 0.30),
+        "BRAND_CYAN": _blend_color(accent, "#22D3EE", 0.60),
     }
     _brand_tokens_cache[accent] = (light, dark)
     return light, dark
@@ -164,18 +169,20 @@ class _LightTokens:
     PRIMARY_BG = "#EAF3FF"
     PRIMARY_BORDER = "#BBD4F9"
     BRAND_START = "#0B5FCC"
+    BRAND_MID = "#1761DA"
     BRAND_DEEP = "#0A4CAB"
-    BRAND_CYAN = "#0EA5E9"
+    BRAND_CYAN = "#189FDE"
 
-    # Neutral surfaces
+    # Neutral surfaces — a subtle cool tint gives depth instead of the flat
+    # grey that made every screen read the same.
     WHITE = "#FFFFFF"
-    BACKGROUND = "#F8FAFC"
-    BACKGROUND_ALT = "#F1F5F9"
+    BACKGROUND = "#F4F7FD"
+    BACKGROUND_ALT = "#EAF0FA"
 
-    # Borders
-    BORDER = "#E2E8F0"
-    BORDER_ALT = "#E5E7EB"
-    BORDER_STRONG = "#CBD5E1"
+    # Borders — tinted towards the brand hue rather than neutral grey.
+    BORDER = "#E3EAF6"
+    BORDER_ALT = "#E8EEF8"
+    BORDER_STRONG = "#C7D2E5"
 
     # Text
     TEXT_PRIMARY = "#0F172A"
@@ -229,8 +236,9 @@ _DARK: dict[str, str] = {
     "PRIMARY_BG": "#0E2A4E",
     "PRIMARY_BORDER": "#1E4B8F",
     "BRAND_START": "#0B5FCC",
+    "BRAND_MID": "#3B82F6",
     "BRAND_DEEP": "#0A4CAB",
-    "BRAND_CYAN": "#0EA5E9",
+    "BRAND_CYAN": "#38BDF8",
     "WHITE": "#1E293B",  # "card surface" — kept token role, not literal color
     "BACKGROUND": "#0F172A",
     "BACKGROUND_ALT": "#1E293B",
@@ -269,7 +277,7 @@ assert set(_DARK) == set(_LIGHT), "dark/light token tables drifted out of sync"
 
 class _ColorsMeta(type):
     def __getattr__(cls, name: str):
-        if name in {"PRIMARY", "PRIMARY_DARK", "PRIMARY_BG", "PRIMARY_BORDER", "BRAND_START", "BRAND_DEEP", "BRAND_CYAN"}:
+        if name in {"PRIMARY", "PRIMARY_DARK", "PRIMARY_BG", "PRIMARY_BORDER", "BRAND_START", "BRAND_MID", "BRAND_DEEP", "BRAND_CYAN"}:
             light, dark = _brand_tokens(_brand_accent)
             return (dark if _state["mode"] == "dark" else light)[name]
         table = _DARK if _state["mode"] == "dark" else _LIGHT
@@ -455,8 +463,36 @@ class LazyPalette:
         return (getattr(Colors, t) for t in self._tokens)
 
 
+def brand_gradient(*, soft: bool = False, diagonal: bool = True) -> ft.LinearGradient:
+    """The shared brand gradient (deep -> primary -> sky).
+
+    One helper so splash, the command bar, section headers and every hero use
+    the exact same ramp; ``soft=True`` returns a very light wash suited to
+    large background surfaces instead of a header.
+    """
+    colors = [Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN]
+    if soft:
+        colors = [_blend_color(color, "#FFFFFF", 0.90) for color in colors]
+    begin = ft.alignment.top_left if diagonal else ft.alignment.center_left
+    end = ft.alignment.bottom_right if diagonal else ft.alignment.center_right
+    return ft.LinearGradient(colors=colors, begin=begin, end=end)
+
+
+def surface_gradient() -> ft.LinearGradient:
+    """A soft wash (card surface -> faint brand tint) for elevated cards."""
+    if _state["mode"] == "dark":
+        return ft.LinearGradient(
+            colors=[Colors.WHITE, Colors.BACKGROUND_ALT],
+            begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
+        )
+    return ft.LinearGradient(
+        colors=[Colors.WHITE, _blend_color(Colors.BRAND_CYAN, "#FFFFFF", 0.93)],
+        begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
+    )
+
+
 __all__ = [
     "Colors", "Spacing", "Radius", "IconSize", "Shadow", "SEVERITY_STYLE", "STATUS_STYLES", "LazyPalette",
     "BRAND_PRESETS", "get_brand_accent", "set_brand_accent", "normalize_brand_accent",
-    "get_mode", "set_mode", "is_dark",
+    "get_mode", "set_mode", "is_dark", "brand_gradient", "surface_gradient",
 ]
