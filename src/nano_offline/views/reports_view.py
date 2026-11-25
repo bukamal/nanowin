@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import tempfile
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -68,8 +69,11 @@ class ReportsCenter:
         self._report_key: str = "pnl"
         self._refresh_generation = 0
         # How many rows of the heavy report tables are rendered at once; grown
-        # by «عرض المزيد» so a 200k-invoice database never builds 200k controls.
+        # as the user scrolls to the bottom so a 200k-invoice database never
+        # builds 200k controls. ``_has_more`` is set while rendering each table.
         self._rows_limit = 200
+        self._has_more = False
+        self._last_grow = 0.0
         self.report_chips: dict[str, ft.Container] = {}
         self.date_from: ft.TextField | None = None
         self.date_to: ft.TextField | None = None
@@ -229,6 +233,7 @@ class ReportsCenter:
                 else value
             ),
             on_sort=lambda key, direction: grid_sort(key, direction),
+            on_load_more=self._grow_rows,
         )
 
         def grid_sort(key: str | None, direction: str | None) -> None:
@@ -248,14 +253,24 @@ class ReportsCenter:
         return empty_state(text, icon=icon)
 
     def _grow_rows(self, _=None) -> None:
+        # Scrolling reaches the bottom -> render the next batch. Guarded so a
+        # burst of scroll events can't grow the limit many times at once, and
+        # so it stops once the report has no more rows.
+        if not self._has_more:
+            return
+        now = time.monotonic()
+        if now - self._last_grow < 0.35:
+            return
+        self._last_grow = now
         self._rows_limit += 200
         self._refresh()
 
-    def _load_more(self, shown: int, total: int) -> ft.Control | None:
-        if total <= shown:
-            return None
-        from nano_offline.components import load_more_control
-        return load_more_control(shown=shown, total=total, on_click=self._grow_rows)
+    def _load_more(self, shown: int, total: int) -> ft.Control:
+        """Infinite scroll replaced the «عرض المزيد» button: remember whether
+        this table has more rows and return an invisible placeholder so the
+        existing render call sites stay valid."""
+        self._has_more = total > shown
+        return ft.Container(visible=False)
 
     def _error_card(self, exc: Exception) -> ft.Container:
         """Inline failure state for a single report render -- keeps the
@@ -545,6 +560,7 @@ class ReportsCenter:
     def _refresh(self, _=None) -> None:
         report = self._report_key or "pnl"
         date_from, date_to = self._dates()
+        self._has_more = False  # re-set by _load_more while the tables render
         self._refresh_generation += 1
         generation = self._refresh_generation
         self.body.controls = [ft.Container(ft.ProgressRing(), padding=24, alignment=ft.alignment.center)]

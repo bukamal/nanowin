@@ -797,7 +797,7 @@ class InvoiceCenter:
                 on_focus=lambda e: invoice_grid.disarm(),
             )
             cards = ft.Container(expand=True)
-            filters = {"type": initial_type, "status": "all"}
+            filters = {"type": initial_type, "status": "all", "opening": "all"}
 
             def _server_type() -> str | None:
                 """Invoice type pushed to SQL, so a dedicated tab (or a type
@@ -857,9 +857,13 @@ class InvoiceCenter:
                 elif ftype != "all":
                     if inv.get("type") != ftype:
                         return False
-                    # Opening stock is its own type, not a purchase.
-                    if ftype == "purchase" and _is_opening_invoice(inv):
-                        return False
+                # On the Purchases screen, opening-stock «أول المدة» invoices are
+                # part of the purchase history; the sub-filter can hide/show them.
+                opening_mode = filters.get("opening", "all")
+                if opening_mode == "opening_only" and not _is_opening_invoice(inv):
+                    return False
+                if opening_mode == "purchase_only" and _is_opening_invoice(inv):
+                    return False
                 if filters["status"] == "outstanding":
                     if inv.get("payment_status") not in {"unpaid", "partial"}:
                         return False
@@ -1453,6 +1457,12 @@ class InvoiceCenter:
                     if can_purchases:
                         type_controls.append(chip("مشتريات", "type", "purchase", type_row))
                         type_controls.append(chip("أول مدة", "type", "opening", type_row))
+                elif mode == "purchase":
+                    # The Purchases screen already pins the type; these chips
+                    # only split «مشتريات» vs the opening-stock «أول مدة».
+                    type_controls.append(chip("الكل", "opening", "all", type_row))
+                    type_controls.append(chip("مشتريات", "opening", "purchase_only", type_row))
+                    type_controls.append(chip("أول مدة", "opening", "opening_only", type_row))
                 type_row.controls = type_controls
                 status_row.controls = [
                     chip("كل الحالات", "status", "all", status_row),
@@ -1488,7 +1498,11 @@ class InvoiceCenter:
             # invoice list. ---
             type_label = ft.Text("النوع", size=10, color=Colors.TEXT_SECONDARY)
             status_label = ft.Text("حالة السداد", size=10, color=Colors.TEXT_SECONDARY)
-            type_filter_row = ft.Row([type_label, type_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True, visible=mode is None)
+            type_filter_row = ft.Row(
+                [type_label, type_row], spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True,
+                visible=mode is None or mode == "purchase",
+            )
             status_filter_row = ft.Row([status_label, status_row], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True)
             # Single compact toolbar: fixed-width search, the type/status chip
             # groups, then an expand spacer and the actions. No outer wrap=True

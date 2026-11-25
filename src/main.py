@@ -1343,15 +1343,17 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         from nano_offline.components.text_field import SelectAllTextField
         from nano_offline.core import currency as _currency
 
+        # Same labels/controls as the home «الوحدات» panel so the two currency
+        # surfaces read identically.
         toggle = SegmentedToggle(
             options=[
-                SegmentOption(_currency.DISPLAY_CURRENCY_SYP, "الليرة السورية (ل.س)"),
-                SegmentOption(_currency.DISPLAY_CURRENCY_USD, "الدولار الأمريكي ($)"),
+                SegmentOption(_currency.DISPLAY_CURRENCY_SYP, "ل.س"),
+                SegmentOption(_currency.DISPLAY_CURRENCY_USD, "$"),
             ],
             value=_currency.get_display_currency(ctx.settings),
         )
         rate_field = SelectAllTextField(
-            label="سعر صرف الدولار (ل.س لكل 1$)",
+            label="سعر الصرف",
             value=f"{_currency.get_exchange_rate(ctx.settings):.0f}",
             keyboard_type=ft.KeyboardType.NUMBER,
         )
@@ -1468,14 +1470,20 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         currency_btn = ft.Container(
             ft.Row(
                 [
-                    ft.Icon(ft.Icons.CURRENCY_EXCHANGE, size=13, color=Colors.TEXT_SECONDARY),
+                    ft.Container(
+                        ft.Icon(ft.Icons.CURRENCY_EXCHANGE, size=13, color=Colors.WHITE),
+                        width=22, height=22, alignment=ft.alignment.center,
+                        bgcolor=Colors.PRIMARY, gradient=brand_gradient(), border_radius=7,
+                    ),
                     currency_rate_text,
                 ],
-                spacing=5,
+                spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.symmetric(horizontal=8, vertical=4),
-            border_radius=10,
+            padding=ft.padding.symmetric(horizontal=9, vertical=4),
+            border_radius=20,
+            bgcolor=Colors.PRIMARY_BG,
+            border=ft.border.all(1, Colors.PRIMARY_BORDER),
             ink=True,
             on_click=_open_currency_popover,
             tooltip="العملة المعروضة وسعر الصرف",
@@ -1514,6 +1522,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
             safe_icon.color = Colors.SUCCESS_DARK if on else Colors.TEXT_SECONDARY
             safe_label.value = "الوضع الآمن: مفعّل" if on else "الوضع الآمن: متوقف"
             safe_label.color = Colors.SUCCESS_DARK if on else Colors.TEXT_SECONDARY
+            safe_btn.bgcolor = Colors.SUCCESS_BG if on else Colors.BACKGROUND_ALT
+            safe_btn.border = ft.border.all(1, Colors.SUCCESS if on else Colors.BORDER)
             try:
                 safe_btn.update()
             except Exception:
@@ -1539,7 +1549,8 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         safe_btn = ft.Container(
             ft.Row([safe_icon, safe_label], spacing=5, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.symmetric(horizontal=10, vertical=5),
-            border_radius=10,
+            border_radius=20,
+            border=ft.border.all(1, Colors.BORDER),
             ink=not safe_forced,
             on_click=_toggle_safe,
             tooltip="إخفاء/إظهار الأرصدة والأرباح والتكاليف عن أعين الزبائن",
@@ -1556,11 +1567,15 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                     _status_item(ft.Icons.INFO_OUTLINE, f"v{_APP_VERSION}"),
                 ],
                 spacing=16,
+                wrap=True,
+                run_spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.symmetric(horizontal=16, vertical=7),
+            padding=ft.padding.symmetric(horizontal=16, vertical=8),
             border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER)),
             bgcolor=Colors.WHITE,
+            gradient=surface_gradient(),
+            shadow=Shadow.SM,
         )
 
     body = ft.Column([command_bar, content, _build_status_bar()], spacing=0, expand=True)

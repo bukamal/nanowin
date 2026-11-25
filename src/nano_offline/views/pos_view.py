@@ -23,7 +23,16 @@ from nano_offline.components.print_profile import (
 )
 from nano_offline.components.buttons import hero_button, stepper_icon_button
 from nano_offline.services.invoice_service import InvoiceLineInput
-from nano_offline.core.theme import Colors, IconSize, LazyPalette, Radius, Shadow, tile_gradient
+from nano_offline.core.theme import (
+    Colors,
+    IconSize,
+    LazyPalette,
+    Radius,
+    Shadow,
+    brand_gradient,
+    surface_gradient,
+    tile_gradient,
+)
 from nano_offline.core import currency
 from nano_offline.core.margin_guard import cart_margin_warnings, check_sale_margin
 from nano_offline.core import barcode_settings
@@ -2057,6 +2066,7 @@ class POSCenter:
             ),
             padding=10,
             bgcolor=Colors.PRIMARY_BG,
+            gradient=brand_gradient(soft=True),
             border=ft.border.all(1, Colors.PRIMARY_BORDER),
             border_radius=Radius.MD,
         )
@@ -2238,6 +2248,7 @@ class POSCenter:
             ),
             padding=ft.padding.symmetric(horizontal=8, vertical=6),
             bgcolor=Colors.PRIMARY_BG,
+            gradient=brand_gradient(soft=True),
             border_radius=Radius.SM,
         )
         cart_pane = ft.Container(
@@ -2253,6 +2264,7 @@ class POSCenter:
             ),
             padding=14,
             bgcolor=Colors.WHITE,
+            gradient=surface_gradient(),
             border=ft.border.all(1, Colors.BORDER),
             border_radius=Radius.LG,
             shadow=Shadow.SM,
@@ -2274,6 +2286,7 @@ class POSCenter:
                         ),
                         padding=ft.padding.symmetric(horizontal=8, vertical=7),
                         bgcolor=Colors.PRIMARY_BG,
+                        gradient=brand_gradient(soft=True),
                         border_radius=Radius.SM,
                     ),
                     cat_list,
@@ -2287,6 +2300,7 @@ class POSCenter:
             width=self._pos_sizes["rail"],
             padding=ft.padding.symmetric(horizontal=10, vertical=12),
             bgcolor=Colors.WHITE,
+            gradient=surface_gradient(),
             border=ft.border.all(1, Colors.BORDER),
             border_radius=Radius.LG,
             shadow=Shadow.SM,
