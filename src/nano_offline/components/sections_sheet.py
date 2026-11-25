@@ -421,11 +421,46 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
         )
         encoding_f = SearchSelect(
             label="ترميز العربية",
-            choices=[("cp1256", "Windows Arabic (cp1256)"), ("cp864", "Arabic DOS (cp864)"), ("cp850", "cp850")],
-            value=str((section or {}).get("encoding") or "cp1256"),
+            choices=[("cp864", "Arabic DOS (cp864)"), ("cp1256", "Windows Arabic (cp1256)"), ("cp850", "cp850")],
+            value=str((section or {}).get("encoding") or "cp864"),
             allow_clear=False,
             dropdown=True,
         )
+
+        # Printer model preset: fills width + Arabic code page so a common unit
+        # (Xprinter XP-80C and friends) works without guessing — XP-80C renders
+        # Arabic with the DOS CP864 code page, not Windows CP1256.
+        model_f = SearchSelect(
+            label="طراز الطابعة (يملأ الإعدادات تلقائيًا)",
+            choices=[
+                ("xp80c", "Xprinter XP-80C · 80مم · cp864"),
+                ("thermal80", "حرارية 80مم عامة · cp864"),
+                ("thermal58", "حرارية 58مم · cp864"),
+                ("custom", "مخصص"),
+            ],
+            value="custom",
+            allow_clear=False,
+            dropdown=True,
+        )
+
+        def _apply_model(_=None) -> None:
+            preset = model_f.value or "custom"
+            mapping = {
+                "xp80c": ("80", "cp864"),
+                "thermal80": ("80", "cp864"),
+                "thermal58": ("58", "cp864"),
+            }
+            chosen = mapping.get(preset)
+            if chosen is None:
+                return
+            width_f.value, encoding_f.value = chosen
+            for ctrl in (width_f, encoding_f):
+                try:
+                    ctrl.update()
+                except Exception:
+                    pass
+
+        model_f.on_change = _apply_model
         fallback_f = SearchSelect(
             label="طابعة بديلة عند الفشل (اختياري)",
             choices=[
@@ -453,7 +488,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
                     printer_port=int(port_f.value or 9100),
                     paper_width_mm=int(width_f.value or 80),
                     copies=int(copies_f.value or 1),
-                    encoding=encoding_f.value or "cp1256",
+                    encoding=encoding_f.value or "cp864",
                     active=bool(active_f.value),
                     sort_order=int((section or {}).get("sort_order") or 0),
                     fallback_section_id=int(fallback_f.value) if fallback_f.value else None,
@@ -477,6 +512,7 @@ def open_sections_sheet(page: ft.Page, ctx, notify, money, native_files=None) ->
                 printer_type_f,
                 net_row,
                 sys_row,
+                model_f,
                 ft.ResponsiveRow([
                     ft.Container(kind_f, col={"xs": 6}),
                     ft.Container(width_f, col={"xs": 6}),

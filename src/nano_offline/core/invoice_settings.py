@@ -56,7 +56,9 @@ DEFAULT_NUMBER_PADDING = 0
 DEFAULT_DUE_DAYS = 0  # 0 == no due-date line printed (cash-style invoices)
 DEFAULT_OVERDUE_DAYS = 30
 DEFAULT_FOOTER_TEXT = ""
-DEFAULT_SHOW_NUMBER = False
+# Shown by default so the customer's receipt always carries the same order
+# number the kitchen/section tickets print (still toggleable per print profile).
+DEFAULT_SHOW_NUMBER = True
 DEFAULT_SHOW_BARCODE = False
 DEFAULT_SHOW_EXCHANGE_RATE = False
 DEFAULT_SHOW_PROGRESS = False

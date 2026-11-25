@@ -43,7 +43,7 @@ def columns_for_width(width_mm: int) -> int:
 
 
 class _Builder:
-    def __init__(self, *, encoding: str = "cp1256", width_mm: int = 80):
+    def __init__(self, *, encoding: str = "cp864", width_mm: int = 80):
         self.encoding = (encoding or "cp864").lower()
         self.columns = columns_for_width(width_mm)
         self._parts: list[bytes] = []
@@ -141,7 +141,7 @@ def build_station_ticket(
     omitted the raw id is used.
     """
     b = _Builder(
-        encoding=str(section.get("encoding") or "cp1256"),
+        encoding=str(section.get("encoding") or "cp864"),
         width_mm=int(section.get("paper_width_mm") or 80),
     )
     b.init()
@@ -200,7 +200,7 @@ def build_void_ticket(
 ) -> bytes:
     """Render a kitchen cancellation ticket for the given voided lines."""
     b = _Builder(
-        encoding=str(section.get("encoding") or "cp1256"),
+        encoding=str(section.get("encoding") or "cp864"),
         width_mm=int(section.get("paper_width_mm") or 80),
     )
     b.init()

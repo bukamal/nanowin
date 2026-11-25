@@ -53,7 +53,9 @@ def _render_invoice(
 def test_invoice_print_defaults_to_clean_layout(tmp_path):
     body = _render_invoice(tmp_path)
 
-    assert "رقم الفاتورة:" not in body
+    # The order/invoice number now prints by default (same number the kitchen
+    # tickets show); the rest of the "clean layout" options stay off.
+    assert "رقم الفاتورة:" in body
     assert '<span class="num-barcode">' not in body
     assert '<div class="rate-note">' not in body
     assert '<div class="progress-wrap">' not in body
