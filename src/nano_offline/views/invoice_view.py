@@ -1905,6 +1905,43 @@ class InvoiceCenter:
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
 
+        # Wedge/USB barcode entry for the step sheet (see the table sheet note).
+        barcode_field = SelectAllTextField(
+            hint_text="امسح أو اكتب الباركود ثم Enter", prefix_icon=ft.Icons.QR_CODE_2, dense=True,
+        )
+        barcode_field.on_focus = lambda e: lines_grid.disarm()
+
+        def barcode_submit(_=None) -> None:
+            code = (barcode_field.value or "").strip()
+            barcode_field.value = ""
+            try:
+                barcode_field.update()
+            except Exception:
+                pass
+            if not code:
+                return
+            found = self.ctx.items.find_by_barcode(code)
+            if not found:
+                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                try:
+                    lines_grid.disarm()
+                    barcode_field.focus()
+                except Exception:
+                    pass
+                return
+            add_or_bump_row(int(found["id"]))
+            if barcode_settings.scan_feedback_mode(settings) == "brief":
+                self.notify("✔", kind="success", sound_kind="scan")
+            else:
+                self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+            try:
+                lines_grid.disarm()
+                barcode_field.focus()
+            except Exception:
+                pass
+
+        barcode_field.on_submit = barcode_submit
+
         # ------------------------------------------------- payment / summary
         paid = SmartAmountField(
             label=currency.amount_field_label("الدفعة الأولى", settings),
@@ -2294,6 +2331,7 @@ class InvoiceCenter:
             [
                 ft.Row(
                     [
+                        ft.Container(barcode_field, width=260),
                         primary_button("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank, width=None, size="md"),
                         secondary_button("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan"), width=None, size="md"),
                         line_columns_button,
@@ -4937,6 +4975,43 @@ class InvoiceCenter:
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
 
+        # Wedge/USB barcode entry for the full editor (see the table sheet note).
+        barcode_field = SelectAllTextField(
+            hint_text="امسح أو اكتب الباركود ثم Enter", prefix_icon=ft.Icons.QR_CODE_2, dense=True,
+        )
+        barcode_field.on_focus = lambda e: lines_grid.disarm()
+
+        def barcode_submit(_=None) -> None:
+            code = (barcode_field.value or "").strip()
+            barcode_field.value = ""
+            try:
+                barcode_field.update()
+            except Exception:
+                pass
+            if not code:
+                return
+            found = self.ctx.items.find_by_barcode(code)
+            if not found:
+                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                try:
+                    lines_grid.disarm()
+                    barcode_field.focus()
+                except Exception:
+                    pass
+                return
+            add_or_bump_item(int(found["id"]))
+            if barcode_settings.scan_feedback_mode(self.ctx.settings) == "brief":
+                self.notify("✔", kind="success", sound_kind="scan")
+            else:
+                self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+            try:
+                lines_grid.disarm()
+                barcode_field.focus()
+            except Exception:
+                pass
+
+        barcode_field.on_submit = barcode_submit
+
         self.lines = []
         party_options()
         if existing:
@@ -5388,6 +5463,7 @@ class InvoiceCenter:
                 ft.Row(
                     [
                         ft.Text("بنود الفاتورة", size=18, weight=ft.FontWeight.BOLD, expand=True),
+                        ft.Container(barcode_field, width=240),
                         ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_to_add_line, visible=supports("barcode_camera_scan")),
                         ft.OutlinedButton("إدخال سريع (جدول)", icon=ft.Icons.VIEW_LIST_OUTLINED, on_click=open_bulk_lines_sheet),
                         ft.OutlinedButton("إضافة بند", icon=ft.Icons.ADD, on_click=lambda _: add_line()),
