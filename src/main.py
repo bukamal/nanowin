@@ -31,6 +31,7 @@ from nano_offline.views.stocktake_view import StocktakeCenter
 from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonMenu, RibbonTab  # noqa: F401
 from nano_offline.components import sheets
 from nano_offline.components.exit_backup import install_exit_backup
+from nano_offline.components.new_item_sheet import open_new_item_sheet
 from nano_offline.components.command_palette import CommandPalette
 from nano_offline.core import theme
 from nano_offline.core import theme_settings
@@ -1118,7 +1119,27 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         navigate("purchase")
 
     def open_items_for_new(barcode_code: str) -> None:
-        navigate("items", prefill_barcode=barcode_code)
+        # Open the compact add-item TABLE sheet over the current screen (POS)
+        # with the scanned barcode pre-filled, instead of navigating away to
+        # the Materials wizard. On save the new item drops straight into POS.
+        code = (barcode_code or "").strip()
+
+        def _saved(item_id: int) -> None:
+            try:
+                if code:
+                    pos_center._add_by_barcode(code)
+                else:
+                    pos_center._add_item(int(item_id))
+            except Exception:
+                pass
+
+        def _notify(text, kind=None, sound_kind=None):
+            toast(page, text, kind=kind, sound_kind=sound_kind)
+
+        try:
+            open_new_item_sheet(page, ctx, barcode=code, notify=_notify, on_saved=_saved)
+        except Exception:
+            navigate("items", prefill_barcode=code)
 
     def open_table_invoice(kind: str) -> None:
         # Open the single-table invoice sheet directly, WITHOUT navigating to
@@ -1834,12 +1855,28 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     open_command_palette = command_palette.open
 
     def _escape_home() -> bool:
-        """ESC: go to the home screen unless a modal/overlay is open."""
+        """ESC: close the top-most open sheet/dialog first, else go home.
+
+        A sheet can opt into a custom escape action (e.g. a "save changes?"
+        confirmation for editable tables) by setting ``_nano_escape_close`` on
+        itself; otherwise ESC simply closes it.
+        """
         try:
-            if any(bool(getattr(control, "open", False)) for control in getattr(page, "overlay", ())):
-                return False
+            overlays = [c for c in getattr(page, "overlay", ()) if bool(getattr(c, "open", False))]
         except Exception:
-            pass
+            overlays = []
+        if overlays:
+            top = overlays[-1]
+            closer = getattr(top, "_nano_escape_close", None)
+            try:
+                if callable(closer):
+                    closer()
+                else:
+                    page.close(top)
+                page.update()
+            except Exception:
+                pass
+            return True
         try:
             navigate("dashboard")
         except Exception:

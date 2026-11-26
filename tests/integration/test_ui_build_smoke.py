@@ -415,3 +415,21 @@ def test_items_barcode_assign_sheet_opens():
         assert page.opened and getattr(page.opened[-1], "content", None) is not None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_new_item_table_sheet_builds_with_barcode_and_escape_hook():
+    from nano_offline.components.new_item_sheet import open_new_item_sheet
+
+    ctx, tmp = _ctx()
+    try:
+        page = FakePage()
+        saved: list[int] = []
+        open_new_item_sheet(
+            page, ctx, barcode="NEW-BC-1",
+            notify=lambda *a, **k: None, on_saved=saved.append,
+        )
+        assert page.opened and getattr(page.opened[-1], "content", None) is not None
+        sheet = page.opened[-1]
+        assert callable(getattr(sheet, "_nano_escape_close", None))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

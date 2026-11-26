@@ -3894,6 +3894,25 @@ class ItemsCenter:
                 page.close(sheet)
                 grid.attach()
 
+            def _escape_close():
+                dirty = any(str(r.get("name") or "").strip() for r in bulk_grid.rows)
+                if not dirty:
+                    close()
+                    return
+                dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("إغلاق جدول المواد؟"),
+                    content=ft.Text("توجد صفوف غير محفوظة. هل تريد الإغلاق دون حفظها؟"),
+                    actions=[
+                        ft.TextButton("متابعة التحرير", on_click=lambda _=None: page.close(dialog)),
+                        ft.TextButton("إغلاق بدون حفظ", on_click=lambda _=None: (page.close(dialog), close())),
+                    ],
+                    actions_alignment=ft.MainAxisAlignment.CENTER,
+                )
+                page.open(dialog)
+
+            sheet._nano_escape_close = _escape_close
+
             bulk_density_button = ft.IconButton(
                 icon=ft.Icons.DENSITY_SMALL if bulk_density_state["compact"] else ft.Icons.DENSITY_MEDIUM,
                 tooltip="عرض مريح" if bulk_density_state["compact"] else "عرض مضغوط",

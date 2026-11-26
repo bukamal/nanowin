@@ -35,6 +35,7 @@ from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, danger_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
+from nano_offline.components.new_item_sheet import open_new_item_sheet
 from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, build_print_profile_panel, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -154,6 +155,28 @@ class InvoiceCenter:
 
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
+
+    def _offer_new_item(self, code: str, on_saved) -> None:
+        """Scanned code matched nothing: offer to create it in a table sheet
+        over the current invoice sheet (no navigation away)."""
+        dialog = ft.AlertDialog(
+            modal=True, actions_alignment=ft.MainAxisAlignment.CENTER,
+            title=ft.Text("لا توجد مادة بهذا الباركود"),
+        )
+
+        def create(_=None):
+            self.page.close(dialog)
+            open_new_item_sheet(self.page, self.ctx, barcode=code, notify=self.notify, on_saved=on_saved)
+
+        def cancel(_=None):
+            self.page.close(dialog)
+
+        dialog.content = ft.Text(f"الباركود الممسوح: {code}\nهل تريد إنشاء مادة جديدة بهذا الباركود؟")
+        dialog.actions = [
+            ft.TextButton("إلغاء", on_click=cancel),
+            ft.FilledButton("إنشاء مادة جديدة", on_click=create),
+        ]
+        self.page.open(dialog)
 
     def _display_invoice_number(self, invoice_id: int) -> str:
         return invoice_settings.format_invoice_number(invoice_id, self.ctx.settings)
@@ -1911,7 +1934,7 @@ class InvoiceCenter:
         def _barcode_from_scan(code: str) -> bool:
             found = self.ctx.items.find_by_barcode(code)
             if not found:
-                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                self._offer_new_item(code, lambda item_id: add_or_bump_row(int(item_id)))
                 return True
             add_or_bump_row(int(found["id"]))
             if barcode_settings.scan_feedback_mode(settings) == "brief":
@@ -3065,7 +3088,7 @@ class InvoiceCenter:
         def _barcode_from_scan(code: str) -> bool:
             found = self.ctx.items.find_by_barcode(code)
             if not found:
-                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                self._offer_new_item(code, lambda item_id: add_or_bump_row(int(item_id)))
                 return True
             add_or_bump_row(int(found["id"]))
             if barcode_settings.scan_feedback_mode(settings) == "brief":
@@ -3778,6 +3801,27 @@ class InvoiceCenter:
             _dismiss_refresh()
 
         sheet.on_dismiss = lambda e: (setattr(self.page, "on_keyboard_event", previous_key_handler), _dismiss_refresh())
+
+        def _escape_close() -> None:
+            dirty = any((tab.get("lines") or []) for tab in tabs_state["items"])
+            if not dirty:
+                close()
+                return
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("إغلاق جدول الفاتورة؟"),
+                content=ft.Text(
+                    "توجد فواتير مفتوحة في التبويبات. تُحفظ المسودات تلقائيًا ويمكنك متابعتها لاحقًا من نفس الشيت."
+                ),
+                actions=[
+                    ft.TextButton("متابعة التحرير", on_click=lambda _=None: self.page.close(dialog)),
+                    ft.FilledButton("إغلاق", on_click=lambda _=None: (self.page.close(dialog), close())),
+                ],
+                actions_alignment=ft.MainAxisAlignment.CENTER,
+            )
+            self.page.open(dialog)
+
+        sheet._nano_escape_close = _escape_close
 
         # ----------------------------------------------------------- initial
         party_options()
@@ -4935,7 +4979,7 @@ class InvoiceCenter:
         def _barcode_from_scan(code: str) -> bool:
             found = self.ctx.items.find_by_barcode(code)
             if not found:
-                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                self._offer_new_item(code, lambda item_id: add_or_bump_item(int(item_id)))
                 return True
             add_or_bump_item(int(found["id"]))
             if barcode_settings.scan_feedback_mode(self.ctx.settings) == "brief":
