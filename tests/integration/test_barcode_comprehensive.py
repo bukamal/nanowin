@@ -63,14 +63,13 @@ def test_find_by_barcode_resolves_secondary_codes_and_labels(tmp_path):
     assert found.get("matched_label") == "كرتون"
 
 
-def test_find_by_barcode_is_case_sensitive_known_limitation(tmp_path):
-    # Documents the gap: a scanner that upper-cases a lower/mixed-case Code128
-    # code will not find it. (Fix = a normalized fallback lookup.)
+def test_find_by_barcode_falls_back_case_insensitively(tmp_path):
+    # A scanner may upper/lower-case a Code128 token; the fallback resolves it.
     ctx = _ctx(tmp_path)
     unit = ctx.definitions.create_unit("قطعة", "ق")
     ctx.items.create(name="مادة", purchase_price=1, selling_price=2, quantity=1, base_unit_id=unit, barcode="abc123")
     assert ctx.items.find_by_barcode("abc123") is not None
-    assert ctx.items.find_by_barcode("ABC123") is None
+    assert ctx.items.find_by_barcode("ABC123") is not None
 
 
 def test_duplicate_barcode_is_rejected_across_both_tables(tmp_path):
@@ -112,10 +111,30 @@ def test_checksum_detection_and_generation():
         assert len(code) == length and _encodable(code) == code
 
 
-def test_label_symbology_is_code128_only_and_drops_non_ascii():
-    # Known limitation: printed item labels always render Code128B, regardless
-    # of the stored "kind"; QR item barcodes are not printed as QR (only the
-    # optional price QR is). And non-ASCII payloads lose their characters.
+def test_label_symbology_matches_the_code_shape():
+    from nano_offline.core.ean13 import ean13_modules, ean13_svg
+    from nano_offline.services.document_service import _label_barcode_svg
+
+    # Valid EAN-13 / UPC-A -> true EAN modules (95), rendered as an SVG.
+    assert ean13_modules(_EAN13) is not None and len(ean13_modules(_EAN13)) == 95
+    assert ean13_modules(_UPCA) is not None  # UPC-A padded to EAN-13
+    assert ean13_modules("4006381333930") is None  # bad check digit
+    assert ean13_svg(_EAN13).startswith("<svg")
+    assert ean13_svg("4006381333930") == ""
+
+    ean = _label_barcode_svg(_EAN13, width=210, height=54, show_text=True)
+    assert ean.startswith("<svg") and 'viewBox="0 0 210 54"' in ean
+    # A long/punctuation payload becomes a square QR (min side = 64 here).
+    qr = _label_barcode_svg("https://example.com/a?b=c&d=e", width=210, height=54, show_text=True)
+    assert qr.startswith("<svg") and 'viewBox="0 0 64 64"' in qr
+    # A plain alnum SKU stays Code128 at the requested size.
+    code128 = _label_barcode_svg("ABC-12345", width=210, height=54, show_text=True)
+    assert 'viewBox="0 0 210 54"' in code128
+
+
+def test_code128_label_still_drops_non_ascii():
+    # Remaining limit (Code128 subset B is ASCII-only): a *short* non-ASCII code
+    # that isn't QR-shaped loses its characters. Numeric/alnum codes are fine.
     svg = code128b_svg(_EAN13)
     assert svg.startswith("<svg") and "<rect" in svg
     assert _encodable(_EAN13) == _EAN13

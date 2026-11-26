@@ -494,29 +494,35 @@ class ItemRepository(Offloadable):
         if not code:
             return None
         with self.db.connect() as conn:
-            row = conn.execute(
+            base_sel = (
                 """SELECT i.*, c.name AS category_name, u.name AS unit_name, u.abbreviation AS unit_abbreviation
                    FROM items i
                    LEFT JOIN categories c ON c.id=i.category_id
-                   LEFT JOIN units u ON u.id=i.base_unit_id
-                   WHERE i.barcode=?""",
-                (code,),
-            ).fetchone()
+                   LEFT JOIN units u ON u.id=i.base_unit_id"""
+            )
+            # Exact match first, then a case-insensitive fallback: many scanners
+            # upper/lower-case a Code128 token, and the stored text may differ in
+            # case. (SQLite UPPER folds ASCII only, which is exactly the range
+            # these codes use.)
+            row = conn.execute(base_sel + " WHERE i.barcode=?", (code,)).fetchone()
+            if row is None:
+                row = conn.execute(base_sel + " WHERE UPPER(i.barcode)=UPPER(?)", (code,)).fetchone()
             if row is not None:
                 result = dict(row)
                 result["matched_unit_id"] = None
                 result["matched_label"] = None
                 return result
-            alt = conn.execute(
+            alt_sel = (
                 """SELECT i.*, c.name AS category_name, u.name AS unit_name, u.abbreviation AS unit_abbreviation,
                           ib.unit_id AS matched_unit_id, ib.label AS matched_label
                    FROM item_barcodes ib
                    JOIN items i ON i.id=ib.item_id
                    LEFT JOIN categories c ON c.id=i.category_id
-                   LEFT JOIN units u ON u.id=i.base_unit_id
-                   WHERE ib.barcode=?""",
-                (code,),
-            ).fetchone()
+                   LEFT JOIN units u ON u.id=i.base_unit_id"""
+            )
+            alt = conn.execute(alt_sel + " WHERE ib.barcode=?", (code,)).fetchone()
+            if alt is None:
+                alt = conn.execute(alt_sel + " WHERE UPPER(ib.barcode)=UPPER(?)", (code,)).fetchone()
             return dict(alt) if alt else None
 
     def build_item_card(self, **kwargs) -> str:

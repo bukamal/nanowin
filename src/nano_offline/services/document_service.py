@@ -3,6 +3,8 @@ from __future__ import annotations
 from html import escape
 
 from nano_offline.core.barcode128 import code128b_svg
+from nano_offline.core.barcode_quality import checksum_warning, detect_barcode_kind
+from nano_offline.core.ean13 import ean13_svg
 from nano_offline.core.qr_gen import qr_svg
 from nano_offline.core.invoice_signing import sign_invoice
 from nano_offline.core import public_verify
@@ -21,6 +23,25 @@ from nano_offline.services.statement_service import StatementService
 # so both the invoice shell and the barcode-label sheet fall back to the
 # same color when the user hasn't customized it yet.
 _DEFAULT_ACCENT = "#0B5FCC"
+
+
+def _label_barcode_svg(code: str, *, width: int, height: int, show_text: bool) -> str:
+    """Render a label barcode with the symbology its shape calls for.
+
+    EAN-13 / UPC-A (valid check digit) render as true EAN; long or
+    punctuation-heavy payloads render as QR; everything else stays Code128.
+    Falls back to Code128 whenever an EAN code is invalid so a wrong EAN is
+    never printed.
+    """
+    kind = detect_barcode_kind(code)
+    if kind == "EAN13" and len(code) in (12, 13) and checksum_warning(code) is None:
+        svg = ean13_svg(code, width=width, height=height, show_text=show_text, bar_color="#0F172A")
+        if svg:
+            return svg
+    if kind == "QR":
+        size = max(64, min(width, height))
+        return qr_svg(code, size=size, level="M", quiet_zone=2, dark="#0F172A")
+    return code128b_svg(code, width=width, height=height, show_text=show_text, bar_color="#0F172A")
 
 _STATUS_STYLE = {
     "paid": ("مدفوعة", "#0B5FCC", "#EAF3FF"),
@@ -891,7 +912,7 @@ table th, table td {{ text-align:center; }}
             # own viewBox keeps bar proportions correct at any final size).
             svg_width = 380 if is_roll else lbl_width
             svg_height = int(lbl_height * (380 / lbl_width)) if is_roll else lbl_height
-            svg = code128b_svg(code, width=svg_width, height=svg_height, show_text=show_text, bar_color="#0F172A")
+            svg = _label_barcode_svg(code, width=svg_width, height=svg_height, show_text=show_text)
             cells.append(
                 f'<div class="lbl">'
                 f"{company_html}"
