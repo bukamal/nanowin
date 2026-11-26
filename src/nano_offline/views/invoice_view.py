@@ -1855,6 +1855,7 @@ class InvoiceCenter:
             on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
             formatter=row_formatter,
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
+            on_barcode=lambda code: _barcode_from_scan(code),
         )
         line_columns_button = line_visibility.button()
 
@@ -1905,42 +1906,19 @@ class InvoiceCenter:
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
 
-        # Wedge/USB barcode entry for the step sheet (see the table sheet note).
-        barcode_field = SelectAllTextField(
-            hint_text="امسح أو اكتب الباركود ثم Enter", prefix_icon=ft.Icons.QR_CODE_2, dense=True,
-        )
-        barcode_field.on_focus = lambda e: lines_grid.disarm()
-
-        def barcode_submit(_=None) -> None:
-            code = (barcode_field.value or "").strip()
-            barcode_field.value = ""
-            try:
-                barcode_field.update()
-            except Exception:
-                pass
-            if not code:
-                return
+        # Scan-to-line (see the table sheet note): the grid keeps focus and
+        # hands the scanner burst here; no visible field.
+        def _barcode_from_scan(code: str) -> bool:
             found = self.ctx.items.find_by_barcode(code)
             if not found:
                 self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
-                try:
-                    lines_grid.disarm()
-                    barcode_field.focus()
-                except Exception:
-                    pass
-                return
+                return True
             add_or_bump_row(int(found["id"]))
             if barcode_settings.scan_feedback_mode(settings) == "brief":
                 self.notify("✔", kind="success", sound_kind="scan")
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
-            try:
-                lines_grid.disarm()
-                barcode_field.focus()
-            except Exception:
-                pass
-
-        barcode_field.on_submit = barcode_submit
+            return True
 
         # ------------------------------------------------- payment / summary
         paid = SmartAmountField(
@@ -2331,7 +2309,6 @@ class InvoiceCenter:
             [
                 ft.Row(
                     [
-                        ft.Container(barcode_field, width=260),
                         primary_button("سطر جديد", icon=ft.Icons.ADD, on_click=add_blank, width=None, size="md"),
                         secondary_button("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan"), width=None, size="md"),
                         line_columns_button,
@@ -2948,6 +2925,7 @@ class InvoiceCenter:
             on_selection_change=lambda rows: render_lines_selection(rows),
             empty_text="أدخل مادة للبدء أو امسح باركود",
             center_cells=True,
+            on_barcode=lambda code: _barcode_from_scan(code),
         )
 
         def fill_line_defaults(index: int, item_id: int) -> None:
@@ -3081,42 +3059,20 @@ class InvoiceCenter:
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
 
-        # Hardware/USB "wedge" scanners type the code + Enter; this field is
-        # the landing spot for them (and for typing a code). Focusing it
-        # disarms the grid so the grid's page keyboard handler does not
-        # swallow the digits into a cell editor.
-        barcode_field = SelectAllTextField(
-            hint_text="امسح أو اكتب الباركود ثم Enter", prefix_icon=ft.Icons.QR_CODE_2, dense=True,
-        )
-        barcode_field.on_focus = lambda e: lines_grid.disarm()
-
-        def barcode_submit(_=None) -> None:
-            code = (barcode_field.value or "").strip()
-            barcode_field.value = ""
-            _safe_update(barcode_field)
-            if not code:
-                return
+        # A hardware (keyboard-wedge) scanner types the code + Enter while the
+        # grid keeps focus; DataGrid hands the fast burst here and we resolve it
+        # to its item and drop it into the line -- no visible field needed.
+        def _barcode_from_scan(code: str) -> bool:
             found = self.ctx.items.find_by_barcode(code)
             if not found:
                 self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
-                try:
-                    lines_grid.disarm()
-                    barcode_field.focus()
-                except Exception:
-                    pass
-                return
+                return True
             add_or_bump_row(int(found["id"]))
             if barcode_settings.scan_feedback_mode(settings) == "brief":
                 self.notify("✔", kind="success", sound_kind="scan")
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
-            try:
-                lines_grid.disarm()
-                barcode_field.focus()
-            except Exception:
-                pass
-
-        barcode_field.on_submit = barcode_submit
+            return True
 
         # -------------------------------------------------- selection / menu
         def duplicate_rows(rows: list[dict]) -> None:
@@ -3891,7 +3847,6 @@ class InvoiceCenter:
                     ),
                     ft.Row(
                         [
-                            ft.Container(barcode_field, width=260),
                             secondary_button("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan"), width=None, size="md"),
                             ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
@@ -4447,6 +4402,7 @@ class InvoiceCenter:
             selectable=True,
             on_selection_change=lambda rows: render_editor_lines_selection(rows),
             empty_text="اضغط «إضافة بند» أو «مسح باركود»",
+            on_barcode=lambda code: _barcode_from_scan(code),
         )
         total_text = ft.Text("0.00", size=20, weight=ft.FontWeight.BOLD)
         remaining_text = ft.Text("0.00", size=18, weight=ft.FontWeight.BOLD)
@@ -4975,42 +4931,18 @@ class InvoiceCenter:
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
 
-        # Wedge/USB barcode entry for the full editor (see the table sheet note).
-        barcode_field = SelectAllTextField(
-            hint_text="امسح أو اكتب الباركود ثم Enter", prefix_icon=ft.Icons.QR_CODE_2, dense=True,
-        )
-        barcode_field.on_focus = lambda e: lines_grid.disarm()
-
-        def barcode_submit(_=None) -> None:
-            code = (barcode_field.value or "").strip()
-            barcode_field.value = ""
-            try:
-                barcode_field.update()
-            except Exception:
-                pass
-            if not code:
-                return
+        # Scan-to-line for the full editor (see the table sheet note).
+        def _barcode_from_scan(code: str) -> bool:
             found = self.ctx.items.find_by_barcode(code)
             if not found:
                 self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
-                try:
-                    lines_grid.disarm()
-                    barcode_field.focus()
-                except Exception:
-                    pass
-                return
+                return True
             add_or_bump_item(int(found["id"]))
             if barcode_settings.scan_feedback_mode(self.ctx.settings) == "brief":
                 self.notify("✔", kind="success", sound_kind="scan")
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
-            try:
-                lines_grid.disarm()
-                barcode_field.focus()
-            except Exception:
-                pass
-
-        barcode_field.on_submit = barcode_submit
+            return True
 
         self.lines = []
         party_options()
@@ -5463,7 +5395,6 @@ class InvoiceCenter:
                 ft.Row(
                     [
                         ft.Text("بنود الفاتورة", size=18, weight=ft.FontWeight.BOLD, expand=True),
-                        ft.Container(barcode_field, width=240),
                         ft.OutlinedButton("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_to_add_line, visible=supports("barcode_camera_scan")),
                         ft.OutlinedButton("إدخال سريع (جدول)", icon=ft.Icons.VIEW_LIST_OUTLINED, on_click=open_bulk_lines_sheet),
                         ft.OutlinedButton("إضافة بند", icon=ft.Icons.ADD, on_click=lambda _: add_line()),

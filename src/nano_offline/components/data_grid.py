@@ -50,6 +50,12 @@ _HISTORY_LIMIT = 100
 # Above this many rows, the body switches its ListView to on-demand widget
 # building so scrolling stays smooth; smaller grids stay eager as before.
 _ON_DEMAND_THRESHOLD = 150
+
+# Hardware (keyboard-wedge) barcode scanners type the code then Enter/Tab far
+# faster than a human. These bound what counts as a scan burst.
+_SCAN_GAP = 0.06        # max seconds between two consecutive scanner keys
+_SCAN_MAX_WINDOW = 1.5  # a whole scan must finish within this window
+_SCAN_MIN_LEN = 3       # shortest code we will hand to the callback
 # Nominal width (as a flex weight) for columns that declare no width when
 # fit-to-width is on.
 _FIT_DEFAULT_WEIGHT = 160
@@ -144,6 +150,7 @@ class DataGrid(ft.Column):
         on_enter: Callable[[], None] | None = None,
         on_load_more: Callable[[], None] | None = None,
         single_column_edit: bool = False,
+        on_barcode: Callable[[str], bool] | None = None,
         top_row: ft.Control | None = None,
         fit_width: bool | None = None,
     ):
@@ -190,6 +197,13 @@ class DataGrid(ft.Column):
         # (moving down/up the rows) instead of tabbing across every column —
         # used by the barcode-assignment sheet for fast top-to-bottom entry.
         self._single_column_edit = bool(single_column_edit)
+        # Optional keyboard-wedge barcode capture (see _maybe_barcode_event).
+        self._on_barcode = on_barcode
+        self._scan_buf = ""
+        self._scan_pending = ""
+        self._scan_pending_at = 0.0
+        self._scan_started_at = 0.0
+        self._scan_last_at = 0.0
         # An optional control pinned as the very first row *inside* the body
         # (below the column headers) -- e.g. an invoice's party selector, so
         # it reads as a row of the table rather than a field above it.
@@ -385,6 +399,8 @@ class DataGrid(ft.Column):
                     pass
             return
         if not self._armed:
+            return
+        if self._on_barcode is not None and self._maybe_barcode_event(e, key):
             return
 
         shift = bool(getattr(e, "shift", False))
@@ -1625,6 +1641,7 @@ class DataGrid(ft.Column):
 
     # ------------------------------------------------------------------ edit
     def _begin_edit(self, prefill: str | None = None) -> None:
+        self._reset_scan()  # any open edit ends a pending scan
         r, c = self.nav.cell
         col = self._columns[c] if 0 <= c < len(self._columns) else None
         box = self._cell_boxes.get((r, c))
@@ -1895,6 +1912,88 @@ class DataGrid(ft.Column):
             return
         if self.nav.editable_cols:
             self.add_row()
+
+    def _reset_scan(self) -> None:
+        self._scan_buf = ""
+        self._scan_pending = ""
+        self._scan_pending_at = 0.0
+        self._scan_started_at = 0.0
+        self._scan_last_at = 0.0
+
+    def _maybe_barcode_event(self, e, key: str) -> bool:
+        """Detect a keyboard-wedge barcode burst and hand it to ``on_barcode``.
+
+        A USB scanner emits the code then Enter/Tab much faster than a person
+        can type. We hold the very first printable key briefly; if a second key
+        follows within ``_SCAN_GAP`` we know it is a scanner and buffer until
+        the terminator, then call the callback instead of typing into a cell.
+        Returns True when the event was consumed.
+        """
+        cb = self._on_barcode
+        if cb is None:
+            return False
+        now = time.monotonic()
+        ch = getattr(e, "character", None)
+        if not (isinstance(ch, str) and len(ch) == 1 and ch.isprintable()):
+            raw = str(getattr(e, "key", "") or "")
+            ch = raw if len(raw) == 1 and raw.isprintable() else ""
+        terminator = key in ("enter", "tab")
+
+        def _helper_edit(text: str) -> bool:
+            if text and self.nav.is_editable:
+                self._begin_edit(prefill=text)
+                return True
+            return False
+
+        # 1) A live burst in progress.
+        if self._scan_buf:
+            if ch and (now - self._scan_last_at) <= _SCAN_GAP and (now - self._scan_started_at) <= _SCAN_MAX_WINDOW:
+                self._scan_buf += ch
+                self._scan_last_at = now
+                return True
+            buf = self._scan_buf
+            self._reset_scan()
+            if terminator:
+                if len(buf) >= _SCAN_MIN_LEN:
+                    try:
+                        if cb(buf):
+                            return True
+                    except Exception:
+                        pass
+                return _helper_edit(buf + ch) or True
+            if ch:
+                return _helper_edit(buf + ch) or True
+            return False  # non-printable, non-terminator -> normal handling
+
+        # 2) One held keystroke that may yet become a burst.
+        if self._scan_pending:
+            if ch and (now - self._scan_pending_at) <= _SCAN_GAP:
+                self._scan_buf = self._scan_pending + ch
+                self._scan_started_at = self._scan_pending_at
+                self._scan_last_at = now
+                self._scan_pending = ""
+                return True
+            pending = self._scan_pending
+            self._reset_scan()
+            if terminator:
+                if len(pending) >= _SCAN_MIN_LEN:
+                    try:
+                        if cb(pending):
+                            return True
+                    except Exception:
+                        pass
+                return _helper_edit(pending) or True
+            if ch:
+                return _helper_edit(pending + ch) or True
+            return False
+
+        # 3) Nothing held: buffer the first printable key only while a cell is
+        #    editable, so plain navigation keys are never touched.
+        if ch and self.nav.is_editable:
+            self._scan_pending = ch
+            self._scan_pending_at = now
+            return True
+        return False
 
     def _advance_vertical(self, delta: int) -> None:
         """Move down/up inside the single editable column (barcode mode).
