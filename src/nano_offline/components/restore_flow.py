@@ -19,7 +19,7 @@ from pathlib import Path
 import flet as ft
 
 from nano_offline.core.cancellation import OperationCancelled
-from nano_offline.core.theme import Colors, Shadow
+from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.components.task_progress import ProgressSection
 
 _STEPS = [
@@ -171,6 +171,10 @@ class RestoreFlow:
             _human_bytes(source.stat().st_size) if source.exists() else "",
             size=11, color=Colors.TEXT_SECONDARY,
         )
+        self._controls["file_path"] = ft.Text(
+            str(source), size=10, color=Colors.TEXT_FAINT, selectable=True,
+            max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+        )
         self._progress = ProgressSection(
             orientation="vertical",
             steps=[(key, label, _STEP_ICONS.get(key, ft.Icons.CIRCLE_OUTLINED), sub) for key, label, sub in _STEPS],
@@ -244,13 +248,31 @@ class RestoreFlow:
             border_radius=ft.border_radius.only(top_left=18, top_right=18),
         )
 
+        path_row = ft.Container(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED, size=15, color=Colors.TEXT_SECONDARY),
+                    ft.Column(
+                        [
+                            ft.Text("مسار الملف", size=9.5, color=Colors.TEXT_SECONDARY),
+                            self._controls["file_path"],
+                        ],
+                        spacing=1, expand=True, tight=True,
+                    ),
+                ],
+                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=10, bgcolor=Colors.BACKGROUND_ALT,
+            border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD,
+        )
+
         root = ft.Container(
             ft.Column(
                 [
                     header,
                     ft.Container(
                         ft.Column(
-                            [progress_section, self._controls["success"], self._controls["error"]],
+                            [path_row, progress_section, self._controls["success"], self._controls["error"]],
                             spacing=12,
                         ),
                         padding=ft.padding.only(left=16, right=16, top=14, bottom=8),

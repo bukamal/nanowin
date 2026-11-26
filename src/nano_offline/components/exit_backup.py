@@ -185,7 +185,10 @@ def install_exit_backup(page: ft.Page, ctx, *, native_files=None) -> None:
                                 size=11, color=Colors.TEXT_SECONDARY, expand=True)], spacing=8),
                 ft.Divider(height=1, color=Colors.BORDER_ALT),
                 controls["remember"],
-                ft.Text(f"المجلد: {ctx.backup.default_dir().name}", size=10, color=Colors.TEXT_FAINT),
+                ft.Text(
+                    f"المسار: {ctx.backup.default_dir()}", size=10, color=Colors.TEXT_FAINT,
+                    selectable=True, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                ),
             ], spacing=10),
             padding=14, bgcolor=Colors.BACKGROUND_ALT, border=ft.border.all(1, Colors.BORDER),
             border_radius=Radius.MD,

@@ -1043,7 +1043,21 @@ class AdminCenter:
                                                            begin=ft.alignment.top_left, end=ft.alignment.bottom_right),
                                 border_radius=ft.border_radius.only(top_left=18, top_right=18),
                             ),
-                            ft.Container(section.control, padding=ft.padding.only(left=16, right=16, top=14)),
+                            ft.Container(
+                                ft.Row(
+                                    [
+                                        ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED, size=14, color=Colors.TEXT_SECONDARY),
+                                        ft.Text(
+                                            str(target), size=10, color=Colors.TEXT_FAINT,
+                                            selectable=True, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                                            expand=True,
+                                        ),
+                                    ],
+                                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                padding=ft.padding.only(left=16, right=16, top=10),
+                            ),
+                            ft.Container(section.control, padding=ft.padding.only(left=16, right=16, top=10)),
                             ft.Container(status, padding=ft.padding.only(left=16, right=16, top=2, bottom=12)),
                         ],
                         spacing=0,
@@ -3381,6 +3395,26 @@ class AdminCenter:
                 "النسخ الاحتياطي والاسترجاع",
                 [
                     ft.Text("النسخة تحتوي البيانات والمستخدمين، ولا تحتوي ترخيص الجهاز. يمكن مشاركتها عبر Android واستيراد ملف .nanobackup أو .qeidbackup من أي مزود مستندات. النسخة غير مشفرة؛ احفظها في مكان آمن.", size=12, color=Colors.WARNING_DARKER),
+                    ft.Container(
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED, size=16, color=Colors.TEXT_SECONDARY),
+                                ft.Column(
+                                    [
+                                        ft.Text("مجلد النسخ على هذا الجهاز", size=10, color=Colors.TEXT_SECONDARY),
+                                        ft.Text(
+                                            str(backups_dir), size=11, color=Colors.TEXT_PRIMARY,
+                                            selectable=True, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                                        ),
+                                    ],
+                                    spacing=1, expand=True, tight=True,
+                                ),
+                            ],
+                            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=10, bgcolor=Colors.BACKGROUND_ALT,
+                        border=ft.border.all(1, Colors.BORDER), border_radius=Radius.MD,
+                    ),
                     backup_warning_banner,
                     ft.ResponsiveRow(
                         [
