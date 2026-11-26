@@ -3043,6 +3043,43 @@ class InvoiceCenter:
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
 
+        # Hardware/USB "wedge" scanners type the code + Enter; this field is
+        # the landing spot for them (and for typing a code). Focusing it
+        # disarms the grid so the grid's page keyboard handler does not
+        # swallow the digits into a cell editor.
+        barcode_field = SelectAllTextField(
+            hint_text="امسح أو اكتب الباركود ثم Enter", prefix_icon=ft.Icons.QR_CODE_2, dense=True,
+        )
+        barcode_field.on_focus = lambda e: lines_grid.disarm()
+
+        def barcode_submit(_=None) -> None:
+            code = (barcode_field.value or "").strip()
+            barcode_field.value = ""
+            _safe_update(barcode_field)
+            if not code:
+                return
+            found = self.ctx.items.find_by_barcode(code)
+            if not found:
+                self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+                try:
+                    lines_grid.disarm()
+                    barcode_field.focus()
+                except Exception:
+                    pass
+                return
+            add_or_bump_row(int(found["id"]))
+            if barcode_settings.scan_feedback_mode(settings) == "brief":
+                self.notify("✔", kind="success", sound_kind="scan")
+            else:
+                self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+            try:
+                lines_grid.disarm()
+                barcode_field.focus()
+            except Exception:
+                pass
+
+        barcode_field.on_submit = barcode_submit
+
         # -------------------------------------------------- selection / menu
         def duplicate_rows(rows: list[dict]) -> None:
             for row in rows:
@@ -3816,6 +3853,7 @@ class InvoiceCenter:
                     ),
                     ft.Row(
                         [
+                            ft.Container(barcode_field, width=260),
                             secondary_button("مسح باركود", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan_line, visible=supports("barcode_camera_scan"), width=None, size="md"),
                             ft.Text("Enter للتنقل • F2 للتحرير • Shift+الأسهم لتحديد نطاق • Ctrl+C/V نسخ/لصق • Ctrl+Z/Y تراجع/إعادة", size=10, color=Colors.TEXT_SECONDARY),
                             columns_button,
