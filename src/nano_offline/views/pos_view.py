@@ -130,6 +130,7 @@ class POSCenter:
         on_saved=None,
         on_create_item=None,
         on_create_item_name=None,
+        build_item_table=None,
         on_fullscreen_enter=None,
         on_fullscreen_exit=None,
         on_toggle_fullscreen=None,
@@ -144,6 +145,9 @@ class POSCenter:
         self.on_create_item = on_create_item
         # "Add a new item" for an unmatched typed *name* (vs a barcode).
         self.on_create_item_name = on_create_item_name
+        # Builds the full Materials bulk-add TABLE body for embedding in POS's
+        # own overlay: (initial_row, on_saved_ids, on_close) -> Control.
+        self.build_item_table = build_item_table
         # POS is the one screen that goes edge-to-edge (see show_center()):
         # these hide the app's own top header + sidebar/tab bar chrome for
         # the duration of the sale and restore it on exit -- optional so
@@ -689,12 +693,12 @@ class POSCenter:
                 self.page.update()
             elif len(matched) == 1:
                 self._show_price_check_card(matched[0], None, None, 1.0)
-            elif not matched and self.on_create_item_name is not None:
-                # No material by that name: open the same add-item table window
+            elif not matched:
+                # No material by that name: open the same add-item window
                 # (prefilled with the typed name); on save it lands in the cart.
                 name = (search_field.value or "").strip()
                 if name:
-                    self.on_create_item_name(name)
+                    self.offer_new_item(name, as_name=True)
 
         search_field.on_submit = search_submit
 
@@ -2793,8 +2797,20 @@ class POSCenter:
         self._last_scan_overlay = last_scan_overlay
         self._success_overlay = success_overlay
 
+        # In-POS add-item window (same pattern as the invoice sheets: rendered
+        # inside POS's own Stack, never a second sheet/dialog that would steal
+        # focus or dismiss the sale).
+        add_item_overlay = ft.Container(
+            visible=False,
+            expand=True,
+            bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+            alignment=ft.alignment.center,
+            on_click=lambda _=None: None,
+        )
+        self._add_item_overlay = add_item_overlay
+
         self.content.content = ft.Stack(
-            [main_column, last_scan_overlay, success_overlay],
+            [main_column, last_scan_overlay, add_item_overlay, success_overlay],
             expand=True,
         )
 
@@ -4022,32 +4038,136 @@ class POSCenter:
             self.notify(f"✔ أُضيف: {found['name']}{qty_note}", sound_kind="scan")
         self._add_item(item_id, qty_delta, unit_price, unit_id=unit_id, factor=factor, play_cue=False)
 
-    def _offer_create_item(self, code: str) -> None:
-        # A scan that matched nothing gets its own dedicated tone
-        # (sound_kind="barcode_error") rather than the generic 'error'
-        # chime -- distinct and short enough that a cashier scanning fast
-        # immediately reads it as "no match" instead of "something broke",
-        # whether or not this ends in the "create item?" dialog below.
-        if self.on_create_item is None:
-            self.notify("لا توجد مادة بهذا الباركود", kind="error", sound_kind="barcode_error")
+    def receive_new_item(self, item_id: int) -> None:
+        """A newly created item: refresh POS caches (so it shows in the catalog)
+        and drop it straight into the cart."""
+        try:
+            item = self.ctx.items.get(int(item_id))
+        except Exception:
+            item = None
+        if not item:
             return
+        self.item_map[int(item_id)] = item
+        try:
+            self._item_search_blobs[int(item_id)] = normalize_ar(str(item.get("name") or "").casefold())
+        except Exception:
+            pass
+        try:
+            self._add_item(int(item_id))
+        except Exception:
+            pass
+        render = getattr(self, "_render_grid", None)
+        if callable(render):
+            try:
+                render()
+                self.page.update()
+            except Exception:
+                pass
+
+    def offer_new_item(self, value: str, *, as_name: bool = False) -> None:
+        """Unknown scan/name: show the invoice-style add-item window INSIDE POS
+        (its own Stack overlay), then add the created item to the cart."""
+        overlay = getattr(self, "_add_item_overlay", None)
+        if overlay is None:
+            self.notify("تعذّر فتح نافذة إضافة المادة", kind="error")
+            return
+
+        def _hide(_=None) -> None:
+            overlay.visible = False
+            try:
+                overlay.update()
+            except Exception:
+                pass
+
+        def _show_builder(_=None) -> None:
+            saved_handler = getattr(self.page, "on_keyboard_event", None)
+
+            def _restore_and_hide():
+                overlay.visible = False
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+                try:
+                    self.page.on_keyboard_event = saved_handler
+                except Exception:
+                    pass
+
+            def _saved_one(item_id):
+                try:
+                    self.receive_new_item(int(item_id))
+                except Exception:
+                    pass
+
+            def _saved_ids(ids):
+                try:
+                    if ids:
+                        _saved_one(int(ids[0]))
+                except Exception:
+                    pass
+
+            initial = {"name": value} if as_name else {"barcode": value}
+            ctrl = None
+            if self.build_item_table is not None:
+                try:
+                    ctrl = self.build_item_table(initial, _saved_ids, _restore_and_hide)
+                except Exception:
+                    ctrl = None
+            if ctrl is None:
+                try:
+                    from nano_offline.components.new_item_sheet import build_new_item_panel
+                    ctrl = build_new_item_panel(
+                        self.page, self.ctx,
+                        barcode=("" if as_name else value), name=(value if as_name else ""),
+                        notify=self.notify, on_saved=_saved_one, on_close=_restore_and_hide,
+                    )
+                except Exception:
+                    ctrl = None
+            if ctrl is None:
+                _restore_and_hide()
+                return
+            overlay.content = ctrl
+            overlay.visible = True
+            try:
+                overlay.update()
+            except Exception:
+                pass
+
+        overlay.content = ft.Container(
+            ft.Column(
+                [
+                    ft.Row([
+                        ft.Icon(ft.Icons.HELP_OUTLINE_ROUNDED, size=22, color=Colors.WARNING_DARKER),
+                        ft.Text("لا توجد مادة مطابقة", size=15, weight=ft.FontWeight.BOLD),
+                    ], spacing=8),
+                    ft.Text(
+                        (f"الاسم المُدخل: {value}" if as_name else f"الباركود الممسوح: {value}")
+                        + "\nهل تريد إنشاء مادة جديدة؟",
+                        size=12, color=Colors.TEXT_SECONDARY,
+                    ),
+                    ft.Row(
+                        [
+                            ft.TextButton("إلغاء", on_click=_hide),
+                            ft.FilledButton("إنشاء مادة جديدة", on_click=_show_builder),
+                        ],
+                        alignment=ft.MainAxisAlignment.END,
+                    ),
+                ],
+                spacing=12, tight=True,
+            ),
+            width=420, padding=18, bgcolor=Colors.WHITE,
+            border_radius=18, shadow=ft.BoxShadow(blur_radius=24, color=ft.Colors.with_opacity(0.18, ft.Colors.BLACK)),
+        )
+        overlay.visible = True
+        try:
+            overlay.update()
+        except Exception:
+            pass
+
+    def _offer_create_item(self, code: str) -> None:
+        # Dedicated "no match" tone, then the in-POS add-item window.
         sound_engine.play(self.page, "barcode_error")
-        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER, title=ft.Text("لا توجد مادة بهذا الباركود"))
-        dialog.on_dismiss = getattr(self, "_pos_resume_barcode_focus", None)
-
-        def create(_=None) -> None:
-            self.page.close(dialog)
-            self.on_create_item(code)
-
-        def cancel(_=None) -> None:
-            self.page.close(dialog)
-
-        dialog.content = ft.Text(f"الباركود الممسوح: {code}\nهل تريد إنشاء مادة جديدة بهذا الباركود؟")
-        dialog.actions = [ft.TextButton("إلغاء", on_click=cancel), ft.FilledButton("إنشاء مادة جديدة", on_click=create)]
-        mark_overlay_open = getattr(self, "_pos_mark_overlay_open", None)
-        if callable(mark_overlay_open):
-            mark_overlay_open()
-        self.page.open(dialog)
+        self.offer_new_item(code, as_name=False)
 
     async def _scan_with_camera(self) -> None:
         if self.native_files is None:

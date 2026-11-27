@@ -473,3 +473,28 @@ def test_items_build_bulk_add_control_embedded_returns_control_without_sheet():
         assert len(page.opened) == opened_before
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_pos_receive_new_item_adds_to_cart_and_catalog():
+    from nano_offline.views.pos_view import POSCenter
+
+    ctx, tmp = _ctx()
+    try:
+        unit = ctx.definitions.create_unit("قطعة", "ق")
+        page, content = FakePage(), ft.Container(expand=True)
+        center = POSCenter(
+            page, ctx, content, native_files=None, on_title_change=lambda *a: None,
+            on_create_item=lambda *a: None, on_fullscreen_enter=lambda: None,
+            on_fullscreen_exit=lambda: None, on_toggle_fullscreen=lambda: True,
+        )
+        center.show_center()
+        item = ctx.items.create(
+            name="مادة جديدة", purchase_price=1, selling_price=2,
+            quantity=5, base_unit_id=unit, barcode="NEWPOS-1",
+        )
+        before = len(center.cart_order)
+        center.receive_new_item(item)
+        assert int(item) in center.item_map
+        assert len(center.cart_order) == before + 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
