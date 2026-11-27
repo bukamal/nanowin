@@ -461,11 +461,17 @@ def test_set_cell_writes_and_notifies_then_reverts_on_failure():
 
 
 def test_zebra_stripes_alternate_and_can_be_disabled():
-    striped = make_grid()
+    # Column tinting (default on) bands the table vertically, so the zebra
+    # stripe is intentionally suppressed in that mode; disable it here to
+    # exercise the stripe logic.
+    striped = make_grid(column_tint=False)
     assert striped._row_bg_for(0) == Colors.WHITE
     assert striped._row_bg_for(1) == Colors.BACKGROUND_ALT
-    plain = make_grid(striped=False)
+    plain = make_grid(striped=False, column_tint=False)
     assert plain._row_bg_for(1) == Colors.WHITE
+    # With column tinting on, no zebra stripe (grid reads as coloured bands).
+    tinted = make_grid(column_tint=True)
+    assert tinted._row_bg_for(1) == Colors.WHITE
 
 
 def test_footer_row_is_pinned_outside_the_scrolling_body_and_removed():

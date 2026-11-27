@@ -33,7 +33,7 @@ from typing import Callable
 
 import flet as ft
 
-from nano_offline.core.theme import Colors, Radius, Shadow, brand_gradient
+from nano_offline.core.theme import Colors, Radius, Shadow, brand_gradient, tint
 from nano_offline.components.grid_model import ColorRole, GridColumn, GridNavigator
 from nano_offline.components.status_pill import status_pill
 
@@ -67,6 +67,7 @@ _COLOR_ROLE_TOKENS = {
     "danger": "DANGER_DARKER",
     "warning": "WARNING_DARKER",
     "purple": "PURPLE",
+    "gold": "GOLD",
 }
 
 # Standard Arabic (Windows 101) keyboard: physical latin key -> Arabic letter.
@@ -155,6 +156,8 @@ class DataGrid(ft.Column):
         top_row: ft.Control | None = None,
         fit_width: bool | None = None,
         vertical_lines: bool | None = None,
+        dark_lines: bool | None = None,
+        column_tint: bool | None = None,
     ):
         self._all_columns = list(columns)
         self._hidden_keys: set[str] = set(hidden_keys or set())
@@ -167,6 +170,8 @@ class DataGrid(ft.Column):
         # Vertical column separators (a right border per cell) so wide tables
         # read as a grid. Resolved from the admin setting unless forced.
         self._vertical_lines = self._resolve_vertical_lines(page) if vertical_lines is None else bool(vertical_lines)
+        self._dark_lines = self._resolve_grid_bool(page, "dark_lines", dark_lines)
+        self._column_tint = self._resolve_grid_bool(page, "column_tint", column_tint)
         self._rows: list[dict] = [dict(r) for r in (rows or [])]
         self._page = page
         self._on_cell_commit = on_cell_commit
@@ -629,8 +634,27 @@ class DataGrid(ft.Column):
         except Exception:
             return grid_settings.DEFAULT_VERTICAL_LINES
 
+    @staticmethod
+    def _resolve_grid_bool(page, which: str, forced: bool | None) -> bool:
+        from nano_offline.core import grid_settings
+
+        if forced is not None:
+            return bool(forced)
+        ctx = getattr(page, "_nano_ctx", None) if page is not None else None
+        settings = getattr(ctx, "settings", None)
+        reader = getattr(grid_settings, which, None)
+        if settings is None or reader is None:
+            return bool(getattr(grid_settings, f"DEFAULT_{which.upper()}", True))
+        try:
+            return bool(reader(settings))
+        except Exception:
+            return bool(getattr(grid_settings, f"DEFAULT_{which.upper()}", True))
+
+    def _gridline_color(self) -> str:
+        return Colors.GRID_LINE if self._dark_lines else Colors.BORDER
+
     def _vline_side(self) -> ft.BorderSide | None:
-        return ft.BorderSide(1, Colors.BORDER) if self._vertical_lines else None
+        return ft.BorderSide(1, self._gridline_color()) if self._vertical_lines else None
 
     def _vline_border(self) -> ft.Border | None:
         side = self._vline_side()
@@ -641,6 +665,42 @@ class DataGrid(ft.Column):
         self._refresh_header()
         self._render_body()
         self._refresh_footer()
+
+    def _col_role_color(self, col: GridColumn | None) -> str | None:
+        """The semantic colour for a column (money=gold, qty=cyan ...).
+
+        Explicit ``color_role`` wins; otherwise money/number kinds fall back
+        to gold/primary so an un-annotated money column still reads as money.
+        """
+        if col is None:
+            return None
+        role = col.color_role if isinstance(col.color_role, str) else None
+        token = _COLOR_ROLE_TOKENS.get(role or "")
+        if token is None:
+            token = {"money": "GOLD", "number": "PRIMARY"}.get(col.kind)
+        return getattr(Colors, token) if token else None
+
+    def _col_tint(self, col: GridColumn | None) -> str | None:
+        if not self._column_tint:
+            return None
+        color = self._col_role_color(col)
+        return tint(color, 0.90) if color else None
+
+    def _col_header_tint(self, col: GridColumn | None) -> str | None:
+        if not self._column_tint:
+            return None
+        color = self._col_role_color(col)
+        return tint(color, 0.78) if color else None
+
+    def _cell_bg_for(self, r: int, c: int) -> str | None:
+        """Column tint for a cell, unless the row carries its own background
+        (selection / overdue / zebra-stripe) which must win."""
+        if not self._column_tint or r >= len(self._rows):
+            return None
+        if self._row_bg_for(r) != Colors.WHITE:
+            return None
+        col = self._columns[c] if 0 <= c < len(self._columns) else None
+        return self._col_tint(col)
 
     def _trailing_width(self) -> int:
         return (48 if self._on_row_activate is not None else 0) + (40 if self._on_row_menu is not None else 0)
@@ -704,6 +764,7 @@ class DataGrid(ft.Column):
             height=self._header_height,
             alignment=self._col_align(col),
             padding=ft.padding.symmetric(horizontal=12),
+            bgcolor=self._col_header_tint(col),
             tooltip=(col.tooltip or (f"ترتيب حسب {col.label}" if sortable else None)),
             ink=bool(sortable),
             on_click=(lambda _, c=col: self._header_click(c)) if sortable else None,
@@ -750,7 +811,7 @@ class DataGrid(ft.Column):
             ft.Row(self._header_cells(), spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=Colors.BACKGROUND_ALT,
             gradient=brand_gradient(soft=True),
-            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER_STRONG)),
+            border=ft.border.only(bottom=ft.BorderSide(2, self._gridline_color())),
         )
         return self._header
 
@@ -1108,6 +1169,7 @@ class DataGrid(ft.Column):
             alignment=self._col_align(col),
             padding=ft.padding.symmetric(horizontal=12),
             border_radius=Radius.SM,
+            bgcolor=self._cell_bg_for(r, c),
             border=self._vline_border(),
             on_click=lambda _, rr=r, cc=c: self._on_cell_click(rr, cc),
             **self._cell_kwargs(col),
@@ -1203,7 +1265,7 @@ class DataGrid(ft.Column):
         box = ft.Container(
             ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             key=f"{self._uid}-r{r}",
-            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+            border=ft.border.only(bottom=ft.BorderSide(1, self._gridline_color())),
             bgcolor=self._row_bg_for(r),
             on_hover=lambda e, rr=r: self._on_row_hover(e, rr),
         )
@@ -1227,7 +1289,9 @@ class DataGrid(ft.Column):
                 tint = None
             if tint:
                 return tint
-        if self._striped and r % 2 == 1:
+        # Column tinting already bands the table vertically; a zebra stripe
+        # on top of it would just muddy both, so skip the stripe in that mode.
+        if self._striped and not self._column_tint and r % 2 == 1:
             return Colors.BACKGROUND_ALT
         return Colors.WHITE
 
@@ -1275,7 +1339,7 @@ class DataGrid(ft.Column):
         return ft.Container(
             ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=Colors.BACKGROUND_ALT,
-            border=ft.border.only(top=ft.BorderSide(1, Colors.BORDER_STRONG)),
+            border=ft.border.only(top=ft.BorderSide(2, self._gridline_color())),
         )
 
     def _refresh_footer(self) -> None:
@@ -1682,7 +1746,7 @@ class DataGrid(ft.Column):
     def _style_cell_selection(self, row: int, col: int, box: ft.Container) -> None:
         active = (row, col) == self.nav.cell
         selected = (row, col) in self._selection_cells()
-        box.bgcolor = Colors.PRIMARY_BG if selected else None
+        box.bgcolor = Colors.PRIMARY_BG if selected else self._cell_bg_for(row, col)
         box.border = (
             ft.border.all(2, Colors.PRIMARY) if active
             else ft.border.all(1, Colors.PRIMARY_BORDER) if selected

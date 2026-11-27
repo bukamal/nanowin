@@ -13,6 +13,7 @@ from nano_offline.core.toast import toast
 
 from nano_offline.components import SearchSelect, SelectAllTextField, SegmentedToggle, SegmentOption, empty_state
 from nano_offline.components import sheets
+from nano_offline.components.amount_chip import amount_chip, amount_chip_frame
 from nano_offline.components.form_sheet import render_form_sheet
 from nano_offline.components.print_profile import (
     apply_print_profile,
@@ -724,7 +725,8 @@ class POSCenter:
         # growing without limit.
         CART_FULL_HEIGHT = 220
         cart_column = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=CART_FULL_HEIGHT)
-        total_text = ft.Text("0.00", size=22, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK)
+        total_text = ft.Text("0.00", size=30)
+        total_chip = amount_chip_frame(total_text, role="due", label="الإجمالي المطلوب", icon=ft.Icons.PAYMENTS_OUTLINED, expand=True)
         count_text = ft.Text("0 بند", size=12, color=Colors.TEXT_SECONDARY)
         bottom_count_text = ft.Text("0 بند", size=11, color=Colors.TEXT_FAINT)
         held_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, wrap=False, visible=False)
@@ -1665,8 +1667,8 @@ class POSCenter:
             )
 
             body.controls = [
-                ft.Text(self.money(total_amount()), size=28, weight=ft.FontWeight.BOLD, color=Colors.PRIMARY_DARK),
-                ft.Text("الإجمالي المطلوب", size=11, color=Colors.TEXT_SECONDARY),
+                amount_chip(self.money(total_amount()), role="due", label="الإجمالي المطلوب",
+                            icon=ft.Icons.PAYMENTS_OUTLINED, size=26, expand=True),
                 ft.Container(height=4),
                 currency_toggle_row,
                 # Same centred alignment as the "الإجمالي المطلوب" figure above
@@ -2218,13 +2220,13 @@ class POSCenter:
                 [
                     ft.Row(
                         [
-                            ft.Text("الإجمالي", size=12, color=Colors.TEXT_SECONDARY),
+                            ft.Text("الإجمالي", size=13, weight=ft.FontWeight.W_600, color=Colors.TEXT_SECONDARY),
                             ft.Container(expand=True),
                             bottom_count_text,
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    total_text,
+                    total_chip,
                     ft.Row([order_btn, update_btn, settle_btn, checkout_btn], spacing=8),
                 ],
                 spacing=6,

@@ -21,6 +21,17 @@ DEFAULT_FIT_WIDTH = True
 VERTICAL_LINES_KEY = "ui.grid_vertical_lines"
 DEFAULT_VERTICAL_LINES = True
 
+# Crisp near-black separators instead of the faint grey. On by default so
+# tables read as a proper grid at a glance.
+DARK_LINES_KEY = "ui.grid_dark_lines"
+DEFAULT_DARK_LINES = True
+
+# Semantic per-column colour: a tinted header bar + a very light cell
+# background derived from each column's colour role (money=gold, qty=cyan,
+# totals=green, discount/red, dates=purple ...). On by default.
+COLUMN_TINT_KEY = "ui.grid_column_tint"
+DEFAULT_COLUMN_TINT = True
+
 
 def fit_width(settings) -> bool:
     try:
@@ -38,6 +49,22 @@ def vertical_lines(settings) -> bool:
     return str(raw).strip() == "1"
 
 
+def dark_lines(settings) -> bool:
+    try:
+        raw = settings.get(DARK_LINES_KEY, "1" if DEFAULT_DARK_LINES else "0")
+    except Exception:
+        return DEFAULT_DARK_LINES
+    return str(raw).strip() == "1"
+
+
+def column_tint(settings) -> bool:
+    try:
+        raw = settings.get(COLUMN_TINT_KEY, "1" if DEFAULT_COLUMN_TINT else "0")
+    except Exception:
+        return DEFAULT_COLUMN_TINT
+    return str(raw).strip() == "1"
+
+
 __all__ = [
     "FIT_WIDTH_KEY",
     "DEFAULT_FIT_WIDTH",
@@ -45,4 +72,10 @@ __all__ = [
     "VERTICAL_LINES_KEY",
     "DEFAULT_VERTICAL_LINES",
     "vertical_lines",
+    "DARK_LINES_KEY",
+    "DEFAULT_DARK_LINES",
+    "dark_lines",
+    "COLUMN_TINT_KEY",
+    "DEFAULT_COLUMN_TINT",
+    "column_tint",
 ]

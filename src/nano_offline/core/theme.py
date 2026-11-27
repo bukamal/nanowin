@@ -205,6 +205,10 @@ class _LightTokens:
     BORDER = "#E3EAF6"
     BORDER_ALT = "#E8EEF8"
     BORDER_STRONG = "#C7D2E5"
+    # Table gridlines — deliberately near-black and crisp (the faint BORDER
+    # above made wide tables wash out). Used for the horizontal + vertical
+    # separators in DataGrid.
+    GRID_LINE = "#1E293B"
 
     # Text
     TEXT_PRIMARY = "#0F172A"
@@ -243,6 +247,11 @@ class _LightTokens:
     PURPLE_LIGHT = "#8B5CF6"
     PURPLE_BG = "#F5F3FF"
 
+    # Gold/yellow — money emphasis (amounts, prices, totals rows). Kept dark
+    # enough in light mode to stay readable as text, bright in dark mode.
+    GOLD = "#A16207"
+    GOLD_BG = "#FEF9C3"
+
 
 _LIGHT: dict[str, str] = {k: v for k, v in vars(_LightTokens).items() if k.isupper()}
 
@@ -267,6 +276,7 @@ _DARK: dict[str, str] = {
     "BORDER": "#334155",
     "BORDER_ALT": "#334155",
     "BORDER_STRONG": "#475569",
+    "GRID_LINE": "#64748B",
     "TEXT_PRIMARY": "#F1F5F9",
     "TEXT_SECONDARY": "#94A3B8",
     "TEXT_MUTED": "#CBD5E1",
@@ -292,6 +302,8 @@ _DARK: dict[str, str] = {
     "PURPLE": "#A78BFA",
     "PURPLE_LIGHT": "#C4B5FD",
     "PURPLE_BG": "#241A3A",
+    "GOLD": "#FACC15",
+    "GOLD_BG": "#3A2A0A",
 }
 
 assert set(_DARK) == set(_LIGHT), "dark/light token tables drifted out of sync"
@@ -513,7 +525,10 @@ def brand_gradient(*, soft: bool = False, diagonal: bool = True, style: str | No
     style (used by the settings live-preview).
     """
     if _use_solid(style):
-        base = _blend_color(Colors.BRAND_START, "#FFFFFF", 0.90) if soft else Colors.BRAND_START
+        # Bold and clearly visible: headers become the full brand colour, and
+        # the "soft" wash becomes a *rich mid tint* (not the near-white wash
+        # that made solid mode look identical to gradient mode).
+        base = _blend_color(Colors.BRAND_START, "#FFFFFF", 0.58) if soft else Colors.BRAND_START
         return _flat_gradient(base)
     colors = [Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN]
     if soft:

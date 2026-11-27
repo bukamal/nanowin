@@ -233,8 +233,8 @@ class CommandBar(ft.Container):
                 )
             )
         return ft.SubmenuButton(
-            leading=ft.Icon(menu.icon, size=17),
-            content=ft.Text(menu.label, size=12.5, weight=ft.FontWeight.W_600),
+            leading=ft.Icon(menu.icon, size=19),
+            content=ft.Text(menu.label, size=14, weight=ft.FontWeight.W_600),
             controls=controls,
         )
 
@@ -249,9 +249,9 @@ class CommandBar(ft.Container):
         box = ft.Container(
             ft.Row(
                 [
-                    ft.Icon(menu.icon, size=18, color=Colors.TEXT_SECONDARY),
-                    ft.Text(menu.label, size=12.5, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
-                    ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=Colors.TEXT_FAINT),
+                    ft.Icon(menu.icon, size=20, color=Colors.TEXT_SECONDARY),
+                    ft.Text(menu.label, size=14, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY),
+                    ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=18, color=Colors.TEXT_FAINT),
                 ],
                 spacing=6,
                 tight=True,
@@ -320,21 +320,21 @@ class CommandBar(ft.Container):
             return
         if key not in self._docs:
             label_text, icon_name = self._titles[key]
-            icon = ft.Icon(icon_name, size=15, color=Colors.TEXT_SECONDARY)
-            label = ft.Text(label_text, size=11, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
+            icon = ft.Icon(icon_name, size=18, color=Colors.TEXT_SECONDARY)
+            label = ft.Text(label_text, size=14, weight=ft.FontWeight.W_600, color=Colors.TEXT_MUTED_DARK)
             close = ft.Container(
-                ft.Icon(ft.Icons.CLOSE, size=13, color=Colors.TEXT_FAINT),
-                width=18,
-                height=18,
+                ft.Icon(ft.Icons.CLOSE, size=15, color=Colors.TEXT_FAINT),
+                width=22,
+                height=22,
                 alignment=ft.alignment.center,
                 border_radius=radius_for("sm"),
                 on_click=lambda _, k=key: self.close_tab(k),
                 ink=True,
             )
             box = ft.Container(
-                ft.Row([icon, label, close], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.padding.only(left=12, right=6, top=6, bottom=5),
-                border_radius=ft.border_radius.only(top_left=7, top_right=7),
+                ft.Row([icon, label, close], spacing=7, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=14, right=8, top=8, bottom=7),
+                border_radius=ft.border_radius.only(top_left=9, top_right=9),
                 on_click=lambda _, k=key: self._activate(k),
                 ink=True,
             )
@@ -427,9 +427,9 @@ class CommandBar(ft.Container):
         text_color = Colors.WHITE if action.accent else Colors.TEXT_PRIMARY
         inner = ft.Row(
             [
-                ft.Icon(action.icon, size=16, color=icon_color),
-                ft.Text(action.label, size=12, weight=ft.FontWeight.W_600, color=text_color),
-                *([ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=icon_color)] if action.items else []),
+                ft.Icon(action.icon, size=18, color=icon_color),
+                ft.Text(action.label, size=13.5, weight=ft.FontWeight.W_600, color=text_color),
+                *([ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=18, color=icon_color)] if action.items else []),
             ],
             spacing=6,
             tight=True,

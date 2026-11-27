@@ -2727,6 +2727,14 @@ class AdminCenter:
             label="إظهار الخطوط العمودية الفاصلة بين أعمدة الجداول",
             value=grid_settings.vertical_lines(sset),
         )
+        dark_lines_switch = ft.Switch(
+            label="خطوط جداول داكنة وواضحة (بدل الرمادي الباهت)",
+            value=grid_settings.dark_lines(sset),
+        )
+        column_tint_switch = ft.Switch(
+            label="تلوين أعمدة الجداول دلاليًا (المبالغ ذهبية، الكميات زرقاء، الإجماليات خضراء...)",
+            value=grid_settings.column_tint(sset),
+        )
 
         def save_theme_settings(_):
             theme_settings.set_mode_preference(sset, theme_mode_toggle.value)
@@ -2743,6 +2751,8 @@ class AdminCenter:
                 font_settings.SETTING_PRINT_SIZE: print_size_field.value or str(font_settings.print_font_size(sset)),
                 grid_settings.FIT_WIDTH_KEY: "1" if fit_width_switch.value else "0",
                 grid_settings.VERTICAL_LINES_KEY: "1" if vertical_lines_switch.value else "0",
+                grid_settings.DARK_LINES_KEY: "1" if dark_lines_switch.value else "0",
+                grid_settings.COLUMN_TINT_KEY: "1" if column_tint_switch.value else "0",
             })
             self._notify("تم حفظ إعدادات المظهر والخط", kind="success")
             self.on_theme_changed()
@@ -3406,6 +3416,8 @@ class AdminCenter:
                     ft.Text("الجداول", size=12, weight=ft.FontWeight.W_600),
                     fit_width_switch,
                     vertical_lines_switch,
+                    dark_lines_switch,
+                    column_tint_switch,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     theme_schedule_switch,
                     theme_schedule_row,

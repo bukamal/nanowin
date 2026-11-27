@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Callable, Literal
 
 
-ColorRole = Literal["primary", "success", "danger", "warning", "purple", "signed"]
+ColorRole = Literal["primary", "success", "danger", "warning", "purple", "gold", "signed"]
 ColorRoleResolver = Callable[[object, dict], ColorRole | None]
 
 
