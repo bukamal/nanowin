@@ -250,10 +250,13 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     # the command bar's top row (the old per-section identity card was removed).
     voice_header_slot = ft.Container(width=42, height=42, visible=False)
 
-    invoice_center = InvoiceCenter(page, ctx, content, native_files=native_files, on_title_change=set_header)
+    invoice_center = InvoiceCenter(
+        page, ctx, content, native_files=native_files, on_title_change=set_header,
+        on_create_item=lambda value, on_saved, as_name: _open_new_item_table(value, on_saved, as_name),
+    )
     pos_center = POSCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
-        on_create_item=lambda code: open_items_for_new(code),
+        on_create_item=lambda code: _open_new_item_table(code, _pos_add_saved, False),
         on_fullscreen_enter=lambda: pos_fullscreen_enter(),
         on_fullscreen_exit=lambda: pos_fullscreen_exit(),
         on_toggle_fullscreen=lambda: pos_toggle_fullscreen(),
@@ -1118,28 +1121,44 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     def open_purchase(_=None) -> None:
         navigate("purchase")
 
-    def open_items_for_new(barcode_code: str) -> None:
-        # Open the compact add-item TABLE sheet over the current screen (POS)
-        # with the scanned barcode pre-filled, instead of navigating away to
-        # the Materials wizard. On save the new item drops straight into POS.
-        code = (barcode_code or "").strip()
+    def _pos_add_saved(item_id: int) -> None:
+        try:
+            pos_center._add_item(int(item_id))
+        except Exception:
+            pass
 
-        def _saved(item_id: int) -> None:
+    def _open_new_item_table(value: str, on_saved, as_name: bool) -> bool:
+        """Open the SAME Materials bulk-add table sheet over the current screen
+        (POS or an invoice sheet), pre-filled, and report the created item id
+        back. Falls back to the compact table sheet, then to navigation."""
+        initial = {"name": value} if as_name else {"barcode": value}
+
+        def _wrapped(ids) -> None:
             try:
-                if code:
-                    pos_center._add_by_barcode(code)
-                else:
-                    pos_center._add_item(int(item_id))
+                if on_saved is not None and ids:
+                    on_saved(int(ids[0]))
             except Exception:
                 pass
 
-        def _notify(text, kind=None, sound_kind=None):
-            toast(page, text, kind=kind, sound_kind=sound_kind)
-
         try:
-            open_new_item_sheet(page, ctx, barcode=code, notify=_notify, on_saved=_saved)
+            if items_center.open_new_item_table(initial_row=initial, on_saved=_wrapped):
+                return True
         except Exception:
-            navigate("items", prefill_barcode=code)
+            pass
+        try:
+            kwargs = {"name": value} if as_name else {"barcode": value}
+            def _notify(text, kind=None, sound_kind=None):
+                toast(page, text, kind=kind, sound_kind=sound_kind)
+            open_new_item_sheet(page, ctx, notify=_notify, on_saved=_wrapped, **kwargs)
+            return True
+        except Exception:
+            return False
+
+    def open_items_for_new(barcode_code: str) -> None:
+        # Open the shared add-item TABLE sheet over the current screen (POS)
+        # with the scanned barcode pre-filled, instead of navigating away to
+        # the Materials wizard. On save the new item drops straight into POS.
+        _open_new_item_table((barcode_code or "").strip(), _pos_add_saved, False)
 
     def open_table_invoice(kind: str) -> None:
         # Open the single-table invoice sheet directly, WITHOUT navigating to

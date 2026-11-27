@@ -433,3 +433,22 @@ def test_new_item_table_sheet_builds_with_barcode_and_escape_hook():
         assert callable(getattr(sheet, "_nano_escape_close", None))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_items_open_new_item_table_off_screen_keeps_content():
+    # POS/invoice call this to open the SAME bulk-add table sheet without
+    # navigating to Materials; the visible content container must not change.
+    from nano_offline.views.items_view import ItemsCenter
+
+    ctx, tmp = _ctx()
+    try:
+        ctx.definitions.create_unit("قطعة", "ق")
+        page, content = FakePage(), ft.Container(expand=True)
+        center = ItemsCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
+        before = center.content
+        ok = center.open_new_item_table(initial_row={"barcode": "NEWX-1"}, on_saved=lambda ids: None)
+        assert ok is True
+        assert center.content is before  # never mounted the Materials screen
+        assert page.opened and getattr(page.opened[-1], "content", None) is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

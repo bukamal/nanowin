@@ -151,6 +151,7 @@ class DataGrid(ft.Column):
         on_load_more: Callable[[], None] | None = None,
         single_column_edit: bool = False,
         on_barcode: Callable[[str], bool] | None = None,
+        on_picker_free: Callable[[int, str], bool] | None = None,
         top_row: ft.Control | None = None,
         fit_width: bool | None = None,
     ):
@@ -199,6 +200,9 @@ class DataGrid(ft.Column):
         self._single_column_edit = bool(single_column_edit)
         # Optional keyboard-wedge barcode capture (see _maybe_barcode_event).
         self._on_barcode = on_barcode
+        # Optional: called (row, typed_text) when a picker is confirmed with no
+        # matching option (e.g. a typed item name that doesn't exist yet).
+        self._on_picker_free = on_picker_free
         self._scan_buf = ""
         self._scan_pending = ""
         self._scan_pending_at = 0.0
@@ -1835,8 +1839,19 @@ class DataGrid(ft.Column):
             return
         value = self._picker_visible[self._picker_highlight][0] if self._picker_visible else None
         row, key = self._picker_row, self._picker_key
+        query = ""
+        try:
+            query = (self._picker_search.value or "").strip() if self._picker_search is not None else ""
+        except Exception:
+            query = ""
         self._picker_clear()
         if row is None or key is None or value is None:
+            # No option matched: let the view offer to create the typed entry.
+            if row is not None and key is not None and query and self._on_picker_free is not None:
+                try:
+                    self._on_picker_free(int(row), query)
+                except Exception:
+                    pass
             return
         if self._rows[row].get(key) == value:
             self._render_row(row)

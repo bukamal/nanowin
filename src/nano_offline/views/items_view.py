@@ -251,7 +251,7 @@ class ItemsCenter:
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
-    def show_bulk_sheet(self, edit_item: dict | None = None) -> None:
+    def show_bulk_sheet(self, edit_item: dict | None = None, *, initial_row: dict | None = None, on_saved=None) -> None:
         """Open the bulk add/edit table sheet.
 
         The sheet is a nested closure defined while rendering the center, so
@@ -260,7 +260,50 @@ class ItemsCenter:
         """
         opener = getattr(self, "_open_bulk_sheet", None)
         if callable(opener):
-            opener(edit_item=edit_item)
+            opener(edit_item=edit_item, initial_row=initial_row, on_saved=on_saved)
+
+    def open_new_item_table(self, *, initial_row: dict | None = None, on_saved=None) -> bool:
+        """Open the SAME Materials bulk-add table sheet from another screen
+        (POS / invoice) without navigating away, pre-filled and reporting the
+        created item ids back via ``on_saved``."""
+        if not self._ensure_bulk_sheet():
+            return False
+        try:
+            self.show_bulk_sheet(initial_row=initial_row, on_saved=on_saved)
+            return True
+        except Exception:
+            return False
+
+    def _ensure_bulk_sheet(self) -> bool:
+        """Build the Materials closures off-screen if they don't exist yet.
+
+        ``show_center`` mounts its UI into the shared content container and
+        publishes header/ribbon actions + a keyboard handler; we suppress those
+        side effects and build into a detached container so opening the bulk
+        sheet from POS/invoices never disturbs the visible screen.
+        """
+        if callable(getattr(self, "_open_bulk_sheet", None)):
+            return True
+        saved_content = self.content
+        saved_title = getattr(self, "on_title_change", None)
+        saved_actions = getattr(self, "on_context_actions", None)
+        saved_handler = getattr(self.page, "on_keyboard_event", None)
+        self.content = ft.Container()
+        self.on_title_change = lambda *a, **k: None
+        self.on_context_actions = None
+        try:
+            self.show_center()
+        except Exception:
+            return False
+        finally:
+            self.content = saved_content
+            self.on_title_change = saved_title
+            self.on_context_actions = saved_actions
+            try:
+                self.page.on_keyboard_event = saved_handler
+            except Exception:
+                pass
+        return callable(getattr(self, "_open_bulk_sheet", None))
 
     def show_center(self, prefill_barcode: str | None = None) -> None:
         page = self.page
@@ -2839,7 +2882,7 @@ class ItemsCenter:
             page.open(sheet)
             page.run_task(_load, True)
 
-        def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None) -> None:
+        def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None, initial_row: dict | None = None, on_saved=None) -> None:
             """Comprehensive multi-item entry: a full table in a wide sheet.
 
             With ``edit_item`` it opens the same table pre-filled with that
@@ -3781,6 +3824,11 @@ class ItemsCenter:
                     notify(warnings[0] if len(warnings) == 1 else f"تمت الإضافة مع تعذّر حفظ بعض الباركودات: {warnings[0]}", kind="warning")
                 close()
                 refresh()
+                if on_saved is not None and created_ids:
+                    try:
+                        on_saved(list(created_ids))
+                    except Exception:
+                        pass
 
             # While one of the header selectors has focus, its field eats
             # Backspace/Enter -- the grid must not also act on those keys
@@ -3867,6 +3915,13 @@ class ItemsCenter:
                     bulk_grid.set_cell(_idx, "_id", _edit_id, notify=False)
             else:
                 bulk_grid.add_row(row_defaults())
+                if initial_row:
+                    _seed_idx = len(bulk_grid.rows) - 1
+                    for _k, _v in dict(initial_row).items():
+                        try:
+                            bulk_grid.set_cell(_seed_idx, _k, _v, notify=False)
+                        except Exception:
+                            pass
             refresh_bulk_footer()
 
             # A wide, tall sheet: the table is the point, so it gets the

@@ -17,7 +17,7 @@ from nano_offline.components import DataGrid, GridColumn, sheets
 from nano_offline.components.buttons import primary_button
 
 
-def open_new_item_sheet(page, ctx, *, barcode: str = "", notify=None, on_saved=None) -> None:
+def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=None, on_saved=None) -> None:
     def _notify(text, kind=None, sound_kind=None):
         if notify is not None:
             try:
@@ -66,7 +66,7 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", notify=None, on_saved=N
             GridColumn("quantity", "الكمية", width=100, editable=True, kind="number", align="end"),
         ],
         rows=[{
-            "name": "", "barcode": str(barcode or ""),
+            "name": str(name or ""), "barcode": str(barcode or ""),
             "item_type": "مخزون", "base_unit_id": default_unit, "quantity": 1,
         }],
         page=page,
@@ -143,7 +143,11 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", notify=None, on_saved=N
 
     header = sheets.sheet_header(
         title="إضافة مادة جديدة",
-        subtitle="تُضاف بالباركود الممسوح" if barcode else "املأ بيانات المادة ثم احفظ",
+        subtitle=(
+            "بالباركود الممسوح" if barcode else
+            "بالاسم المُدخل" if name else
+            "املأ بيانات المادة ثم احفظ"
+        ),
         icon=ft.Icons.ADD_BOX_OUTLINED,
         on_close=_close,
     )

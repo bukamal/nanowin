@@ -103,7 +103,7 @@ INVOICE_GRID_COLUMNS = [
 class InvoiceCenter:
     """Responsive invoice center/editor for Flet 0.28.x."""
 
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, on_saved=None, native_files=None, on_title_change=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, on_saved=None, native_files=None, on_title_change=None, on_create_item=None):
         # Dedicated list mode: None (combined), "sale", or "purchase". Set by
         # the shell's sales/purchases tabs; internal refreshes keep it.
         self._list_mode: str | None = None
@@ -118,6 +118,9 @@ class InvoiceCenter:
         self.on_saved = on_saved
         self.native_files = native_files
         self.on_title_change = on_title_change
+        # Opens the shared Materials bulk-add table sheet when a scanned/typed
+        # item doesn't exist (value, on_saved, as_name) -> bool.
+        self.on_create_item = on_create_item
         self.invoice_type = "sale"
         self.editing_id: int | None = None
         self.lines: list[dict] = []
@@ -156,27 +159,38 @@ class InvoiceCenter:
     def notify(self, text: str, kind: str | None = None, sound_kind: str | None = None) -> None:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
-    def _offer_new_item(self, code: str, on_saved) -> None:
-        """Scanned code matched nothing: offer to create it in a table sheet
-        over the current invoice sheet (no navigation away)."""
+    def _offer_new_item(self, value: str, on_saved, *, as_name: bool = False) -> bool:
+        """A scanned barcode / typed name matched nothing: offer to create it in
+        the table sheet over the current invoice sheet (no navigation away)."""
         dialog = ft.AlertDialog(
             modal=True, actions_alignment=ft.MainAxisAlignment.CENTER,
-            title=ft.Text("لا توجد مادة بهذا الباركود"),
+            title=ft.Text("لا توجد مادة مطابقة"),
         )
 
         def create(_=None):
             self.page.close(dialog)
-            open_new_item_sheet(self.page, self.ctx, barcode=code, notify=self.notify, on_saved=on_saved)
+            if self.on_create_item is not None:
+                try:
+                    self.on_create_item(value, on_saved, as_name)
+                    return
+                except Exception:
+                    pass
+            kwargs = {"name": value} if as_name else {"barcode": value}
+            open_new_item_sheet(self.page, self.ctx, notify=self.notify, on_saved=on_saved, **kwargs)
 
         def cancel(_=None):
             self.page.close(dialog)
 
-        dialog.content = ft.Text(f"الباركود الممسوح: {code}\nهل تريد إنشاء مادة جديدة بهذا الباركود؟")
+        if as_name:
+            dialog.content = ft.Text(f"الاسم المُدخل: {value}\nهل تريد إنشاء مادة جديدة بهذا الاسم؟")
+        else:
+            dialog.content = ft.Text(f"الباركود الممسوح: {value}\nهل تريد إنشاء مادة جديدة بهذا الباركود؟")
         dialog.actions = [
             ft.TextButton("إلغاء", on_click=cancel),
             ft.FilledButton("إنشاء مادة جديدة", on_click=create),
         ]
         self.page.open(dialog)
+        return True
 
     def _display_invoice_number(self, invoice_id: int) -> str:
         return invoice_settings.format_invoice_number(invoice_id, self.ctx.settings)
@@ -2949,6 +2963,7 @@ class InvoiceCenter:
             empty_text="أدخل مادة للبدء أو امسح باركود",
             center_cells=True,
             on_barcode=lambda code: _barcode_from_scan(code),
+            on_picker_free=lambda row, query: _on_picker_free(row, query),
         )
 
         def fill_line_defaults(index: int, item_id: int) -> None:
@@ -2967,6 +2982,26 @@ class InvoiceCenter:
             if not row.get("qty"):
                 lines_grid.set_cell(index, "qty", 1, notify=False)
             lines_grid.set_cell(index, "price", _unit_price_display(item_row, unit_row), notify=False)
+
+        def _on_picker_free(row_index: int, query: str) -> bool:
+            # Typed an item name that matched nothing: offer to create it, then
+            # assign the new item to this row (adding it to the local catalogue
+            # so it shows in the picker/name formatter immediately).
+            if lines_grid.nav.key != "item":
+                return False
+
+            def _assign(item_id) -> None:
+                new_row = self.ctx.items.get(int(item_id))
+                if new_row is not None:
+                    item_map[int(item_id)] = new_row
+                    if not any(int(i["id"]) == int(item_id) for i in items):
+                        items.append(new_row)
+                lines_grid.set_cell(int(row_index), "item", int(item_id))
+                fill_line_defaults(int(row_index), int(item_id))
+                refresh_summary()
+
+            self._offer_new_item(query, _assign, as_name=True)
+            return True
 
         def _apply_total_price(index: int, value) -> None:
             """Editing the display-currency total recomputes the unit price."""
@@ -3792,7 +3827,7 @@ class InvoiceCenter:
             except Exception:
                 self.show_center()
 
-        def close(_=None) -> None:
+        def force_close(_=None) -> None:
             # The grid took over the page's keyboard handler when built;
             # hand it back so the shell's shortcuts (and the list grid's
             # arrow/Enter navigation) keep working.
@@ -3800,12 +3835,15 @@ class InvoiceCenter:
             self.page.close(sheet)
             _dismiss_refresh()
 
-        sheet.on_dismiss = lambda e: (setattr(self.page, "on_keyboard_event", previous_key_handler), _dismiss_refresh())
+        def _has_unsaved() -> bool:
+            return any((tab.get("lines") or []) for tab in tabs_state["items"])
 
-        def _escape_close() -> None:
-            dirty = any((tab.get("lines") or []) for tab in tabs_state["items"])
-            if not dirty:
-                close()
+        def close(_=None) -> None:
+            # A close with open lines warns first -- whether it comes from the
+            # header X, ESC, or closing the last tab. Background/dismiss paths
+            # call force_close() instead.
+            if not _has_unsaved():
+                force_close()
                 return
             dialog = ft.AlertDialog(
                 modal=True,
@@ -3815,13 +3853,15 @@ class InvoiceCenter:
                 ),
                 actions=[
                     ft.TextButton("متابعة التحرير", on_click=lambda _=None: self.page.close(dialog)),
-                    ft.FilledButton("إغلاق", on_click=lambda _=None: (self.page.close(dialog), close())),
+                    ft.FilledButton("إغلاق", on_click=lambda _=None: (self.page.close(dialog), force_close())),
                 ],
                 actions_alignment=ft.MainAxisAlignment.CENTER,
             )
             self.page.open(dialog)
 
-        sheet._nano_escape_close = _escape_close
+        sheet.on_dismiss = lambda e: (setattr(self.page, "on_keyboard_event", previous_key_handler), _dismiss_refresh())
+
+        sheet._nano_escape_close = close
 
         # ----------------------------------------------------------- initial
         party_options()
