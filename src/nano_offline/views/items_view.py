@@ -614,20 +614,28 @@ class ItemsCenter:
 
             def yes(_ev=None) -> None:
                 page.close(dialog)
-                deleted = 0
-                failures = 0
-                for row in rows:
-                    try:
-                        ctx.items.delete(int(row.get("id") or 0))
-                        deleted += 1
-                    except Exception:
-                        failures += 1
-                grid.clear_selection()
-                refresh()
-                if failures:
-                    notify(f"حُذفت {deleted} مادة، وتعذّر حذف {failures} لارتباطها بحركات أو فواتير", kind="warning")
-                else:
-                    notify(f"حُذفت {deleted} مادة", sound_kind="success")
+
+                async def _after():
+                    await asyncio.sleep(0.12)
+                    deleted = 0
+                    failures = 0
+                    for row in rows:
+                        try:
+                            ctx.items.delete(int(row.get("id") or 0))
+                            deleted += 1
+                        except Exception:
+                            failures += 1
+                    grid.clear_selection()
+                    refresh()
+                    if failures:
+                        notify(f"حُذفت {deleted} مادة، وتعذّر حذف {failures} لارتباطها بحركات أو فواتير", kind="warning")
+                    else:
+                        notify(f"حُذفت {deleted} مادة", sound_kind="success")
+
+                try:
+                    page.run_task(_after)
+                except Exception:
+                    pass
 
             def no(_ev=None) -> None:
                 page.close(dialog)
@@ -2344,6 +2352,7 @@ class ItemsCenter:
                 row_bg=bulk_row_bg,
                 on_cell_commit=on_bulk_cell_commit,
                 picker_options=lambda col, _row: bulk_choices(col.key),
+                on_picker_free=lambda index, query: _category_picker_free(index, query),
                 on_sort=lambda key, direction: apply_bulk_sort(key, direction),
                 on_row_menu=(None if edit_item is not None else (lambda row: bulk_row_menu(row))),
                 selectable=(edit_item is None),
@@ -2950,6 +2959,135 @@ class ItemsCenter:
                 overlay.update()
                 try:
                     units_grid.attach()
+                except Exception:
+                    pass
+
+            def _category_picker_free(index: int, query: str) -> bool:
+                # Typing a category that doesn't exist yet in the picker opens
+                # the in-sheet categories window (same surface as «وحدات إضافية»)
+                # so the category can be created without leaving the sheet.
+                if bulk_grid.nav.key != "category_id":
+                    return False
+                typed = str(query or "").strip()
+                if not typed:
+                    return False
+                norm = typed.casefold()
+                for c in categories:
+                    if str(c.get("name") or "").strip().casefold() == norm:
+                        bulk_grid.set_cell(index, "category_id", int(c["id"]))
+                        return True
+                _open_category_window(index, typed)
+                return True
+
+            def _open_category_window(index: int, typed_name: str) -> None:
+                status = ft.Text("", size=11, color=Colors.DANGER)
+
+                cat_grid = DataGrid(
+                    columns=[GridColumn("name", "اسم التصنيف", editable=True, width=260)],
+                    rows=[{"name": typed_name}], page=page, row_height=40, center_cells=True,
+                    empty_text="اضغط «إضافة تصنيف» لسطر جديد",
+                )
+
+                def add_cat_row(_=None) -> None:
+                    cat_grid.add_row({"name": ""})
+
+                def close(_=None) -> None:
+                    try:
+                        if recipe_overlay_ref:
+                            recipe_overlay_ref[0].visible = False
+                            recipe_overlay_ref[0].update()
+                    except Exception:
+                        pass
+                    try:
+                        bulk_grid.attach()
+                    except Exception:
+                        pass
+
+                def save_cats(_=None) -> None:
+                    existing = {
+                        str(c.get("name") or "").strip().casefold(): int(c["id"]) for c in categories
+                    }
+                    picked: int | None = None
+                    created: list[tuple[int, str]] = []
+                    for r in cat_grid.rows:
+                        nm = str(r.get("name") or "").strip()
+                        if not nm:
+                            continue
+                        key = nm.casefold()
+                        cid = existing.get(key)
+                        if cid is None:
+                            try:
+                                cid = int(ctx.definitions.create_category(nm))
+                            except Exception as exc:
+                                status.value = str(exc)
+                                status.update()
+                                return
+                            existing[key] = cid
+                            created.append((cid, nm))
+                        if nm.casefold() == typed_name.casefold() and picked is None:
+                            picked = cid
+                    for cid, nm in created:
+                        cat_map[str(cid)] = nm
+                        if (str(cid), nm) not in cat_options:
+                            cat_options.append((str(cid), nm))
+                    if picked is None and created:
+                        picked = created[0][0]
+                    if created:
+                        try:
+                            sync_definitions_lists()
+                        except Exception:
+                            pass
+                    if picked is not None:
+                        bulk_grid.set_cell(index, "category_id", int(picked))
+                    close()
+
+                panel = ft.Container(
+                    ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Text("التصنيفات", size=16, weight=ft.FontWeight.BOLD, expand=True),
+                                    inline_icon_button(ft.Icons.CLOSE, lambda _=None: close()),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Text(
+                                "اكتب تصنيفات جديدة أو عدّل الموجودة. التصنيف غير الموجود سيُضاف تلقائيًا "
+                                "ويُسند إلى الصف.",
+                                size=11, color=Colors.TEXT_SECONDARY,
+                            ),
+                            ft.Container(cat_grid, expand=True),
+                            ft.Row(
+                                [ft.OutlinedButton("إضافة تصنيف", icon=ft.Icons.ADD_CIRCLE_OUTLINE, on_click=add_cat_row)],
+                                alignment=ft.MainAxisAlignment.START,
+                            ),
+                            status,
+                            ft.Row(
+                                [
+                                    ft.TextButton("إلغاء", on_click=close),
+                                    ft.FilledButton("حفظ التصنيفات", icon=ft.Icons.SAVE_OUTLINED, on_click=save_cats),
+                                ],
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                spacing=10,
+                            ),
+                        ],
+                        spacing=10, tight=True, expand=True,
+                    ),
+                    width=min(520, sheet_w - 32), height=min(430, sheet_h - 32),
+                    padding=16,
+                    bgcolor=Colors.WHITE,
+                    border_radius=Radius.LG,
+                    shadow=Shadow.LG,
+                    rtl=True,
+                )
+                if not recipe_overlay_ref:
+                    return
+                overlay = recipe_overlay_ref[0]
+                overlay.content = panel
+                overlay.visible = True
+                overlay.update()
+                try:
+                    cat_grid.attach()
                 except Exception:
                     pass
 
@@ -3571,20 +3709,44 @@ class ItemsCenter:
             # so a stale detail sheet cannot delete newly-used history.
             confirm = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER)
 
+            async def _after_close(action):
+                # Dismiss animation first, then rebuild/show toast -- doing both
+                # in one tick leaves a stuck modal barrier over the UI.
+                await asyncio.sleep(0.12)
+                action()
+
             def close(_=None):
                 page.close(confirm)
-                refresh()  # restores the swiped-away row
+                try:
+                    page.run_task(_after_close, refresh)  # restores the swiped row
+                except Exception:
+                    pass
 
             def remove(_=None):
                 try:
                     ctx.items.delete(int(item["id"]))
                     page.close(confirm)
-                    notify("تم حذف المادة", kind="success", sound_kind="delete")
-                    refresh()
+
+                    def _after():
+                        notify("تم حذف المادة", kind="success", sound_kind="delete")
+                        refresh()
+
+                    try:
+                        page.run_task(_after_close, _after)
+                    except Exception:
+                        pass
                 except Exception as exc:
                     page.close(confirm)
-                    notify(str(exc), kind="error")
-                    refresh()
+                    message = str(exc)
+
+                    def _after_err():
+                        notify(message, kind="error")
+                        refresh()
+
+                    try:
+                        page.run_task(_after_close, _after_err)
+                    except Exception:
+                        pass
 
             confirm.title = ft.Text("حذف المادة")
             confirm.content = ft.Text(
@@ -3605,11 +3767,28 @@ class ItemsCenter:
                     result = ctx.items.delete_opening_balance(int(item["id"]))
                     page.close(confirm)
                     qty = float(result.get("removed_quantity") or 0)
-                    notify(f"تم حذف الرصيد الافتتاحي ({qty:g})", kind="success", sound_kind="delete")
-                    refresh()
+
+                    async def _after():
+                        await asyncio.sleep(0.12)
+                        notify(f"تم حذف الرصيد الافتتاحي ({qty:g})", kind="success", sound_kind="delete")
+                        refresh()
+
+                    try:
+                        page.run_task(_after)
+                    except Exception:
+                        pass
                 except Exception as exc:
                     page.close(confirm)
-                    notify(str(exc), kind="error")
+                    message = str(exc)
+
+                    async def _err():
+                        await asyncio.sleep(0.12)
+                        notify(message, kind="error")
+
+                    try:
+                        page.run_task(_err)
+                    except Exception:
+                        pass
 
             confirm.title = ft.Text("حذف الرصيد الافتتاحي")
             confirm.content = ft.Text(

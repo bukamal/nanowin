@@ -1260,8 +1260,16 @@ class InvoiceCenter:
                                 self.notify(str(exc), kind="error")
                                 return
                             self.page.close(dialog)
-                            self.show_center()
-                            self.notify("تم دمج الطلب", sound_kind="success")
+
+                            async def _after():
+                                await asyncio.sleep(0.12)
+                                self.show_center()
+                                self.notify("تم دمج الطلب", sound_kind="success")
+
+                            try:
+                                self.page.run_task(_after)
+                            except Exception:
+                                pass
 
                         dialog.title = ft.Text("دمج طلب مفتوح")
                         dialog.content = ft.Column([pick], spacing=8, tight=True, width=380)
@@ -1296,8 +1304,16 @@ class InvoiceCenter:
                                 self.notify(str(exc), kind="error")
                                 return
                             self.page.close(dialog)
-                            self.show_center()
-                            self.notify("تم تقسيم الطلب", sound_kind="success")
+
+                            async def _after():
+                                await asyncio.sleep(0.12)
+                                self.show_center()
+                                self.notify("تم تقسيم الطلب", sound_kind="success")
+
+                            try:
+                                self.page.run_task(_after)
+                            except Exception:
+                                pass
 
                         dialog.title = ft.Text("تقسيم الطلب إلى طلب جديد")
                         dialog.content = ft.Column(
@@ -1354,19 +1370,27 @@ class InvoiceCenter:
 
                 def yes(_ev=None) -> None:
                     self.page.close(dialog)
-                    deleted = 0
-                    failures = 0
-                    for row in rows:
-                        try:
-                            self.ctx.invoices.delete_invoice(int(row.get("id") or 0))
-                            deleted += 1
-                        except Exception:
-                            failures += 1
-                    self.show_center()
-                    if failures:
-                        self.notify(f"حُذفت {deleted} فاتورة، وتعذّر حذف {failures}", kind="warning")
-                    else:
-                        self.notify(f"حُذفت {deleted} فاتورة", sound_kind="success")
+
+                    async def _after():
+                        await asyncio.sleep(0.12)
+                        deleted = 0
+                        failures = 0
+                        for row in rows:
+                            try:
+                                self.ctx.invoices.delete_invoice(int(row.get("id") or 0))
+                                deleted += 1
+                            except Exception:
+                                failures += 1
+                        self.show_center()
+                        if failures:
+                            self.notify(f"حُذفت {deleted} فاتورة، وتعذّر حذف {failures}", kind="warning")
+                        else:
+                            self.notify(f"حُذفت {deleted} فاتورة", sound_kind="success")
+
+                    try:
+                        self.page.run_task(_after)
+                    except Exception:
+                        pass
 
                 def no(_ev=None) -> None:
                     self.page.close(dialog)
@@ -1822,17 +1846,36 @@ class InvoiceCenter:
         def close(_=None):
             self.page.close(dialog)
 
+        async def _run_after_close(action):
+            # Let the dialog's dismiss animation finish before rebuilding the
+            # screen / showing a toast; doing both in the same tick left a
+            # stuck modal barrier (a translucent veil) over the whole UI.
+            await asyncio.sleep(0.12)
+            action()
+
         def do_delete(_):
             try:
                 self.ctx.invoices.delete_invoice(invoice_id)
                 self.page.close(dialog)
-                self.notify(f"تم حذف الفاتورة #{self._display_invoice_number(invoice_id)} وعكس آثارها المحاسبية والمخزنية", kind="success", sound_kind="delete")
-                self.show_center()
-                if self.on_saved:
-                    self.on_saved()
+                label = f"تم حذف الفاتورة #{self._display_invoice_number(invoice_id)} وعكس آثارها المحاسبية والمخزنية"
+
+                def _after():
+                    self.notify(label, kind="success", sound_kind="delete")
+                    self.show_center()
+                    if self.on_saved:
+                        self.on_saved()
+
+                try:
+                    self.page.run_task(_run_after_close, _after)
+                except Exception:
+                    pass
             except Exception as exc:
                 self.page.close(dialog)
-                self.notify(str(exc), kind="error")
+                message = str(exc)
+                try:
+                    self.page.run_task(_run_after_close, lambda: self.notify(message, kind="error"))
+                except Exception:
+                    pass
 
         dialog.title = ft.Text("تأكيد حذف الفاتورة")
         dialog.content = ft.Text(
