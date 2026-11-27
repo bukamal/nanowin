@@ -50,6 +50,12 @@ import flet as ft
 _state: dict[str, str] = {"mode": "light"}
 _DEFAULT_BRAND_ACCENT = "#0B5FCC"
 _brand_accent = _DEFAULT_BRAND_ACCENT
+# Brand *style*: "gradient" paints the familiar three-stop brand ramp,
+# "solid" flattens every brand surface to one fully-saturated block. Kept
+# separate from the accent so the same colour can be shown either way.
+_DEFAULT_BRAND_STYLE = "gradient"
+_BRAND_STYLES = ("gradient", "solid")
+_brand_style = _DEFAULT_BRAND_STYLE
 BRAND_PRESETS = (
     ("#0B5FCC", "أزرق كاشير"),
     ("#2563EB", "أزرق ملكي"),
@@ -132,6 +138,22 @@ def set_brand_accent(color: str | None) -> None:
 
 def get_brand_accent() -> str:
     return _brand_accent
+
+
+def normalize_brand_style(style: str | None) -> str:
+    candidate = str(style or "").strip().lower()
+    return candidate if candidate in _BRAND_STYLES else _DEFAULT_BRAND_STYLE
+
+
+def set_brand_style(style: str | None) -> None:
+    """Choose how brand surfaces are painted app-wide: ``"gradient"`` (the
+    default three-stop ramp) or ``"solid"`` (one saturated, flat block)."""
+    global _brand_style
+    _brand_style = normalize_brand_style(style)
+
+
+def get_brand_style() -> str:
+    return _brand_style
 
 
 def get_mode() -> str:
@@ -466,13 +488,33 @@ class LazyPalette:
         return (getattr(Colors, t) for t in self._tokens)
 
 
-def brand_gradient(*, soft: bool = False, diagonal: bool = True) -> ft.LinearGradient:
+def _flat_gradient(color: str) -> ft.LinearGradient:
+    """A visually-solid fill (a two-stop gradient with identical stops, since
+    Flutter needs at least two) so solid mode and gradient mode share the
+    exact same ``gradient=`` call sites."""
+    return ft.LinearGradient(
+        colors=[color, color],
+        begin=ft.alignment.center_left,
+        end=ft.alignment.center_right,
+    )
+
+
+def _use_solid(style: str | None) -> bool:
+    return (style if style is not None else _brand_style) == "solid"
+
+
+def brand_gradient(*, soft: bool = False, diagonal: bool = True, style: str | None = None) -> ft.LinearGradient:
     """The shared brand gradient (deep -> primary -> sky).
 
     One helper so splash, the command bar, section headers and every hero use
     the exact same ramp; ``soft=True`` returns a very light wash suited to
-    large background surfaces instead of a header.
+    large background surfaces instead of a header. In solid mode the ramp
+    collapses to one saturated brand block. ``style`` overrides the active
+    style (used by the settings live-preview).
     """
+    if _use_solid(style):
+        base = _blend_color(Colors.BRAND_START, "#FFFFFF", 0.90) if soft else Colors.BRAND_START
+        return _flat_gradient(base)
     colors = [Colors.BRAND_START, Colors.BRAND_MID, Colors.BRAND_CYAN]
     if soft:
         colors = [_blend_color(color, "#FFFFFF", 0.90) for color in colors]
@@ -481,12 +523,16 @@ def brand_gradient(*, soft: bool = False, diagonal: bool = True) -> ft.LinearGra
     return ft.LinearGradient(colors=colors, begin=begin, end=end)
 
 
-def tile_gradient(accent: str, *, diagonal: bool = True) -> ft.LinearGradient:
+def tile_gradient(accent: str, *, diagonal: bool = True, style: str | None = None) -> ft.LinearGradient:
     """A dark -> accent -> bright ramp that stays white-text safe.
 
     Shortcut tiles/first-run cards put white labels straight on the gradient,
     so unlike ``brand_gradient`` this keeps every stop dark enough for AA text.
+    In solid mode the accent is shown as one flat, fully-saturated block.
     """
+    if _use_solid(style):
+        # Only deepened enough to keep white labels legible on light hues.
+        return _flat_gradient(_blend_color(accent, "#000000", 0.08))
     deep = _blend_color(accent, "#000000", 0.32)
     bright = _blend_color(accent, "#FFFFFF", 0.10)
     begin = ft.alignment.top_left if diagonal else ft.alignment.center_left
@@ -508,8 +554,14 @@ def shade(accent: str, amount: float = 0.25) -> str:
     return _blend_color(accent, "#000000", amount)
 
 
-def surface_gradient() -> ft.LinearGradient:
-    """A soft wash (card surface -> faint brand tint) for elevated cards."""
+def surface_gradient(style: str | None = None) -> ft.LinearGradient:
+    """A soft wash (card surface -> faint brand tint) for elevated cards.
+
+    In solid mode the wash flattens to the plain surface colour so cards read
+    as clean, untextured panes.
+    """
+    if _use_solid(style):
+        return _flat_gradient(Colors.WHITE)
     if _state["mode"] == "dark":
         return ft.LinearGradient(
             colors=[Colors.WHITE, Colors.BACKGROUND_ALT],
@@ -524,6 +576,7 @@ def surface_gradient() -> ft.LinearGradient:
 __all__ = [
     "Colors", "Spacing", "Radius", "IconSize", "Shadow", "SEVERITY_STYLE", "STATUS_STYLES", "LazyPalette",
     "BRAND_PRESETS", "get_brand_accent", "set_brand_accent", "normalize_brand_accent",
+    "get_brand_style", "set_brand_style", "normalize_brand_style",
     "get_mode", "set_mode", "is_dark", "brand_gradient", "surface_gradient",
     "tile_gradient", "TILE_ACCENTS", "tint", "shade",
 ]

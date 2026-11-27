@@ -30,7 +30,9 @@ from nano_offline.core.theme import (
     Shadow,
     brand_gradient,
     normalize_brand_accent,
+    normalize_brand_style,
     set_brand_accent,
+    set_brand_style,
     shade,
     tile_gradient,
     tint,
@@ -1350,6 +1352,7 @@ class AdminCenter:
         brand_state = {
             "color": normalize_brand_accent(brand_settings.get("invoice_color")),
             "logo": brand_settings.get("company_logo") or "",
+            "style": normalize_brand_style(brand_settings.get("ui.brand_style")),
         }
         brand_presets = list(BRAND_PRESETS)
         if brand_state["color"].upper() not in {color for color, _label in brand_presets}:
@@ -1465,6 +1468,13 @@ class AdminCenter:
             padding=ft.padding.symmetric(horizontal=12, vertical=7),
             border_radius=Radius.MD,
         )
+        brand_style_toggle = SegmentedToggle(
+            options=[
+                SegmentOption("gradient", "متدرّج"),
+                SegmentOption("solid", "مشبع (لون صريح)"),
+            ],
+            value=brand_state["style"],
+        )
 
         def update_brand_preview():
             accent = brand_state["color"]
@@ -1472,14 +1482,22 @@ class AdminCenter:
                 (label for color, label in brand_presets if color.upper() == accent.upper()),
                 "لون مخصص",
             )
-            brand_preview_name.value = f"معاينة الهوية — {selected_name}"
-            # Live preview reflects the *picked* accent (not the saved one) with
-            # the same gradient language used across the app.
-            brand_preview_primary.bgcolor = accent
-            brand_preview_primary.gradient = tile_gradient(accent)
+            style_label = "مشبع" if brand_state["style"] == "solid" else "متدرّج"
+            brand_preview_name.value = f"معاينة الهوية — {selected_name} · {style_label}"
+            # Live preview reflects the *picked* accent + style (not the saved
+            # one) using the same helpers as every real surface.
+            brand_preview_primary.gradient = tile_gradient(accent, style=brand_state["style"])
+            brand_preview_primary.bgcolor = None if brand_state["style"] == "solid" else accent
             brand_preview_selected.bgcolor = tint(accent, 0.90)
             brand_preview_selected.border = ft.border.all(1, tint(accent, 0.68))
             brand_preview_selected.content.color = shade(accent, 0.20)
+
+        def on_brand_style_change(_=None):
+            brand_state["style"] = normalize_brand_style(brand_style_toggle.value)
+            update_brand_preview()
+            self.page.update()
+
+        brand_style_toggle.on_change = on_brand_style_change
 
         def update_swatch_styles():
             for hexcode, (box, marker, label) in swatch_boxes.items():
@@ -1565,6 +1583,7 @@ class AdminCenter:
                     precision_settings.SETTING_QTY: qty_decimals_field.value or precision_settings.AUTO,
                     precision_settings.SETTING_TOTAL: total_decimals_field.value or precision_settings.AUTO,
                     "invoice_color": brand_state["color"],
+                    "ui.brand_style": brand_state["style"],
                     "company_logo": brand_state["logo"] or None,
                     business_profile.BUSINESS_TYPE_KEY: (
                         business_type_field.value or business_profile.DEFAULT_BUSINESS_TYPE
@@ -1585,6 +1604,7 @@ class AdminCenter:
                 except Exception:
                     pass
                 set_brand_accent(brand_state["color"])
+                set_brand_style(brand_state["style"])
                 self._notify("تم حفظ الهوية وتطبيق لونها على الواجهة والمستندات", kind="success")
                 self.on_theme_changed()
             except Exception as exc:
@@ -2703,6 +2723,10 @@ class AdminCenter:
             label="ملاءمة عرض أعمدة الجداول للشاشة تلقائيًا (توزيع نسبي بلا فيض)",
             value=grid_settings.fit_width(sset),
         )
+        vertical_lines_switch = ft.Switch(
+            label="إظهار الخطوط العمودية الفاصلة بين أعمدة الجداول",
+            value=grid_settings.vertical_lines(sset),
+        )
 
         def save_theme_settings(_):
             theme_settings.set_mode_preference(sset, theme_mode_toggle.value)
@@ -2718,6 +2742,7 @@ class AdminCenter:
                 font_settings.SETTING_PRINT_FAMILY: print_family_field.value or "",
                 font_settings.SETTING_PRINT_SIZE: print_size_field.value or str(font_settings.print_font_size(sset)),
                 grid_settings.FIT_WIDTH_KEY: "1" if fit_width_switch.value else "0",
+                grid_settings.VERTICAL_LINES_KEY: "1" if vertical_lines_switch.value else "0",
             })
             self._notify("تم حفظ إعدادات المظهر والخط", kind="success")
             self.on_theme_changed()
@@ -3380,6 +3405,7 @@ class AdminCenter:
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("الجداول", size=12, weight=ft.FontWeight.W_600),
                     fit_width_switch,
+                    vertical_lines_switch,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     theme_schedule_switch,
                     theme_schedule_row,
@@ -3578,6 +3604,13 @@ class AdminCenter:
                         run_spacing=8,
                         rtl=True,
                     ),
+                    ft.Text("نمط لون الهوية", size=12, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "«متدرّج» يمنح الأسطح البارزة تدرّجًا لونيًا، و«مشبع» يجعلها لونًا صريحًا "
+                        "مسطّحًا بالكامل — جرّب المعاينة بالأسفل ثم احفظ.",
+                        size=11, color=Colors.TEXT_FAINT,
+                    ),
+                    brand_style_toggle,
                     ft.Container(
                         # No wrap=True: Flutter's Wrap can't host the
                         # expand=True column below, so this theme preview used

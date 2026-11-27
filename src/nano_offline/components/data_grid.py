@@ -154,6 +154,7 @@ class DataGrid(ft.Column):
         on_picker_free: Callable[[int, str], bool] | None = None,
         top_row: ft.Control | None = None,
         fit_width: bool | None = None,
+        vertical_lines: bool | None = None,
     ):
         self._all_columns = list(columns)
         self._hidden_keys: set[str] = set(hidden_keys or set())
@@ -163,6 +164,9 @@ class DataGrid(ft.Column):
         # them to fit instead of overflowing to the right. Resolved from the
         # admin setting when not forced by the caller.
         self._fit_width = self._resolve_fit_width(page) if fit_width is None else bool(fit_width)
+        # Vertical column separators (a right border per cell) so wide tables
+        # read as a grid. Resolved from the admin setting unless forced.
+        self._vertical_lines = self._resolve_vertical_lines(page) if vertical_lines is None else bool(vertical_lines)
         self._rows: list[dict] = [dict(r) for r in (rows or [])]
         self._page = page
         self._on_cell_commit = on_cell_commit
@@ -612,6 +616,32 @@ class DataGrid(ft.Column):
         except Exception:
             return True
 
+    @staticmethod
+    def _resolve_vertical_lines(page) -> bool:
+        from nano_offline.core import grid_settings
+
+        ctx = getattr(page, "_nano_ctx", None) if page is not None else None
+        settings = getattr(ctx, "settings", None)
+        if settings is None:
+            return grid_settings.DEFAULT_VERTICAL_LINES
+        try:
+            return grid_settings.vertical_lines(settings)
+        except Exception:
+            return grid_settings.DEFAULT_VERTICAL_LINES
+
+    def _vline_side(self) -> ft.BorderSide | None:
+        return ft.BorderSide(1, Colors.BORDER) if self._vertical_lines else None
+
+    def _vline_border(self) -> ft.Border | None:
+        side = self._vline_side()
+        return ft.border.only(right=side) if side is not None else None
+
+    def set_vertical_lines(self, enabled: bool) -> None:
+        self._vertical_lines = bool(enabled)
+        self._refresh_header()
+        self._render_body()
+        self._refresh_footer()
+
     def _trailing_width(self) -> int:
         return (48 if self._on_row_activate is not None else 0) + (40 if self._on_row_menu is not None else 0)
 
@@ -677,14 +707,20 @@ class DataGrid(ft.Column):
             tooltip=(col.tooltip or (f"ترتيب حسب {col.label}" if sortable else None)),
             ink=bool(sortable),
             on_click=(lambda _, c=col: self._header_click(c)) if sortable else None,
-            border=ft.border.only(bottom=ft.BorderSide(2, accent)) if accent else None,
+            border=(
+                ft.border.only(
+                    bottom=ft.BorderSide(2, accent) if accent else None,
+                    right=self._vline_side(),
+                )
+                if (accent or self._vertical_lines) else None
+            ),
             **self._cell_kwargs(col),
         )
 
     def _header_cells(self) -> list[ft.Control]:
         cells: list[ft.Control] = []
         if self._on_row_expand is not None:
-            cells.append(ft.Container(width=32, height=self._header_height))
+            cells.append(ft.Container(width=32, height=self._header_height, border=self._vline_border()))
         if self._selectable:
             self._select_all_button = ft.IconButton(
                 icon=ft.Icons.CHECK_BOX_OUTLINE_BLANK,
@@ -699,13 +735,14 @@ class DataGrid(ft.Column):
                     width=40,
                     height=self._header_height,
                     alignment=ft.alignment.center,
+                    border=self._vline_border(),
                 )
             )
         for col in self._columns:
             cells.append(self._header_cell(col))
         trail = self._trailing_width()
         if trail:
-            cells.append(ft.Container(width=trail, height=self._header_height))
+            cells.append(ft.Container(width=trail, height=self._header_height, border=self._vline_border()))
         return cells
 
     def _build_header(self) -> ft.Container:
@@ -1071,6 +1108,7 @@ class DataGrid(ft.Column):
             alignment=self._col_align(col),
             padding=ft.padding.symmetric(horizontal=12),
             border_radius=Radius.SM,
+            border=self._vline_border(),
             on_click=lambda _, rr=r, cc=c: self._on_cell_click(rr, cc),
             **self._cell_kwargs(col),
         )
@@ -1087,7 +1125,7 @@ class DataGrid(ft.Column):
             on_click=lambda _, rr=r: self._toggle_check(rr),
         )
         self._check_buttons.append(button)
-        return ft.Container(button, width=40, height=self._row_height, alignment=ft.alignment.center)
+        return ft.Container(button, width=40, height=self._row_height, alignment=ft.alignment.center, border=self._vline_border())
 
     def _menu_items(self, row: dict) -> list[ft.Control]:
         items: list[ft.Control] = []
@@ -1124,6 +1162,7 @@ class DataGrid(ft.Column):
                     width=32,
                     height=self._row_height,
                     alignment=ft.alignment.center,
+                    border=self._vline_border(),
                 )
             )
         if self._selectable:
@@ -1142,6 +1181,7 @@ class DataGrid(ft.Column):
                     width=48,
                     height=self._row_height,
                     alignment=ft.alignment.center,
+                    border=self._vline_border(),
                 )
             )
         if self._on_row_menu is not None:
@@ -1157,6 +1197,7 @@ class DataGrid(ft.Column):
                     width=40,
                     height=self._row_height,
                     alignment=ft.alignment.center,
+                    border=self._vline_border(),
                 )
             )
         box = ft.Container(
@@ -1213,9 +1254,9 @@ class DataGrid(ft.Column):
             return None
         cells: list[ft.Control] = []
         if self._on_row_expand is not None:
-            cells.append(ft.Container(width=32, height=self._header_height))
+            cells.append(ft.Container(width=32, height=self._header_height, border=self._vline_border()))
         if self._selectable:
-            cells.append(ft.Container(width=40, height=self._header_height))
+            cells.append(ft.Container(width=40, height=self._header_height, border=self._vline_border()))
         for col in self._columns:
             text = str(self._footer_values.get(col.key, "") or "")
             cells.append(
@@ -1224,12 +1265,13 @@ class DataGrid(ft.Column):
                     height=self._header_height,
                     alignment=self._col_align(col),
                     padding=ft.padding.symmetric(horizontal=12),
+                    border=self._vline_border(),
                     **self._cell_kwargs(col),
                 )
             )
         trail = self._trailing_width()
         if trail:
-            cells.append(ft.Container(width=trail, height=self._header_height))
+            cells.append(ft.Container(width=trail, height=self._header_height, border=self._vline_border()))
         return ft.Container(
             ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=Colors.BACKGROUND_ALT,
@@ -1641,7 +1683,11 @@ class DataGrid(ft.Column):
         active = (row, col) == self.nav.cell
         selected = (row, col) in self._selection_cells()
         box.bgcolor = Colors.PRIMARY_BG if selected else None
-        box.border = ft.border.all(2, Colors.PRIMARY) if active else ft.border.all(1, Colors.PRIMARY_BORDER) if selected else None
+        box.border = (
+            ft.border.all(2, Colors.PRIMARY) if active
+            else ft.border.all(1, Colors.PRIMARY_BORDER) if selected
+            else self._vline_border()
+        )
 
     # ------------------------------------------------------------------ edit
     def _begin_edit(self, prefill: str | None = None) -> None:
