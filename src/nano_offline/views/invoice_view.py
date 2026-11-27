@@ -35,7 +35,7 @@ from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, danger_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
-from nano_offline.components.new_item_sheet import open_new_item_sheet
+from nano_offline.components.new_item_sheet import build_new_item_panel, open_new_item_sheet
 from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, build_print_profile_panel, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -160,12 +160,72 @@ class InvoiceCenter:
         toast(self.page, text, kind=kind, sound_kind=sound_kind)
 
     def _offer_new_item(self, value: str, on_saved, *, as_name: bool = False) -> bool:
-        """A scanned barcode / typed name matched nothing: offer to create it in
-        the table sheet over the current invoice sheet (no navigation away)."""
-        dialog = ft.AlertDialog(
-            modal=True, actions_alignment=ft.MainAxisAlignment.CENTER,
-            title=ft.Text("لا توجد مادة مطابقة"),
-        )
+        """A scanned barcode / typed name matched nothing. Inside an invoice
+        sheet this is shown in that sheet's own Stack overlay (a dialog/route
+        over a BottomSheet dismisses the sheet); the create step embeds the
+        add-item TABLE panel in the same overlay so the invoice sheet stays."""
+        overlay = getattr(self, "_sheet_overlay_ctl", None)
+
+        if overlay is not None:
+            def _hide(_=None):
+                overlay.visible = False
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+            def _confirm(_=None):
+                def _saved(item_id):
+                    try:
+                        on_saved(int(item_id))
+                    except Exception:
+                        pass
+                overlay.content = build_new_item_panel(
+                    self.page, self.ctx,
+                    barcode=("" if as_name else value), name=(value if as_name else ""),
+                    notify=self.notify, on_saved=_saved, on_close=_hide,
+                )
+                overlay.visible = True
+                try:
+                    overlay.update()
+                except Exception:
+                    pass
+
+            overlay.content = ft.Container(
+                ft.Column(
+                    [
+                        ft.Row([
+                            ft.Icon(ft.Icons.HELP_OUTLINE_ROUNDED, size=22, color=Colors.WARNING_DARKER),
+                            ft.Text("لا توجد مادة مطابقة", size=15, weight=ft.FontWeight.BOLD),
+                        ], spacing=8),
+                        ft.Text(
+                            (f"الاسم المُدخل: {value}" if as_name else f"الباركود الممسوح: {value}")
+                            + "\nهل تريد إنشاء مادة جديدة؟",
+                            size=12, color=Colors.TEXT_SECONDARY,
+                        ),
+                        ft.Row(
+                            [
+                                ft.TextButton("إلغاء", on_click=_hide),
+                                ft.FilledButton("إنشاء مادة جديدة", on_click=_confirm),
+                            ],
+                            alignment=ft.MainAxisAlignment.END,
+                        ),
+                    ],
+                    spacing=12, tight=True,
+                ),
+                width=420, padding=18, bgcolor=Colors.WHITE,
+                border_radius=18, shadow=ft.BoxShadow(blur_radius=24, color=ft.Colors.with_opacity(0.18, ft.Colors.BLACK)),
+            )
+            overlay.visible = True
+            try:
+                overlay.update()
+            except Exception:
+                pass
+            return True
+
+        # Not inside a sheet (no Stack overlay): the usual modal dialog is fine.
+        dialog = ft.AlertDialog(modal=True, actions_alignment=ft.MainAxisAlignment.CENTER,
+                                title=ft.Text("لا توجد مادة مطابقة"))
 
         def create(_=None):
             self.page.close(dialog)
@@ -2495,6 +2555,7 @@ class InvoiceCenter:
             # The grid took over the page's keyboard handler when built;
             # hand it back so the shell's shortcuts (and the list grid's
             # arrow/Enter navigation) keep working.
+            self._sheet_overlay_ctl = None
             persist_draft()
             self.page.on_keyboard_event = previous_key_handler
             self.page.close(sheet)
@@ -2567,6 +2628,7 @@ class InvoiceCenter:
             on_click=lambda _=None: None,
         )
         wizard_print_overlay_ref.append(wizard_print_overlay)
+        self._sheet_overlay_ctl = wizard_print_overlay
 
         def show_wizard_print_window(invoice_id: int) -> None:
             overlay = wizard_print_overlay_ref[0]
@@ -3827,10 +3889,23 @@ class InvoiceCenter:
             except Exception:
                 self.show_center()
 
+        def _overlay():
+            return getattr(self, "_sheet_overlay_ctl", None)
+
+        def _hide_overlay() -> None:
+            ov = _overlay()
+            if ov is not None:
+                ov.visible = False
+                try:
+                    ov.update()
+                except Exception:
+                    pass
+
         def force_close(_=None) -> None:
             # The grid took over the page's keyboard handler when built;
             # hand it back so the shell's shortcuts (and the list grid's
             # arrow/Enter navigation) keep working.
+            self._sheet_overlay_ctl = None
             self.page.on_keyboard_event = previous_key_handler
             self.page.close(sheet)
             _dismiss_refresh()
@@ -3840,28 +3915,61 @@ class InvoiceCenter:
 
         def close(_=None) -> None:
             # A close with open lines warns first -- whether it comes from the
-            # header X, ESC, or closing the last tab. Background/dismiss paths
-            # call force_close() instead.
+            # header X, ESC, or closing the last tab. The warning is rendered
+            # INSIDE the sheet's overlay (a dialog over a BottomSheet would
+            # dismiss the sheet).
             if not _has_unsaved():
                 force_close()
                 return
-            dialog = ft.AlertDialog(
-                modal=True,
-                title=ft.Text("إغلاق جدول الفاتورة؟"),
-                content=ft.Text(
-                    "توجد فواتير مفتوحة في التبويبات. تُحفظ المسودات تلقائيًا ويمكنك متابعتها لاحقًا من نفس الشيت."
+            ov = _overlay()
+            if ov is None:
+                force_close()
+                return
+
+            def _quit(_=None):
+                _hide_overlay()
+                force_close()
+
+            ov.content = ft.Container(
+                ft.Column(
+                    [
+                        ft.Row([
+                            ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=22, color=Colors.WARNING_DARKER),
+                            ft.Text("إغلاق جدول الفاتورة؟", size=15, weight=ft.FontWeight.BOLD),
+                        ], spacing=8),
+                        ft.Text(
+                            "توجد فواتير مفتوحة في التبويبات. تُحفظ المسودات تلقائيًا ويمكنك متابعة طباعتها لاحقًا.",
+                            size=12, color=Colors.TEXT_SECONDARY,
+                        ),
+                        ft.Row(
+                            [
+                                ft.TextButton("متابعة التحرير", on_click=lambda _=None: _hide_overlay()),
+                                ft.FilledButton("إغلاق", on_click=_quit),
+                            ],
+                            alignment=ft.MainAxisAlignment.END,
+                        ),
+                    ],
+                    spacing=12, tight=True,
                 ),
-                actions=[
-                    ft.TextButton("متابعة التحرير", on_click=lambda _=None: self.page.close(dialog)),
-                    ft.FilledButton("إغلاق", on_click=lambda _=None: (self.page.close(dialog), force_close())),
-                ],
-                actions_alignment=ft.MainAxisAlignment.CENTER,
+                width=420, padding=18, bgcolor=Colors.WHITE,
+                border_radius=18, shadow=ft.BoxShadow(blur_radius=24, color=ft.Colors.with_opacity(0.18, ft.Colors.BLACK)),
             )
-            self.page.open(dialog)
+            ov.visible = True
+            try:
+                ov.update()
+            except Exception:
+                pass
+
+        def _escape_close() -> None:
+            ov = _overlay()
+            if ov is not None and ov.visible:
+                _hide_overlay()
+                return
+            close()
 
         sheet.on_dismiss = lambda e: (setattr(self.page, "on_keyboard_event", previous_key_handler), _dismiss_refresh())
 
-        sheet._nano_escape_close = close
+        sheet._nano_escape_close = _escape_close
 
         # ----------------------------------------------------------- initial
         party_options()
@@ -4056,6 +4164,9 @@ class InvoiceCenter:
             on_click=lambda _=None: None,
         )
         print_overlay_ref = [print_overlay]
+        # Published so _offer_new_item / close render their panels inside this
+        # sheet instead of opening a dialog (which would dismiss the sheet).
+        self._sheet_overlay_ctl = print_overlay
 
         def show_print_window(invoice_id: int) -> None:
             overlay = print_overlay_ref[0]
@@ -5260,13 +5371,20 @@ class InvoiceCenter:
             sheet.on_dismiss = lambda e: setattr(self.page, "on_keyboard_event", previous_key_handler)
 
             def close(_=None) -> None:
+                self._sheet_overlay_ctl = None
                 self.page.close(sheet)
                 # The grid took over the page's keyboard handler when built;
                 # hand it back so the app's shortcuts keep working.
                 self.page.on_keyboard_event = previous_key_handler
 
             sheet_h = sheets.sheet_height(self.page, sheets.TABLE_HEIGHT_RATIO, min_height=480)
-            sheet.content = sheets.sheet_frame(
+            _bulk_overlay = ft.Container(
+                visible=False, width=bulk_lines_w, height=sheet_h,
+                bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+                alignment=ft.alignment.center, on_click=lambda _=None: None,
+            )
+            self._sheet_overlay_ctl = _bulk_overlay
+            _bulk_base = sheets.sheet_frame(
                 ft.Column(
                     [
                         sheets.sheet_handle(),
@@ -5305,6 +5423,7 @@ class InvoiceCenter:
                 width=bulk_lines_w,
                 height=sheet_h,
             )
+            sheet.content = ft.Stack([_bulk_base, _bulk_overlay], width=bulk_lines_w, height=sheet_h)
             self.page.open(sheet)
 
         def toggle_editor_column(key: str) -> None:

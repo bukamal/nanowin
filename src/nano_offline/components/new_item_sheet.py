@@ -1,23 +1,26 @@
-"""Compact "add item" TABLE sheet, openable from anywhere.
+"""Compact "add item" TABLE panel, usable standalone or inside a sheet.
 
-POS and the invoice sheets used to send the user to the Materials screen (and
-its step-by-step wizard) when a scanned barcode matched nothing. This sheet
-opens over whatever screen is showing instead, pre-fills the scanned barcode,
-and reports the new item back through ``on_saved`` so the caller can drop it
-straight into the cart/invoice line.
+Two entry points:
+* :func:`build_new_item_panel` returns an ``ft.Control`` card (a small editable
+  table). Invoice sheets embed this in their own in-sheet *Stack* overlay, so
+  opening it over a BottomSheet never dismisses that sheet (a dialog/route over
+  a bottom sheet does).
+* :func:`open_new_item_sheet` wraps the same panel in a standalone BottomSheet
+  for callers that are not already inside one (e.g. POS).
+
+Both report the new item id through ``on_saved``.
 """
 
 from __future__ import annotations
 
 import flet as ft
 
-from nano_offline.core.toast import toast
 from nano_offline.core.theme import Colors, Shadow
 from nano_offline.components import DataGrid, GridColumn, sheets
 from nano_offline.components.buttons import primary_button
 
 
-def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=None, on_saved=None) -> None:
+def _notifier(notify):
     def _notify(text, kind=None, sound_kind=None):
         if notify is not None:
             try:
@@ -29,12 +32,21 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=
                     pass
             except Exception:
                 pass
-            return
-        try:
-            toast(page, text, kind=kind)
-        except Exception:
-            pass
+    return _notify
 
+
+def _num(value, default=0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_new_item_panel(page, ctx, *, barcode: str = "", name: str = "", notify=None,
+                         on_saved=None, on_close=None) -> ft.Control:
+    """Build the add-item table card (no wrapper). Callers own dismissal via
+    ``on_close`` and receive the created item id via ``on_saved``."""
+    _notify = _notifier(notify)
     categories = ctx.definitions.list_categories()
     units = ctx.definitions.list_units()
     default_unit = str(units[0]["id"]) if units else None
@@ -43,7 +55,6 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=
     type_choices = [("مخزون", "مخزون"), ("خدمة", "خدمة")]
 
     prev_handler = getattr(page, "on_keyboard_event", None)
-    sheet, sheet_w = sheets.new_desktop_sheet(page)
 
     def _picker_options(col, _row):
         if col.key == "category_id":
@@ -76,13 +87,7 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=
         empty_text="أدخل اسم المادة",
     )
 
-    def _num(value, default=0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    def _close(_=None) -> None:
+    def _finish() -> None:
         try:
             grid.detach()
         except Exception:
@@ -91,17 +96,21 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=
             page.on_keyboard_event = prev_handler
         except Exception:
             pass
-        page.close(sheet)
+        if on_close is not None:
+            try:
+                on_close()
+            except Exception:
+                pass
 
     def save(_=None) -> None:
         row = grid.row_at(0) or {}
-        name = str(row.get("name") or "").strip()
-        if not name:
+        item_name = str(row.get("name") or "").strip()
+        if not item_name:
             _notify("اسم المادة مطلوب", kind="error", sound_kind="barcode_error")
             return
         try:
             item_id = ctx.items.create(
-                name=name,
+                name=item_name,
                 barcode=(str(row.get("barcode") or "").strip() or None),
                 category_id=int(row["category_id"]) if row.get("category_id") else None,
                 base_unit_id=int(row["base_unit_id"]) if row.get("base_unit_id") else None,
@@ -113,61 +122,74 @@ def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=
         except Exception as exc:
             _notify(str(exc), kind="error")
             return
-        _close()
         if on_saved is not None:
             try:
                 on_saved(int(item_id))
             except Exception:
                 pass
+        _finish()
         _notify("تمت إضافة المادة", kind="success")
 
-    def _escape_close() -> None:
-        row = grid.row_at(0) or {}
-        if not str(row.get("name") or "").strip():
-            _close()
-            return
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("حفظ المادة الجديدة؟"),
-            content=ft.Text("أدخلت بيانات مادة ولم تحفظها بعد."),
-            actions=[
-                ft.TextButton("متابعة التحرير", on_click=lambda _: page.close(dialog)),
-                ft.TextButton("خروج بدون حفظ", on_click=lambda _: (page.close(dialog), _close())),
-                ft.FilledButton("حفظ", on_click=lambda _: (page.close(dialog), save())),
-            ],
-            actions_alignment=ft.MainAxisAlignment.CENTER,
-        )
-        page.open(dialog)
-
-    sheet._nano_escape_close = _escape_close
-
-    header = sheets.sheet_header(
-        title="إضافة مادة جديدة",
-        subtitle=(
-            "بالباركود الممسوح" if barcode else
-            "بالاسم المُدخل" if name else
-            "املأ بيانات المادة ثم احفظ"
-        ),
-        icon=ft.Icons.ADD_BOX_OUTLINED,
-        on_close=_close,
+    header = ft.Row(
+        [
+            ft.Icon(ft.Icons.ADD_BOX_OUTLINED, size=20, color=Colors.PRIMARY),
+            ft.Text("إضافة مادة جديدة", size=16, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY, expand=True),
+            ft.IconButton(icon=ft.Icons.CLOSE, tooltip="إغلاق", on_click=lambda _=None: _finish()),
+        ],
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
-    sheet.content = ft.Container(
+    card = ft.Container(
         ft.Column(
             [
-                ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
                 header,
-                ft.Container(grid, height=240),
-                ft.Row([primary_button("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save)]),
+                ft.Text("أدخل البيانات ثم احفظ — تُضاف فورًا للفاتورة/السلة.", size=11, color=Colors.TEXT_SECONDARY),
+                ft.Container(grid, expand=True),
+                ft.Row(
+                    [
+                        ft.TextButton("إلغاء", on_click=lambda _=None: _finish()),
+                        primary_button("حفظ", icon=ft.Icons.SAVE_OUTLINED, on_click=save),
+                    ],
+                    alignment=ft.MainAxisAlignment.END,
+                ),
             ],
-            spacing=12, tight=True,
+            spacing=12, expand=True,
         ),
-        padding=ft.padding.only(left=18, right=18, top=12, bottom=18),
+        width=max(360, min(980, int(getattr(page, "width", 1000) or 1000) - 60)),
+        height=max(320, min(640, int((getattr(page, "height", 760) or 760) * 0.82))),
+        padding=16, bgcolor=Colors.WHITE,
+        border_radius=18, shadow=Shadow.LG, rtl=True,
+    )
+    card.data = {"save": save, "cancel": _finish}
+    return card
+
+
+def open_new_item_sheet(page, ctx, *, barcode: str = "", name: str = "", notify=None, on_saved=None) -> None:
+    """Standalone BottomSheet wrapper around :func:`build_new_item_panel`."""
+    sheet, sheet_w = sheets.new_desktop_sheet(page)
+
+    def _close_sheet() -> None:
+        try:
+            page.close(sheet)
+        except Exception:
+            pass
+
+    panel = build_new_item_panel(
+        page, ctx, barcode=barcode, name=name,
+        notify=notify, on_saved=on_saved, on_close=_close_sheet,
+    )
+    sheet._nano_escape_close = lambda: panel.data["cancel"]()
+    sheet.content = ft.Container(
+        ft.Column(
+            [ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER), panel],
+            spacing=8, tight=True,
+        ),
         width=sheet_w, bgcolor=Colors.WHITE,
         border_radius=ft.border_radius.only(top_left=28, top_right=28),
+        padding=ft.padding.only(top=10, bottom=12),
         shadow=Shadow.LG,
     )
     sheet.content.width = sheet_w
     page.open(sheet)
 
 
-__all__ = ["open_new_item_sheet"]
+__all__ = ["open_new_item_sheet", "build_new_item_panel"]
