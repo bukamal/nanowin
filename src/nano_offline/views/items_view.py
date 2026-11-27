@@ -274,6 +274,21 @@ class ItemsCenter:
         except Exception:
             return False
 
+    def build_bulk_add_control(self, *, edit_item: dict | None = None, initial_row: dict | None = None,
+                               on_saved=None, on_close=None):
+        """Build the MaterialS bulk-add TABLE body (full toolkit) as a plain
+        Control so a host can embed it in its own Stack overlay (an invoice
+        sheet) instead of opening a second BottomSheet."""
+        if not self._ensure_bulk_sheet():
+            return None
+        try:
+            return self._open_bulk_sheet(
+                edit_item=edit_item, initial_row=initial_row, on_saved=on_saved,
+                embedded=True, on_close=on_close,
+            )
+        except Exception:
+            return None
+
     def _ensure_bulk_sheet(self) -> bool:
         """Build the Materials closures off-screen if they don't exist yet.
 
@@ -2166,7 +2181,7 @@ class ItemsCenter:
             page.open(sheet)
             page.run_task(_load, True)
 
-        def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None, initial_row: dict | None = None, on_saved=None) -> None:
+        def open_bulk_add_sheet(_=None, *, edit_item: dict | None = None, initial_row: dict | None = None, on_saved=None, embedded: bool = False, on_close=None):
             """Comprehensive multi-item entry: a full table in a wide sheet.
 
             With ``edit_item`` it opens the same table pre-filled with that
@@ -3245,7 +3260,15 @@ class ItemsCenter:
 
             def close(_=None):
                 # The bulk grid took over the page's keyboard handler when it
-                # was built; hand it back to the list grid on the way out.
+                # was built; hand it back on the way out. When embedded (inside
+                # an invoice's own overlay) the host restores its own handler.
+                if embedded:
+                    if on_close is not None:
+                        try:
+                            on_close()
+                        except Exception:
+                            pass
+                    return
                 page.close(sheet)
                 grid.attach()
 
@@ -3363,7 +3386,13 @@ class ItemsCenter:
                 on_click=lambda _=None: None,
             )
             recipe_overlay_ref.append(recipe_overlay)
-            sheet.content = ft.Stack([base, recipe_overlay], width=sheet_w, height=sheet_h)
+            built = ft.Stack([base, recipe_overlay], width=sheet_w, height=sheet_h)
+            if embedded:
+                # Return the full table body so the caller can place it in its
+                # own Stack overlay (e.g. an invoice sheet) instead of opening
+                # a second BottomSheet (which would dismiss the first).
+                return built
+            sheet.content = built
             page.open(sheet)
 
         def show_item_detail(item: dict):

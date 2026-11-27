@@ -452,3 +452,24 @@ def test_items_open_new_item_table_off_screen_keeps_content():
         assert page.opened and getattr(page.opened[-1], "content", None) is not None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_items_build_bulk_add_control_embedded_returns_control_without_sheet():
+    from nano_offline.views.items_view import ItemsCenter
+
+    ctx, tmp = _ctx()
+    try:
+        ctx.definitions.create_unit("قطعة", "ق")
+        page, content = FakePage(), ft.Container(expand=True)
+        center = ItemsCenter(page, ctx, content, native_files=None, on_title_change=lambda *a: None)
+        before = center.content
+        opened_before = len(page.opened)
+        ctrl = center.build_bulk_add_control(
+            initial_row={"barcode": "EMB-1"}, on_saved=lambda ids: None, on_close=lambda: None,
+        )
+        assert ctrl is not None
+        assert center.content is before
+        # Embedded build must NOT open a second BottomSheet.
+        assert len(page.opened) == opened_before
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

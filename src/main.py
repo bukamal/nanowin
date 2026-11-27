@@ -253,10 +253,14 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
     invoice_center = InvoiceCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_create_item=lambda value, on_saved, as_name: _open_new_item_table(value, on_saved, as_name),
+        build_item_table=lambda initial, on_saved, on_close: items_center.build_bulk_add_control(
+            initial_row=initial, on_saved=on_saved, on_close=on_close,
+        ),
     )
     pos_center = POSCenter(
         page, ctx, content, native_files=native_files, on_title_change=set_header,
         on_create_item=lambda code: _open_new_item_table(code, _pos_add_saved, False),
+        on_create_item_name=lambda name: _open_new_item_table(name, _pos_add_saved, True),
         on_fullscreen_enter=lambda: pos_fullscreen_enter(),
         on_fullscreen_exit=lambda: pos_fullscreen_exit(),
         on_toggle_fullscreen=lambda: pos_toggle_fullscreen(),

@@ -129,6 +129,7 @@ class POSCenter:
         on_title_change=None,
         on_saved=None,
         on_create_item=None,
+        on_create_item_name=None,
         on_fullscreen_enter=None,
         on_fullscreen_exit=None,
         on_toggle_fullscreen=None,
@@ -141,6 +142,8 @@ class POSCenter:
         self.on_title_change = on_title_change
         self.on_saved = on_saved
         self.on_create_item = on_create_item
+        # "Add a new item" for an unmatched typed *name* (vs a barcode).
+        self.on_create_item_name = on_create_item_name
         # POS is the one screen that goes edge-to-edge (see show_center()):
         # these hide the app's own top header + sidebar/tab bar chrome for
         # the duration of the sale and restore it on exit -- optional so
@@ -686,6 +689,12 @@ class POSCenter:
                 self.page.update()
             elif len(matched) == 1:
                 self._show_price_check_card(matched[0], None, None, 1.0)
+            elif not matched and self.on_create_item_name is not None:
+                # No material by that name: open the same add-item table window
+                # (prefilled with the typed name); on save it lands in the cart.
+                name = (search_field.value or "").strip()
+                if name:
+                    self.on_create_item_name(name)
 
         search_field.on_submit = search_submit
 

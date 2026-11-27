@@ -103,7 +103,7 @@ INVOICE_GRID_COLUMNS = [
 class InvoiceCenter:
     """Responsive invoice center/editor for Flet 0.28.x."""
 
-    def __init__(self, page: ft.Page, ctx, content: ft.Container, on_saved=None, native_files=None, on_title_change=None, on_create_item=None):
+    def __init__(self, page: ft.Page, ctx, content: ft.Container, on_saved=None, native_files=None, on_title_change=None, on_create_item=None, build_item_table=None):
         # Dedicated list mode: None (combined), "sale", or "purchase". Set by
         # the shell's sales/purchases tabs; internal refreshes keep it.
         self._list_mode: str | None = None
@@ -121,6 +121,9 @@ class InvoiceCenter:
         # Opens the shared Materials bulk-add table sheet when a scanned/typed
         # item doesn't exist (value, on_saved, as_name) -> bool.
         self.on_create_item = on_create_item
+        # Builds the full Materials bulk-add TABLE body for embedding in this
+        # sheet's Stack overlay: (initial_row, on_saved_ids, on_close) -> Control.
+        self.build_item_table = build_item_table
         self.invoice_type = "sale"
         self.editing_id: int | None = None
         self.lines: list[dict] = []
@@ -167,24 +170,47 @@ class InvoiceCenter:
         overlay = getattr(self, "_sheet_overlay_ctl", None)
 
         if overlay is not None:
+            saved_handler = {"fn": getattr(self.page, "on_keyboard_event", None)}
+
             def _hide(_=None):
                 overlay.visible = False
                 try:
                     overlay.update()
                 except Exception:
                     pass
+                try:
+                    self.page.on_keyboard_event = saved_handler["fn"]
+                except Exception:
+                    pass
 
             def _confirm(_=None):
-                def _saved(item_id):
+                def _saved_one(item_id):
                     try:
                         on_saved(int(item_id))
                     except Exception:
                         pass
-                overlay.content = build_new_item_panel(
-                    self.page, self.ctx,
-                    barcode=("" if as_name else value), name=(value if as_name else ""),
-                    notify=self.notify, on_saved=_saved, on_close=_hide,
-                )
+
+                def _saved_ids(ids):
+                    try:
+                        if ids:
+                            _saved_one(int(ids[0]))
+                    except Exception:
+                        pass
+
+                initial = {"name": value} if as_name else {"barcode": value}
+                ctrl = None
+                if self.build_item_table is not None:
+                    try:
+                        ctrl = self.build_item_table(initial, _saved_ids, _hide)
+                    except Exception:
+                        ctrl = None
+                if ctrl is None:
+                    ctrl = build_new_item_panel(
+                        self.page, self.ctx,
+                        barcode=("" if as_name else value), name=(value if as_name else ""),
+                        notify=self.notify, on_saved=_saved_one, on_close=_hide,
+                    )
+                overlay.content = ctrl
                 overlay.visible = True
                 try:
                     overlay.update()
