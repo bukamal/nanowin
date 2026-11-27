@@ -1952,7 +1952,7 @@ class InvoiceCenter:
             on_cell_commit=lambda index, key, value: commit_sheet_line_cell(index, key, value),
             formatter=row_formatter,
             empty_text="اضغط «سطر جديد» أو «مسح باركود»",
-            on_barcode=lambda code: _barcode_from_scan(code),
+            on_picker_free=lambda row, query: _on_picker_free(row, query),
         )
         line_columns_button = line_visibility.button()
 
@@ -2015,6 +2015,34 @@ class InvoiceCenter:
                 self.notify("✔", kind="success", sound_kind="scan")
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+            return True
+
+        def _on_picker_free(row_index: int, query: str) -> bool:
+            if lines_grid.nav.key != "item":
+                return False
+            found = self.ctx.items.find_by_barcode(query)
+            if found is not None:
+                add_or_bump_row(int(found["id"]))
+                if barcode_settings.scan_feedback_mode(settings) == "brief":
+                    self.notify("✔", kind="success", sound_kind="scan")
+                else:
+                    self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+                return True
+
+            def _assign(item_id) -> None:
+                new_row = self.ctx.items.get(int(item_id))
+                if new_row is not None:
+                    item_map[int(item_id)] = new_row
+                    if not any(int(i["id"]) == int(item_id) for i in items):
+                        items.append(new_row)
+                lines_grid.set_cell(int(row_index), "item", int(item_id))
+                item_r = item_map.get(int(item_id))
+                if item_r is not None:
+                    lines_grid.set_cell(int(row_index), "price", default_display_price(item_r), notify=False)
+                _fill_derived(int(row_index))
+                refresh_summary()
+
+            self._offer_new_item(query, _assign, as_name=True)
             return True
 
         # ------------------------------------------------- payment / summary
@@ -3024,7 +3052,6 @@ class InvoiceCenter:
             on_selection_change=lambda rows: render_lines_selection(rows),
             empty_text="أدخل مادة للبدء أو امسح باركود",
             center_cells=True,
-            on_barcode=lambda code: _barcode_from_scan(code),
             on_picker_free=lambda row, query: _on_picker_free(row, query),
         )
 
@@ -3061,6 +3088,18 @@ class InvoiceCenter:
                 lines_grid.set_cell(int(row_index), "item", int(item_id))
                 fill_line_defaults(int(row_index), int(item_id))
                 refresh_summary()
+
+            # A keyboard-wedge scanner types the code into the item picker's
+            # search box; Enter (with no name match) lands here. Resolve it as
+            # a barcode first, then fall back to offering a new item.
+            found = self.ctx.items.find_by_barcode(query)
+            if found is not None:
+                _assign(int(found["id"]))
+                if barcode_settings.scan_feedback_mode(settings) == "brief":
+                    self.notify("✔", kind="success", sound_kind="scan")
+                else:
+                    self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+                return True
 
             self._offer_new_item(query, _assign, as_name=True)
             return True
@@ -4597,7 +4636,7 @@ class InvoiceCenter:
             selectable=True,
             on_selection_change=lambda rows: render_editor_lines_selection(rows),
             empty_text="اضغط «إضافة بند» أو «مسح باركود»",
-            on_barcode=lambda code: _barcode_from_scan(code),
+            on_picker_free=lambda row, query: _on_editor_picker_free(row, query),
         )
         total_text = ft.Text("0.00", size=20, weight=ft.FontWeight.BOLD)
         remaining_text = ft.Text("0.00", size=18, weight=ft.FontWeight.BOLD)
@@ -5137,6 +5176,23 @@ class InvoiceCenter:
                 self.notify("✔", kind="success", sound_kind="scan")
             else:
                 self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+            return True
+
+        def _on_editor_picker_free(row_index: int, query: str) -> bool:
+            if lines_grid.nav.key != "item":
+                return False
+            found = self.ctx.items.find_by_barcode(query)
+            if found is not None:
+                add_or_bump_item(int(found["id"]))
+                if barcode_settings.scan_feedback_mode(self.ctx.settings) == "brief":
+                    self.notify("✔", kind="success", sound_kind="scan")
+                else:
+                    self.notify(f"✔ أُضيف: {found['name']}", kind="success", sound_kind="scan")
+                return True
+            if getattr(self, "_sheet_overlay_ctl", None) is not None:
+                self._offer_new_item(query, lambda item_id: add_or_bump_item(int(item_id)), as_name=True)
+            else:
+                self.notify("لا توجد مادة بهذا الاسم — أضِفها من واجهة المواد", kind="warning")
             return True
 
         self.lines = []
