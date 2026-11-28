@@ -3637,7 +3637,7 @@ class ItemsCenter:
             meta = [
                 detail_meta(ft.Icons.CATEGORY_OUTLINED, "التصنيف", data.get("category_name") or "بلا تصنيف"),
                 detail_meta(ft.Icons.STRAIGHTEN, "الوحدات", units_text),
-                detail_meta(ft.Icons.TRENDING_UP, "مباع", qty_fmt(stats.get("sold_qty"))),
+                detail_meta(ft.Icons.TRENDING_UP, "كمية مباعة", qty_fmt(stats.get("sold_qty"))),
                 detail_meta(ft.Icons.TRENDING_DOWN, "مشترى", qty_fmt(stats.get("purchased_qty"))),
                 detail_meta(ft.Icons.RECEIPT_LONG, "فواتير بيع", str(int(stats.get("sale_count") or 0))),
                 detail_meta(ft.Icons.SHOPPING_BAG_OUTLINED, "فواتير شراء", str(int(stats.get("purchase_count") or 0))),
@@ -3672,7 +3672,7 @@ class ItemsCenter:
                 )
             sections.append(
                 detail_section(
-                    "حركات المخزون",
+                    "آخر حركات المخزون",
                     detail_table(
                         [
                             GridColumn("date", "التاريخ", width=115),

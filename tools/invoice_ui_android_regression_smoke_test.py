@@ -14,7 +14,9 @@ for token in [
     "def set_filter",
     "def _invoice_more_dialog",
     "فواتير مفتوحة",
-    "ft.Row(actions, spacing=8))",
+    # Invoice detail now renders through the shared detail-sheet template with
+    # a pinned footer action row instead of an inline ft.Row(actions...).
+    'actions.append(ft.FilledButton("إغلاق", on_click=close, expand=True))',
 ]:
     assert token in invoice, token
 
