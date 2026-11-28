@@ -229,6 +229,22 @@ jobs:
             throw "Embedded Python executable failed its version check"
           }
 
+      - name: Bake update public key
+        # Optional: when the maintainer sets the UPDATE_PUBLIC_KEY secret, bake
+        # it into the committed module so the packaged app can verify Ed25519
+        # release signatures. Empty secret = SHA-256-only verification.
+        shell: pwsh
+        env:
+          UPDATE_PUBLIC_KEY: ${{ secrets.UPDATE_PUBLIC_KEY }}
+        run: |
+          if ($env:UPDATE_PUBLIC_KEY) {
+            $content = 'UPDATE_PUBLIC_KEY = "' + $env:UPDATE_PUBLIC_KEY + '"' + "`n`n__all__ = [`"UPDATE_PUBLIC_KEY`"]`n"
+            Set-Content -Path src/nano_offline/core/update_public_key.py -Value $content -Encoding utf8
+            Write-Host "baked update public key"
+          } else {
+            Write-Host "no UPDATE_PUBLIC_KEY secret; shipping SHA-256-only update verification"
+          }
+
       - name: Build Windows EXE
         # NOTE: the pipe to Tee-Object masks flet's exit code (the step would
         # stay green on a failed build and only blow up later at Inno Setup
@@ -344,3 +360,25 @@ jobs:
             build/windows/installer/*.exe
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub Release (tags only)
+        # Only on a version tag (vX.Y.Z) so ordinary pushes stay artifacts-only.
+        # Publishes the installer + a signed update.json manifest that the
+        # in-app updater (Admin > التحديثات) reads.
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          $ver = "${{ steps.appver.outputs.build_version }}"
+          $tag = "${{ github.ref_name }}"
+          $installer = Get-ChildItem build/windows/installer/*.exe | Select-Object -First 1
+          if (-not $installer) { throw "installer not found for release" }
+          $sha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item $installer.FullName).Length
+          $name = $installer.Name
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/$name"
+          $page = "https://github.com/${{ github.repository }}/releases/tag/$tag"
+          python tools/make_update_manifest.py --version $ver --url $url --sha256 $sha --size $size --filename $name --notes "تحديث Nano $ver" --page-url $page --out update.json --signing-key "$env:UPDATE_SIGNING_KEY"
+          gh release create $tag "$($installer.FullName)" update.json --title "Nano $ver" --notes "الإصدار $ver" --verify-tag

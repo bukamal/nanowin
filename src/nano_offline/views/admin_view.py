@@ -190,6 +190,184 @@ class AdminCenter:
         ]
         return ft.ResponsiveRow(columns, spacing=12, run_spacing=10, rtl=True)
 
+    def _updates_panel(self) -> list[ft.Control]:
+        """Admin > التحديثات: check GitHub releases, download + verify + install."""
+        from nano_offline.core import paths, updater
+        from nano_offline.version import APP_VERSION, BUILD_NUMBER
+
+        state: dict = {"info": None, "cancel": False}
+
+        def _human(value: float) -> str:
+            value = float(value or 0)
+            for unit in ("B", "KB", "MB", "GB"):
+                if value < 1024 or unit == "GB":
+                    return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+                value /= 1024
+            return f"{value:.1f} GB"
+
+        status = ft.Text(
+            f"الإصدار المثبّت: {APP_VERSION} (بناء {BUILD_NUMBER})",
+            size=13, weight=ft.FontWeight.W_600, color=Colors.TEXT_PRIMARY,
+        )
+        detail = ft.Text(
+            "اضغط «فحص الآن» للبحث عن تحديث جديد على GitHub.",
+            size=11, color=Colors.TEXT_SECONDARY,
+        )
+        notes = ft.Text("", size=11, color=Colors.TEXT_MUTED, selectable=True)
+        progress = ft.ProgressBar(value=0, visible=False, color=Colors.PRIMARY, bgcolor=Colors.BACKGROUND_ALT)
+        progress_text = ft.Text("", size=10, color=Colors.TEXT_FAINT)
+        check_btn = primary_button("فحص الآن", icon=ft.Icons.SEARCH, width=None, size="md")
+        install_btn = primary_button("تنزيل وتثبيت", icon=ft.Icons.SYSTEM_UPDATE_ALT, width=None, size="md")
+        install_btn.visible = False
+        cancel_btn = ft.TextButton("إلغاء", visible=False)
+
+        async def _check(_=None):
+            state["info"] = None
+            install_btn.visible = False
+            notes.value = ""
+            progress.visible = False
+            progress_text.value = ""
+            status.value = "جارٍ الفحص..."
+            detail.value = "نتصل بـ GitHub للبحث عن أحدث إصدار..."
+            self.page.update()
+            try:
+                info = await asyncio.to_thread(updater.check_for_update, APP_VERSION)
+            except Exception as exc:  # noqa: BLE001
+                status.value = "تعذّر الفحص"
+                detail.value = str(exc)
+                self.page.update()
+                self._notify(str(exc), kind="error")
+                return
+            if info is None:
+                status.value = f"أنت على أحدث إصدار ({APP_VERSION})"
+                detail.value = "لا توجد تحديثات جديدة متاحة."
+                self.page.update()
+                return
+            state["info"] = info
+            status.value = f"يتوفّر تحديث جديد: {info.version}"
+            size_text = f" · الحجم: {_human(info.size)}" if info.size else ""
+            date_text = f" · نُشر: {info.published_at[:10]}" if info.published_at else ""
+            detail.value = f"الإصدار الحالي {APP_VERSION} → {info.version}" + size_text + date_text
+            notes.value = info.notes or ""
+            install_btn.visible = True
+            self.page.update()
+
+        async def _install(_=None):
+            info = state["info"]
+            if info is None:
+                return
+            state["cancel"] = False
+            check_btn.disabled = True
+            install_btn.disabled = True
+            cancel_btn.visible = True
+            progress.visible = True
+            progress.value = 0
+            progress_text.value = "بدء التنزيل..."
+            self.page.update()
+            loop = asyncio.get_running_loop()
+            last = {"t": 0.0}
+
+            def _on_progress(done: float, total: float) -> None:
+                now = loop.time()
+                if total and done < total and now - last["t"] < 0.15:
+                    return
+                last["t"] = now
+                ratio = (done / total) if total else None
+                label = f"{_human(done)} / {_human(total)}" if total else _human(done)
+
+                def _apply() -> None:
+                    progress.value = ratio
+                    progress_text.value = label
+                    try:
+                        self.page.update()
+                    except Exception:
+                        pass
+
+                loop.call_soon_threadsafe(_apply)
+
+            dest = paths.app_data_dir() / "updates" / f"v{info.version}"
+            try:
+                path = await asyncio.to_thread(
+                    updater.download_update, info, dest,
+                    on_progress=_on_progress,
+                    cancel=lambda: state["cancel"],
+                )
+                progress_text.value = "جارٍ التحقق من البصمة والتوقيع..."
+                self.page.update()
+                ok = await asyncio.to_thread(updater.verify_update, path, info)
+                if not ok:
+                    progress.visible = False
+                    progress_text.value = ""
+                    detail.value = "فشل التحقق من سلامة الحزمة أو توقيعها — أُلغي التثبيت."
+                    self._notify("فشل التحقق من التحديث", kind="error")
+                    self.page.update()
+                    return
+                progress_text.value = "التحديث موثّق. جارٍ تشغيل المثبّت الصامت..."
+                self.page.update()
+                await asyncio.to_thread(updater.install_update, path)
+                detail.value = (
+                    "بدأ المثبّت الصامت. سيُغلق التطبيق تلقائيًا ويُعاد فتحه على الإصدار الجديد. "
+                    "قد يطلب Windows صلاحية المسؤول إن كان التثبيت في Program Files."
+                )
+                self.page.update()
+                self._notify("بدأ تثبيت التحديث", kind="success")
+                # The detached installer will close/replace the app; exit so it
+                # can swap files, then its [Run] step relaunches Nano.
+                try:
+                    await asyncio.sleep(1.0)
+                    self.page.window.close()
+                except Exception:
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                progress.visible = False
+                progress_text.value = ""
+                detail.value = str(exc)
+                self._notify(str(exc), kind="error")
+                self.page.update()
+            finally:
+                check_btn.disabled = False
+                install_btn.disabled = False
+                cancel_btn.visible = False
+
+        def _cancel(_=None):
+            state["cancel"] = True
+            progress_text.value = "جارٍ الإلغاء..."
+            self.page.update()
+
+        check_btn.on_click = lambda e: self.page.run_task(_check)
+        install_btn.on_click = lambda e: self.page.run_task(_install)
+        cancel_btn.on_click = _cancel
+
+        return [
+            ft.Text(
+                "يفحص هذا القسم إصدارات المشروع على GitHub، ثم ينزّل حزمة التحديث الرسمية ويتحقق "
+                "من بصمتها (وتوقيعها) قبل تثبيتها بصمت. يُنصح بأخذ نسخة احتياطية قبل التحديث.",
+                size=12, color=Colors.TEXT_SECONDARY,
+            ),
+            status,
+            detail,
+            ft.Row([check_btn, install_btn, cancel_btn], spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            progress,
+            progress_text,
+            notes,
+            ft.Container(
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.VERIFIED_USER_OUTLINED, size=16, color=Colors.SUCCESS_DARK),
+                        ft.Text(
+                            "أمان: لا يُثبَّت أي تحديث إلا بعد مطابقة SHA-256 (وتوقيع Ed25519 عند توفّره) "
+                            "من الـRelease الرسمي فقط.",
+                            size=11, color=Colors.TEXT_MUTED, expand=True,
+                        ),
+                    ],
+                    spacing=6,
+                ),
+                padding=10,
+                bgcolor=Colors.SUCCESS_BG,
+                border_radius=Radius.MD,
+            ),
+        ]
+
     def _section(
         self,
         title: str,
@@ -3999,7 +4177,7 @@ class AdminCenter:
                     ),
                 ],
             ),
-
+            "updates": self._section("تحديثات البرنامج", self._updates_panel()),
         }
 
         TABS = [
@@ -4008,6 +4186,7 @@ class AdminCenter:
             ("backup", "النسخ الاحتياطي", ft.Icons.BACKUP_OUTLINED),
             ("license", "الترخيص", ft.Icons.VERIFIED_USER_OUTLINED),
             ("branding", "الهوية والعملة", ft.Icons.PALETTE_OUTLINED),
+            ("updates", "التحديثات", ft.Icons.SYSTEM_UPDATE_ALT),
             ("crisis", "الطوارئ الاقتصادي", ft.Icons.WARNING_AMBER_ROUNDED),
             ("barcode", "الباركود", ft.Icons.QR_CODE_2_OUTLINED),
             ("invoice", "الفواتير", ft.Icons.RECEIPT_LONG_OUTLINED),

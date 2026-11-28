@@ -42,6 +42,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
 UninstallDisplayName={#AppName}
+; In-app silent updates (/VERYSILENT): close the running app so files can be
+; replaced, and let our own [Run] entry relaunch it afterwards.
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "arabic"; MessagesFile: "compiler:Languages\Arabic.isl"
@@ -58,4 +62,6 @@ Name: "{autodesktop}\{#AppShortName}"; Filename: "{app}\{#ExeName}"; Tasks: desk
 Name: "desktopicon"; Description: "Create a &desktop icon"; Flags: unchecked
 
 [Run]
-Filename: "{app}\{#ExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; No skipifsilent: an in-app silent update must relaunch the app after the
+; files are replaced.
+Filename: "{app}\{#ExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall
