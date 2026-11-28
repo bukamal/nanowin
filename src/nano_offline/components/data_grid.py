@@ -666,6 +666,17 @@ class DataGrid(ft.Column):
         self._render_body()
         self._refresh_footer()
 
+    def _col_role_name(self, col: GridColumn | None) -> str | None:
+        """The semantic role *name* of a column (for footer chips)."""
+        if col is None:
+            return None
+        role = col.color_role if isinstance(col.color_role, str) else None
+        if role and role != "signed":
+            return role
+        if role is None:
+            return {"money": "gold", "number": "primary"}.get(col.kind)
+        return None
+
     def _col_role_color(self, col: GridColumn | None) -> str | None:
         """The semantic colour for a column (money=gold, qty=cyan ...).
 
@@ -1321,14 +1332,29 @@ class DataGrid(ft.Column):
             cells.append(ft.Container(width=32, height=self._header_height, border=self._vline_border()))
         if self._selectable:
             cells.append(ft.Container(width=40, height=self._header_height, border=self._vline_border()))
+        from nano_offline.components.amount_chip import chip_colors
+
+        role_chip = {
+            "success": "success", "danger": "due", "warning": "gold",
+            "gold": "gold", "primary": "primary", "purple": "primary",
+        }
         for col in self._columns:
             text = str(self._footer_values.get(col.key, "") or "")
+            chip = None
+            if self._column_tint and text:
+                role = self._col_role_name(col)
+                if role:
+                    chip = chip_colors(role_chip.get(role, "neutral"))
             cells.append(
                 ft.Container(
-                    ft.Text(text, size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                    ft.Text(
+                        text, size=12, weight=ft.FontWeight.BOLD,
+                        color=chip[1] if chip else Colors.TEXT_PRIMARY,
+                    ),
                     height=self._header_height,
                     alignment=self._col_align(col),
                     padding=ft.padding.symmetric(horizontal=12),
+                    bgcolor=chip[0] if chip else None,
                     border=self._vline_border(),
                     **self._cell_kwargs(col),
                 )

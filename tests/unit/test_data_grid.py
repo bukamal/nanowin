@@ -886,3 +886,16 @@ def test_picker_paint_windows_large_option_lists():
 
     # A 5000-item catalogue must render only a small window of controls.
     assert 0 < len(grid._picker_list.controls) <= 42
+
+
+def test_footer_amount_columns_render_coloured_chips():
+    g = DataGrid(
+        columns=[GridColumn("label", "البند", width=100), GridColumn("amount", "المبلغ", width=100, kind="money")],
+        rows=[{"label": "x", "amount": 5}],
+        page=None,
+        column_tint=True,
+    )
+    g.set_footer({"label": "الإجمالي", "amount": "100"})
+    row = g._footer_slot.content.content
+    assert row.controls[1].bgcolor is not None   # money column -> coloured chip
+    assert row.controls[0].bgcolor is None       # plain label column stays flat

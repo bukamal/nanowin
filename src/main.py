@@ -30,6 +30,9 @@ from nano_offline.views.splash_view import SplashGate
 from nano_offline.views.stocktake_view import StocktakeCenter
 from nano_offline.components.command_bar import CommandBar, RibbonAction, RibbonMenu, RibbonTab  # noqa: F401
 from nano_offline.components import sheets
+from nano_offline.components import GridColumn
+from nano_offline.components.amount_chip import amount_chip
+from nano_offline.components.detail_sheet import detail_table
 from nano_offline.components.exit_backup import install_exit_backup
 from nano_offline.components.new_item_sheet import open_new_item_sheet
 from nano_offline.components.command_palette import CommandPalette
@@ -517,15 +520,6 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
         qi_result = ft.Column([], spacing=8)
         qi_field = ft.TextField(hint_text="باركود أو اسم مادة...", dense=True, expand=True)
 
-        def _qi_metric(label: str, value: str, color=Colors.TEXT_PRIMARY) -> ft.Column:
-            return ft.Column(
-                [
-                    ft.Text(label, size=9, color=Colors.TEXT_SECONDARY),
-                    ft.Text(value, size=12, weight=ft.FontWeight.BOLD, color=color),
-                ],
-                spacing=0, tight=True,
-            )
-
         def _qi_run(_=None):
             query = (qi_field.value or "").strip()
             if not query:
@@ -545,42 +539,25 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                         is_stock = str(item.get("item_type") or "مخزون") == "مخزون"
                         low = is_stock and qty < 5
                         qi_result.controls = [
-                            ft.Row(
+                            detail_table(
                                 [
-                                    ft.Container(
-                                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, size=16, color=Colors.PRIMARY),
-                                        width=30, height=30, alignment=ft.alignment.center,
-                                        bgcolor=Colors.PRIMARY_BG, border_radius=9,
-                                    ),
-                                    ft.Column(
-                                        [
-                                            ft.Text(item.get("name") or "—", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                                            ft.Text(
-                                                f"{item.get('category_name') or 'بلا تصنيف'} · {item.get('item_type') or 'مخزون'}",
-                                                size=10, color=Colors.TEXT_SECONDARY,
-                                            ),
-                                        ],
-                                        spacing=1, expand=True, tight=True,
-                                    ),
-                                    ft.Container(
-                                        ft.Text(qty_text if is_stock else "خدمة", size=10, weight=ft.FontWeight.W_600,
-                                                color=Colors.DANGER_DARK if low else Colors.SUCCESS_DARK),
-                                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                                        bgcolor=Colors.DANGER_BG if low else Colors.SUCCESS_BG,
-                                        border_radius=10,
-                                    ),
+                                    GridColumn("name", "المادة", width=190),
+                                    GridColumn("qty", "الكمية", width=90, align="end", kind="number"),
+                                    GridColumn("sell", "سعر البيع", width=110, align="end", kind="money"),
+                                    GridColumn("buy", "سعر الشراء", width=110, align="end", kind="money"),
+                                    GridColumn("barcode", "الباركود", width=150),
                                 ],
-                                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            ft.Row(
                                 [
-                                    _qi_metric("سعر البيع", _private(item.get("selling_price")), Colors.SUCCESS_DARK),
-                                    _qi_metric("سعر الشراء", _private(item.get("purchase_price")), Colors.TEXT_PRIMARY),
-                                    _qi_metric("الكمية", qty_text if is_stock else "—", Colors.DANGER_DARK if low else Colors.PRIMARY),
+                                    {
+                                        "name": item.get("name") or "—",
+                                        "qty": ("منخفض" if low else qty_text) if is_stock else "خدمة",
+                                        "sell": _private(item.get("selling_price")),
+                                        "buy": _private(item.get("purchase_price")),
+                                        "barcode": str(item.get("barcode") or "—"),
+                                    }
                                 ],
-                                spacing=18, wrap=True,
-                            ),
-                            ft.Text(f"الباركود: {item.get('barcode') or '—'}", size=10, color=Colors.TEXT_FAINT),
+                                height=110,
+                            )
                         ]
                 except Exception as exc:
                     qi_result.controls = [ft.Text(str(exc), size=12, color=Colors.DANGER_DARK)]
@@ -636,27 +613,25 @@ def build_shell(page: ft.Page, ctx: AppContext, *, on_logout, native_files: Plat
                 else:
                     mv = ctx.reports.cash_movement()
                 rows = [
-                    ("المقبوض", mv.get("receipts"), Colors.SUCCESS_DARK),
-                    ("المدفوع", mv.get("payments"), Colors.DANGER_DARK),
-                    ("الصافي", mv.get("net_movement"), Colors.TEXT_PRIMARY),
+                    ("المقبوض", mv.get("receipts"), "success", ft.Icons.SOUTH_WEST_ROUNDED),
+                    ("المدفوع", mv.get("payments"), "due", ft.Icons.NORTH_EAST_ROUNDED),
+                    ("الصافي", mv.get("net_movement"), "auto", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED),
                 ]
             except Exception:
                 rows = [
-                    ("المقبوض", 0, Colors.SUCCESS_DARK),
-                    ("المدفوع", 0, Colors.DANGER_DARK),
-                    ("الصافي", 0, Colors.TEXT_PRIMARY),
+                    ("المقبوض", 0, "success", ft.Icons.SOUTH_WEST_ROUNDED),
+                    ("المدفوع", 0, "due", ft.Icons.NORTH_EAST_ROUNDED),
+                    ("الصافي", 0, "auto", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED),
                 ]
-            metrics_box.controls = [
-                ft.Row(
-                    [
-                        ft.Text(label, size=11, color=Colors.TEXT_SECONDARY),
-                        ft.Container(expand=True),
-                        ft.Text(_private(value), size=12, weight=ft.FontWeight.W_700, color=color),
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
-                for label, value, color in rows
-            ]
+            controls = []
+            for label, value, role, icon in rows:
+                if role == "auto":
+                    try:
+                        role = "success" if float(value or 0) >= 0 else "due"
+                    except (TypeError, ValueError):
+                        role = "primary"
+                controls.append(amount_chip(_private(value), role=role, label=label, icon=icon, size=17, expand=True))
+            metrics_box.controls = controls
             try:
                 metrics_box.update()
             except Exception:

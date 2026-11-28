@@ -760,7 +760,7 @@ class POSCenter:
 
         print_layout_toggle.on_change = persist_print_layout
 
-        checkout_btn = hero_button("دفع", icon=ft.Icons.PAYMENTS_OUTLINED)
+        checkout_btn = hero_button("بيع", icon=ft.Icons.POINT_OF_SALE_OUTLINED)
 
         def total_amount() -> float:
             return sum(_cart_line_price(row) * float(row["qty"]) for row in self.cart.values())
