@@ -11,12 +11,18 @@ import flet as ft
 from nano_offline.core import branding
 from nano_offline.core.toast import toast
 
-from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls, metric_row
+from nano_offline.components import SearchSelect, SegmentedToggle, SegmentOption, SelectAllTextField, empty_state, kpi_card, DataGrid, GridColumn, metric_controls
 from nano_offline.components import sheets
+from nano_offline.components.amount_chip import amount_chip
+from nano_offline.components.detail_sheet import (
+    detail_meta,
+    detail_section,
+    detail_sheet_content,
+    detail_table,
+)
 from nano_offline.components.buttons import header_close_button, inline_icon_button, primary_button, secondary_button, danger_button, danger_outline_button
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.column_visibility import ColumnVisibility
-from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog, preview_document
 from nano_offline.core.theme import Colors, IconSize, Radius, Shadow
 from nano_offline.core import currency
@@ -3541,21 +3547,16 @@ class ItemsCenter:
                 item_units = ctx.items.units(int(item["id"]))
             except Exception as exc:
                 notify(str(exc), kind="error"); return
-            move_cards = []
             type_labels = {"sale": "بيع", "purchase": "شراء", "adjustment": "تسوية"}
+            movement_rows = []
             for mv in movements:
                 delta = float(mv.get("quantity_delta") or 0)
-                move_cards.append(
-                    ft.Container(
-                        ft.Row([
-                            ft.Container(ft.Icon(ft.Icons.ARROW_DOWNWARD if delta > 0 else ft.Icons.ARROW_UPWARD, size=15, color=Colors.SUCCESS if delta > 0 else Colors.DANGER), width=32, height=32, alignment=ft.alignment.center, bgcolor=Colors.BACKGROUND, border_radius=10),
-                            ft.Column([ft.Text(type_labels.get(mv.get("movement_type"), str(mv.get("movement_type"))), size=11, weight=ft.FontWeight.BOLD), ft.Text(f"{mv.get('movement_date') or '—'} • فاتورة #{mv.get('invoice_id') or '—'}", size=9, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
-                            ft.Text(f"{delta:+,.2f}", size=12, weight=ft.FontWeight.BOLD, color=Colors.SUCCESS if delta > 0 else Colors.DANGER),
-                        ]), padding=8, bgcolor=Colors.BACKGROUND, border_radius=11,
-                    )
-                )
-            if not move_cards:
-                move_cards = [ft.Text("لا توجد حركات مخزون بعد", size=11, color=Colors.TEXT_SECONDARY)]
+                movement_rows.append({
+                    "date": str(mv.get("movement_date") or "—"),
+                    "type": type_labels.get(mv.get("movement_type"), str(mv.get("movement_type") or "—")),
+                    "qty": f"{delta:+,.2f}",
+                    "invoice": f"#{mv.get('invoice_id')}" if mv.get("invoice_id") else "—",
+                })
             units_text = "، ".join(f"{u['name']} × {float(u.get('conversion_factor') or 1):g}" for u in item_units) or "بلا وحدة"
 
             # Adjustment-only history may be removed with an explicitly
@@ -3624,81 +3625,86 @@ class ItemsCenter:
             # into a fixed footer so it's always reachable.
             total_sheet_h = sheets.sheet_height(page, sheets.DETAIL_HEIGHT_RATIO, min_height=480, max_height=720)
 
-            detail_sheet.content = sheets.sheet_frame(
-                ft.Column(
-                    [
-                        sheets.sheet_handle(),
-                        ft.Row([
-                            ft.Container(ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, color=Colors.PRIMARY), width=42, height=42, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=14),
-                            ft.Column([ft.Text(data["name"], size=18, weight=ft.FontWeight.BOLD), ft.Text(f"{data.get('item_type')} • {data.get('category_name') or 'بلا تصنيف'}", size=10, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True),
-                            ft.Column(
-                                [
-                                    money_row(data.get("selling_price"), ctx.settings, size=14, weight=ft.FontWeight.BOLD),
-                                    ft.Text("سعر البيع", size=9, color=Colors.TEXT_SECONDARY),
-                                ],
-                                spacing=1,
-                                horizontal_alignment=ft.CrossAxisAlignment.END,
-                            ),
-                        ]),
-                        ft.Container(
-                            ft.Column([
-                                metric_row([
-                                    kpi_card("المخزون", qty_fmt(stats.get("quantity")), ft.Icons.INVENTORY, Colors.PRIMARY),
-                                    kpi_card("متوسط التكلفة", "", ft.Icons.PRICE_CHECK_OUTLINED, Colors.PURPLE, amount_usd=stats.get("average_cost"), settings=ctx.settings),
-                                    kpi_card("قيمة المخزون", "", ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.SUCCESS, amount_usd=stats.get("inventory_cost_value"), settings=ctx.settings),
-                                    kpi_card("بسعر البيع", "", ft.Icons.SELL_OUTLINED, Colors.WARNING, amount_usd=stats.get("inventory_sale_value"), settings=ctx.settings),
-                                ], spacing=7),
-                                metric_row([
-                                    kpi_card("كمية مباعة", qty_fmt(stats.get("sold_qty")), ft.Icons.TRENDING_UP, Colors.DANGER),
-                                    kpi_card("كمية مشتراة", qty_fmt(stats.get("purchased_qty")), ft.Icons.TRENDING_DOWN, Colors.SUCCESS),
-                                    kpi_card("فواتير بيع", str(int(stats.get("sale_count") or 0)), ft.Icons.RECEIPT_LONG, Colors.PRIMARY),
-                                    kpi_card("فواتير شراء", str(int(stats.get("purchase_count") or 0)), ft.Icons.SHOPPING_BAG_OUTLINED, Colors.PURPLE),
-                                ], spacing=7),
-                                ft.Text(f"الوحدات: {units_text}", size=10, color=Colors.TEXT_MUTED),
-                                ft.Text(f"آخر بيع: {stats.get('last_sale_date') or '—'}   •   آخر شراء: {stats.get('last_purchase_date') or '—'}", size=10, color=Colors.TEXT_SECONDARY),
-                                ft.Divider(height=8), ft.Text("آخر حركات المخزون", size=14, weight=ft.FontWeight.BOLD), ft.Column(move_cards, spacing=5),
-                            ], spacing=9, scroll=ft.ScrollMode.AUTO),
-                            expand=True, padding=ft.padding.only(top=8),
+            summary = ft.Row(
+                [
+                    amount_chip(qty_fmt(stats.get("quantity")), role="primary", label="المخزون", size=17, icon=ft.Icons.INVENTORY),
+                    amount_chip(money(stats.get("average_cost")), role="gold", label="متوسط التكلفة", size=17, icon=ft.Icons.PRICE_CHECK_OUTLINED),
+                    amount_chip(money(stats.get("inventory_cost_value")), role="gold", label="قيمة المخزون", size=17, icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED),
+                    amount_chip(money(stats.get("inventory_sale_value")), role="success", label="بسعر البيع", size=17, icon=ft.Icons.SELL_OUTLINED),
+                ],
+                spacing=8, wrap=True, run_spacing=8,
+            )
+            meta = [
+                detail_meta(ft.Icons.CATEGORY_OUTLINED, "التصنيف", data.get("category_name") or "بلا تصنيف"),
+                detail_meta(ft.Icons.STRAIGHTEN, "الوحدات", units_text),
+                detail_meta(ft.Icons.TRENDING_UP, "مباع", qty_fmt(stats.get("sold_qty"))),
+                detail_meta(ft.Icons.TRENDING_DOWN, "مشترى", qty_fmt(stats.get("purchased_qty"))),
+                detail_meta(ft.Icons.RECEIPT_LONG, "فواتير بيع", str(int(stats.get("sale_count") or 0))),
+                detail_meta(ft.Icons.SHOPPING_BAG_OUTLINED, "فواتير شراء", str(int(stats.get("purchase_count") or 0))),
+            ]
+            sections: list[ft.Control] = []
+            if item_units:
+                unit_rows = [
+                    {
+                        "name": u.get("name") or "—",
+                        "factor": f"{float(u.get('conversion_factor') or 1):g}",
+                        "sell": money(u.get("selling_price")) if u.get("selling_price") not in (None, "") else "—",
+                        "buy": money(u.get("purchase_price")) if u.get("purchase_price") not in (None, "") else "—",
+                        "barcode": str(u.get("barcode") or "—"),
+                    }
+                    for u in item_units
+                ]
+                sections.append(
+                    detail_section(
+                        "الوحدات",
+                        detail_table(
+                            [
+                                GridColumn("name", "الوحدة", width=120),
+                                GridColumn("factor", "المعامل", width=90, align="end"),
+                                GridColumn("sell", "سعر البيع", width=110, align="end", kind="money"),
+                                GridColumn("buy", "سعر الشراء", width=110, align="end", kind="money"),
+                                GridColumn("barcode", "الباركود", width=160),
+                            ],
+                            unit_rows,
+                            height=150,
                         ),
-                        ft.Container(
-                            ft.Column(
-                                [
-                                    ft.Row(
-                                        (
-                                            [secondary_button("طباعة الباركود", icon=ft.Icons.QR_CODE_2, on_click=lambda _, i=data: (close(), open_barcode_with_profile([(i, 1)])), expand=True)]
-                                            if str(data.get("barcode") or "").strip() else []
-                                        ) + [secondary_button("بطاقة QR", icon=ft.Icons.SHARE_ROUNDED, on_click=lambda _, i=data: (close(), open_item_card_sheet(i)), expand=True)],
-                                        spacing=10,
-                                    ),
-                                    ft.Row(
-                                        [
-                                            secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
-                                            primary_button("إغلاق", on_click=close, expand=True),
-                                        ] + (
-                                            [ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=delete_it)]
-                                            if can_delete else []
-                                        ),
-                                        spacing=10,
-                                    ),
-                                    ft.Row(
-                                        [
-                                            ft.TextButton(
-                                                "حذف الرصيد الافتتاحي",
-                                                icon=ft.Icons.MONEY_OFF_ROUNDED,
-                                                on_click=clear_opening,
-                                                expand=True,
-                                            )
-                                        ],
-                                        spacing=10,
-                                    ) if can_clear_opening else ft.Container(height=0),
-                                ],
-                                spacing=8,
-                            ),
-                            padding=ft.padding.only(top=4),
-                        ),
-                    ],
-                    spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                ),
+                    )
+                )
+            sections.append(
+                detail_section(
+                    "حركات المخزون",
+                    detail_table(
+                        [
+                            GridColumn("date", "التاريخ", width=115),
+                            GridColumn("type", "النوع", width=90, align="center"),
+                            GridColumn("qty", "الكمية", width=100, align="end", kind="number"),
+                            GridColumn("invoice", "الفاتورة", width=100, align="end"),
+                        ],
+                        movement_rows or [{"date": "—", "type": "لا توجد حركات مخزون بعد", "qty": "", "invoice": ""}],
+                        height=220,
+                    ),
+                )
+            )
+            actions: list[ft.Control] = []
+            if str(data.get("barcode") or "").strip():
+                actions.append(secondary_button("طباعة الباركود", icon=ft.Icons.QR_CODE_2, on_click=lambda _, i=data: (close(), open_barcode_with_profile([(i, 1)])), expand=True))
+            actions.append(secondary_button("بطاقة QR", icon=ft.Icons.SHARE_ROUNDED, on_click=lambda _, i=data: (close(), open_item_card_sheet(i)), expand=True))
+            actions.append(secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True))
+            actions.append(primary_button("إغلاق", on_click=close, expand=True))
+            if can_delete:
+                actions.append(ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=delete_it))
+            if can_clear_opening:
+                actions.append(ft.TextButton("حذف الرصيد الافتتاحي", icon=ft.Icons.MONEY_OFF_ROUNDED, on_click=clear_opening))
+
+            detail_sheet.content = detail_sheet_content(
+                title=data["name"],
+                subtitle=f"{data.get('item_type')} • {data.get('category_name') or 'بلا تصنيف'}",
+                icon=ft.Icons.INVENTORY_2_OUTLINED,
+                on_close=close,
+                meta=meta,
+                summary=summary,
+                sections=sections,
+                actions=actions,
                 width=sheet_w,
                 height=total_sheet_h,
             )

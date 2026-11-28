@@ -13,11 +13,18 @@ from nano_offline.core.party_reliability import grade_party
 
 from nano_offline.components import (
     SelectAllTextField, SmartAmountField, SmartDateField, SearchSelect,
-    empty_state, new_form_sheet, render_form_sheet, metric_row, metric_controls, DataGrid, GridColumn,
+    empty_state, new_form_sheet, render_form_sheet, metric_controls, DataGrid, GridColumn,
 )
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.buttons import danger_button, danger_outline_button, primary_button, secondary_button
 from nano_offline.components import sheets
+from nano_offline.components.amount_chip import amount_chip
+from nano_offline.components.detail_sheet import (
+    detail_meta,
+    detail_section,
+    detail_sheet_content,
+    detail_table,
+)
 from nano_offline.components.command_bar import RibbonAction
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Shadow
@@ -704,32 +711,16 @@ class PartyCenter:
                 )
             except Exception:
                 trust = None
-            recent = []
+            recent_rows = []
             for inv in data.get("recent_invoices") or []:
                 remaining = float(inv.get("remaining_amount") or 0)
-                recent.append(
-                    ft.Container(
-                        ft.Row(
-                            [
-                                ft.Column(
-                                    [
-                                        ft.Text(f"فاتورة #{inv['id']}", size=12, weight=ft.FontWeight.BOLD),
-                                        ft.Text(str(inv.get("invoice_date") or "—"), size=10, color=Colors.TEXT_SECONDARY),
-                                    ], spacing=1, expand=True,
-                                ),
-                                ft.Column(
-                                    [
-                                        ft.Text(money(inv.get("total")), size=12, weight=ft.FontWeight.BOLD),
-                                        ft.Text("مسددة" if remaining <= 1e-9 else f"متبقي {money(remaining)}", size=9, color=Colors.SUCCESS if remaining <= 1e-9 else Colors.ORANGE),
-                                    ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END,
-                                ),
-                            ]
-                        ),
-                        padding=9, bgcolor=Colors.BACKGROUND, border_radius=12,
-                    )
-                )
-            if not recent:
-                recent = [ft.Text("لا توجد فواتير مرتبطة بعد", size=11, color=Colors.TEXT_SECONDARY)]
+                recent_rows.append({
+                    "reference": f"#{inv.get('id')}",
+                    "date": str(inv.get("invoice_date") or "—"),
+                    "total": money(inv.get("total")),
+                    "remaining": "مسددة" if remaining <= 1e-9 else money(remaining),
+                    "status": "مسددة" if remaining <= 1e-9 else "متبقٍ",
+                })
 
             # Bottom sheet instead of a centered AlertDialog -- matches the
             # same BottomSheet + drag-handle + rounded-top treatment already
@@ -845,57 +836,55 @@ class PartyCenter:
                 actions.append(primary_button("إغلاق", on_click=close, expand=True))
                 return actions
 
-            detail_sheet.content = sheets.sheet_frame(
-                ft.Column(
+            balance_role = "danger" if balance > 1e-9 else "success" if balance < -1e-9 else "neutral"
+            summary = ft.Row(
+                [
+                    amount_chip(money(balance), role=balance_role, label="الرصيد الحالي", size=17, icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED),
+                    amount_chip(money(data.get("invoice_total")), role="gold", label="إجمالي الفواتير", size=17, icon=ft.Icons.PAID_OUTLINED),
+                    amount_chip(str(int(data.get("invoice_count") or 0)), role="primary", label="عدد الفواتير", size=17, icon=ft.Icons.RECEIPT_LONG_OUTLINED),
+                ],
+                spacing=8, wrap=True, run_spacing=8,
+            )
+            meta = [
+                detail_meta(ft.Icons.PHONE_OUTLINED, "الهاتف", data.get("phone") or "بدون هاتف"),
+                detail_meta(ft.Icons.LOCATION_ON_OUTLINED, "العنوان", data.get("address") or "—"),
+                detail_meta(ft.Icons.VERIFIED_USER_OUTLINED, "انتظام السداد", rel["label"] + (f" · {rel['max_age_days']}ي" if rel["max_age_days"] else "")),
+                detail_meta(ft.Icons.SHIELD_OUTLINED, "درجة الثقة", f"{trust.score}/100 · {trust.label}" if trust else "—"),
+            ]
+            sections = [
+                detail_section(
+                    "آخر الفواتير",
+                    detail_table(
+                        [
+                            GridColumn("reference", "المرجع", width=90, align="center"),
+                            GridColumn("date", "التاريخ", width=110),
+                            GridColumn("total", "الإجمالي", width=120, align="end", kind="money"),
+                            GridColumn("remaining", "المتبقي", width=120, align="end", kind="money"),
+                            GridColumn("status", "الحالة", width=90, align="center"),
+                        ],
+                        recent_rows or [{"reference": "—", "date": "لا توجد فواتير مرتبطة بعد", "total": "", "remaining": "", "status": ""}],
+                        height=220,
+                    ),
+                )
+            ]
+            detail_sheet.content = detail_sheet_content(
+                title=data["name"],
+                subtitle=f"{'عميل' if is_customer else 'مورد'} • {rel['label']}",
+                icon=ft.Icons.PERSON if is_customer else ft.Icons.LOCAL_SHIPPING_OUTLINED,
+                icon_color=grade_color,
+                icon_bg=grade_bg,
+                on_close=close,
+                trailing=ft.Row(
                     [
-                        sheets.sheet_handle(),
-                        ft.Row(
-                            [
-                                ft.Container(ft.Icon(ft.Icons.PERSON if is_customer else ft.Icons.LOCAL_SHIPPING_OUTLINED, color=Colors.PRIMARY), width=42, height=42, alignment=ft.alignment.center, bgcolor=Colors.PRIMARY_BG, border_radius=14),
-                                ft.Column([
-                                    ft.Text(data["name"], size=18, weight=ft.FontWeight.BOLD),
-                                    ft.Row([
-                                        ft.Text(data.get("phone") or "بدون هاتف", size=11, color=Colors.TEXT_SECONDARY),
-                                        ft.Container(
-                                            ft.Text(rel["label"], size=10, weight=ft.FontWeight.W_600, color=grade_color),
-                                            padding=ft.padding.symmetric(horizontal=8, vertical=2),
-                                            bgcolor=grade_bg,
-                                            border_radius=10,
-                                        ),
-                                    ], spacing=8),
-                                ], spacing=1, expand=True),
-                                ft.IconButton(ft.Icons.PRINT_OUTLINED, tooltip="طباعة بطاقة الحساب", on_click=print_party_card),
-                                ft.IconButton(ft.Icons.IOS_SHARE, tooltip="مشاركة PDF", on_click=share_party_card_pdf),
-                            ]
-                        ),
-                        ft.Container(
-                            ft.Column(
-                                [
-                                    metric_row([
-                                        small_metric("الرصيد الحالي", money(balance), ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, Colors.PRIMARY),
-                                        small_metric("عدد الفواتير", str(int(data.get("invoice_count") or 0)), ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PURPLE),
-                                        small_metric("إجمالي الفواتير", money(data.get("invoice_total")), ft.Icons.PAID_OUTLINED, Colors.SUCCESS),
-                                        small_metric("انتظام السداد", rel["label"] + (f" · {rel['max_age_days']}ي" if rel["max_age_days"] else ""), ft.Icons.VERIFIED_USER_OUTLINED, grade_color),
-                                        small_metric("درجة الثقة", f"{trust.score}/100 · {trust.label}" if trust else "—", ft.Icons.SHIELD_OUTLINED, getattr(Colors, {"success":"SUCCESS","info":"PRIMARY","warning":"WARNING","danger":"DANGER","muted":"TEXT_MUTED"}.get(trust.color_key if trust else "muted", "PRIMARY"), Colors.PRIMARY)),
-                                    ], spacing=7),
-                                    ft.Text(f"العنوان: {data.get('address') or '—'}", size=11, color=Colors.TEXT_MUTED),
-                                    ft.Divider(height=10),
-                                    ft.Text("آخر الفواتير", size=14, weight=ft.FontWeight.BOLD),
-                                    ft.Column(recent, spacing=6),
-                                ], spacing=9, scroll=ft.ScrollMode.AUTO,
-                            ),
-                            expand=True, padding=ft.padding.only(top=8),
-                        ),
-                        ft.Container(
-                            ft.Row(
-                                _detail_actions(),
-                                spacing=10,
-                            ),
-                            padding=ft.padding.only(top=4),
-                        ),
+                        ft.IconButton(ft.Icons.PRINT_OUTLINED, tooltip="طباعة بطاقة الحساب", on_click=print_party_card),
+                        ft.IconButton(ft.Icons.IOS_SHARE, tooltip="مشاركة PDF", on_click=share_party_card_pdf),
                     ],
-                    spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    spacing=0, tight=True,
                 ),
+                meta=meta,
+                summary=summary,
+                sections=sections,
+                actions=_detail_actions(),
                 width=sheet_w,
                 height=total_sheet_h,
             )

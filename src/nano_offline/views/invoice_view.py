@@ -35,8 +35,14 @@ from nano_offline.services.accounting_rebuilder import OPENING_BALANCE_MARKER
 from nano_offline.components.buttons import stepper_icon_button, header_close_button, primary_button, secondary_button, danger_outline_button, danger_button, wire_busy
 from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components import sheets
+from nano_offline.components.amount_chip import amount_chip
+from nano_offline.components.detail_sheet import (
+    detail_meta,
+    detail_section,
+    detail_sheet_content,
+    detail_table,
+)
 from nano_offline.components.new_item_sheet import build_new_item_panel, open_new_item_sheet
-from nano_offline.components.money_text import money_row
 from nano_offline.components.print_profile import apply_print_profile, build_print_profile_panel, open_print_profile_dialog
 from nano_offline.core.theme import Colors, Radius, Shadow
 from nano_offline.core import currency
@@ -551,29 +557,18 @@ class InvoiceCenter:
         # like one system instead of a mix of AlertDialogs and sheets.
         sheet, sheet_w = sheets.new_desktop_sheet(self.page)
         sheet_h = sheets.sheet_height(self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=420, max_height=700)
-        icon_bubble = ft.Container(ft.Icon(icon, color=icon_color, size=24), width=48, height=48, alignment=ft.alignment.center, bgcolor=icon_bg, border_radius=14)
-        header = ft.Column(
-            [
-                ft.Row([sheets.sheet_handle()], alignment=ft.MainAxisAlignment.CENTER),
-                ft.Row(
-                    [icon_bubble, ft.Column([ft.Text(title, size=18, weight=ft.FontWeight.BOLD), ft.Text(subtitle, size=11, color=Colors.TEXT_SECONDARY)], spacing=1, expand=True)],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-            ],
-            spacing=12,
-            tight=True,
-        )
-        sheet.content = sheets.sheet_frame(
-            ft.Column(
-                [
-                    header,
-                    ft.Container(ft.Column([body], spacing=6, scroll=ft.ScrollMode.AUTO), expand=True),
-                ],
-                spacing=12,
-                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            ),
+
+        def close(_=None):
+            self.page.close(sheet)
+
+        sheet.content = detail_sheet_content(
+            title=title,
+            subtitle=subtitle,
+            icon=icon,
+            icon_color=icon_color,
+            icon_bg=icon_bg,
+            on_close=close,
+            sections=[body],
             width=sheet_w,
             height=sheet_h,
         )
@@ -667,7 +662,7 @@ class InvoiceCenter:
         accent = Colors.SUCCESS if sale else Colors.PURPLE
         accent_bg = Colors.SUCCESS_BG if sale else Colors.PURPLE_BG
 
-        line_rows: list[ft.Control] = []
+        line_table_rows: list[dict] = []
         units_cache: dict[int, list] = {}
         for line in invoice.get("lines") or []:
             qty = float(line.get("quantity") or 0)
@@ -720,33 +715,12 @@ class InvoiceCenter:
                         parts.append(f"{mark} {self._qty(base_qty / uf)} {u.get('name') or ''}".strip())
                     if parts:
                         equiv_text = "، ".join(parts)
-            line_rows.append(
-                ft.Container(
-                    ft.Row(
-                        [
-                            ft.Column(
-                                [
-                                    ft.Text(name, size=12, weight=ft.FontWeight.W_600),
-                                    ft.Row(
-                                        [
-                                            ft.Text(f"{self._qty(qty)} {unit} × ", size=10, color=Colors.TEXT_SECONDARY),
-                                            money_row(unit_price, detail_settings, size=10, color=Colors.TEXT_SECONDARY),
-                                        ],
-                                        spacing=0,
-                                        tight=True,
-                                    ),
-                                ]
-                                + ([ft.Text(equiv_text, size=9, color=Colors.TEXT_FAINT)] if equiv_text else []),
-                                spacing=1, expand=True,
-                            ),
-                            money_row(line_total, detail_settings, size=12, weight=ft.FontWeight.BOLD),
-                        ],
-                    ),
-                    padding=8, bgcolor=Colors.BACKGROUND, border_radius=11,
-                )
-            )
-        if not line_rows:
-            line_rows = [ft.Text("لا توجد أسطر", size=11, color=Colors.TEXT_SECONDARY)]
+            line_table_rows.append({
+                "name": name + (f"  ·  {equiv_text}" if equiv_text else ""),
+                "qty": f"{self._qty(qty)} {unit}".strip(),
+                "price": currency.format_amount(unit_price, detail_settings),
+                "total": currency.format_amount(line_total, detail_settings),
+            })
 
         def close(_=None):
             self.page.close(sheet)
@@ -792,51 +766,62 @@ class InvoiceCenter:
                 ft.OutlinedButton("PDF", icon=ft.Icons.DESCRIPTION_OUTLINED, on_click=do_pdf, expand=True),
             ]
 
-        body = ft.Column(
+        summary = ft.Row(
             [
-                ft.Row([status_pill(status, status_fg, status_bg)], alignment=ft.MainAxisAlignment.START),
-                metric_row([
-                    kpi_card("الإجمالي", "", ft.Icons.RECEIPT_LONG_OUTLINED, Colors.PRIMARY, amount_usd=total, settings=detail_settings),
-                    kpi_card("المدفوع", "", ft.Icons.CHECK_CIRCLE_OUTLINE, Colors.SUCCESS, amount_usd=paid_amount, settings=detail_settings),
-                    kpi_card("المتبقي", "", ft.Icons.SCHEDULE, Colors.ORANGE if remaining > 1e-9 else Colors.SUCCESS, amount_usd=remaining, settings=detail_settings),
-                ], spacing=7),
-                ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
-                ft.Text("الأصناف", size=13, weight=ft.FontWeight.BOLD, color=Colors.TEXT_SECONDARY),
-                ft.Column(line_rows, spacing=6),
-                ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
+                amount_chip(self.money(total), role="primary", label="الإجمالي", size=18, icon=ft.Icons.RECEIPT_LONG_OUTLINED),
+                amount_chip(self.money(paid_amount), role="success", label="المدفوع", size=18, icon=ft.Icons.CHECK_CIRCLE_OUTLINE),
+                amount_chip(self.money(remaining), role="due" if remaining > 1e-9 else "success", label="المتبقي", size=18, icon=ft.Icons.SCHEDULE),
             ],
-            spacing=12,
+            spacing=8, wrap=True, run_spacing=8,
         )
-        if export_row:
-            body.controls.append(ft.Row(export_row, spacing=10))
+        meta = [
+            status_pill(status, status_fg, status_bg),
+            detail_meta(ft.Icons.CALENDAR_MONTH_OUTLINED, "التاريخ", str(invoice.get("invoice_date") or "—")),
+            detail_meta(ft.Icons.PERSON_OUTLINE, "الطرف", party),
+        ]
+        sections = [
+            detail_section(
+                "الأصناف",
+                detail_table(
+                    [
+                        GridColumn("name", "المادة", width=260),
+                        GridColumn("qty", "الكمية", width=110, align="end", kind="number"),
+                        GridColumn("price", "السعر", width=120, align="end", kind="money"),
+                        GridColumn("total", "الإجمالي", width=130, align="end", kind="money"),
+                    ],
+                    line_table_rows or [{"name": "لا توجد أسطر", "qty": "", "price": "", "total": ""}],
+                    height=250,
+                ),
+            )
+        ]
+        actions: list[ft.Control] = []
+        actions.extend(export_row)
         if can_pay:
             # The invoice table has no swipe gesture, so payment lives here
-            # (and nowhere else) for outstanding invoices with a known
-            # party -- one obvious place instead of a hidden shortcut.
-            body.controls.append(
-                ft.Row([ft.FilledButton("تسجيل دفعة", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=do_pay, expand=True)], spacing=10)
-            )
-        actions: list[ft.Control] = [
-            ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True),
-            ft.FilledButton("إغلاق", on_click=close, expand=True),
-        ]
-        body.controls.append(ft.Row(actions, spacing=8))
+            # (and nowhere else) for outstanding invoices with a known party.
+            actions.append(ft.FilledButton("تسجيل دفعة", icon=ft.Icons.PAYMENTS_OUTLINED, on_click=do_pay, expand=True))
+        actions.append(ft.OutlinedButton("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, expand=True))
+        actions.append(ft.FilledButton("إغلاق", on_click=close, expand=True))
         if self._can_delete():
-            body.controls.append(
-                ft.Row(
-                    [ft.TextButton("حذف الفاتورة", icon=ft.Icons.DELETE_OUTLINE, on_click=do_delete)],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                )
-            )
+            actions.append(ft.TextButton("حذف الفاتورة", icon=ft.Icons.DELETE_OUTLINE, on_click=do_delete))
 
-        sheet = self._bottom_sheet(
+        sheet, sheet_w = sheets.new_desktop_sheet(self.page)
+        sheet_h = sheets.sheet_height(self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=420, max_height=700)
+        sheet.content = detail_sheet_content(
+            title=f"فاتورة {kind} #{self._display_invoice_number(invoice_id)}",
+            subtitle=f"{party} • {invoice.get('invoice_date') or '—'}",
             icon=ft.Icons.TRENDING_UP if sale else ft.Icons.TRENDING_DOWN,
             icon_color=accent,
             icon_bg=accent_bg,
-            title=f"فاتورة {kind} #{self._display_invoice_number(invoice_id)}",
-            subtitle=f"{party} • {invoice.get('invoice_date') or '—'}",
-            body=body,
+            on_close=close,
+            meta=meta,
+            summary=summary,
+            sections=sections,
+            actions=actions,
+            width=sheet_w,
+            height=sheet_h,
         )
+        self.page.open(sheet)
 
     def _open_create_party_dialog(self, is_sale: bool, on_created) -> None:
         """Quick-create a customer/supplier from an invoice sheet.

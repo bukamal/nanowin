@@ -15,6 +15,13 @@ from nano_offline.components.column_visibility import ColumnVisibility
 from nano_offline.components.buttons import danger_button, primary_button, secondary_button
 from nano_offline.components.money_text import money_row
 from nano_offline.components import sheets
+from nano_offline.components.amount_chip import amount_chip
+from nano_offline.components.detail_sheet import (
+    detail_meta,
+    detail_section,
+    detail_sheet_content,
+    detail_table,
+)
 from nano_offline.components.print_profile import apply_print_profile, open_print_profile_dialog
 from nano_offline.services.statement_service import StatementService
 from nano_offline.core.theme import Colors, Radius, Shadow
@@ -1118,11 +1125,10 @@ class FinanceCenter:
         title = "سند قبض" if receipt else "سند دفع"
         accent = Colors.SUCCESS if receipt else Colors.DANGER_DARK
         allocations = voucher.get("allocations") or []
-        alloc_controls = []
-        for a in allocations:
-            alloc_controls.append(ft.Container(ft.Row([ft.Text(f"فاتورة #{a['invoice_id']}", size=11, expand=True), money_row(a.get("amount"), self.ctx.settings, size=11, weight=ft.FontWeight.BOLD)]), padding=7, bgcolor=Colors.BACKGROUND, border_radius=10))
-        if not alloc_controls:
-            alloc_controls.append(ft.Text("لا توجد توزيعات على فواتير", size=10, color=Colors.TEXT_SECONDARY))
+        alloc_rows = [
+            {"invoice": f"#{a.get('invoice_id')}", "amount": self.money(a.get("amount"))}
+            for a in allocations
+        ]
         # Bottom sheet instead of a centered AlertDialog -- same read-mostly
         # detail treatment used for item detail (items_view.py) and
         # customer/supplier detail (parties_view.py): opened by tapping a
@@ -1165,63 +1171,52 @@ class FinanceCenter:
         # body, pinned action footer.
         sheet_h = sheets.sheet_height(self.page, sheets.DETAIL_HEIGHT_RATIO, min_height=440, max_height=680)
 
-        detail_sheet.content = sheets.sheet_frame(
-            ft.Column(
-                [
-                    sheets.sheet_handle(),
-                    # Same detail chrome as invoice/material detail sheets: an
-                    # icon bubble + title/subtitle header, then chip meta.
-                    ft.Row(
-                        [
-                            ft.Container(
-                                ft.Icon(
-                                    ft.Icons.PAYMENTS_OUTLINED if receipt else ft.Icons.REQUEST_QUOTE_OUTLINED,
-                                    color=accent, size=22,
-                                ),
-                                width=44, height=44, alignment=ft.alignment.center,
-                                bgcolor=Colors.SUCCESS_BG if receipt else Colors.DANGER_BG, border_radius=14,
-                            ),
-                            ft.Column(
-                                [
-                                    ft.Text(f"{title} #{voucher_id}", size=17, weight=ft.FontWeight.BOLD),
-                                    ft.Text(str(voucher.get("party_name") or "نقدي"), size=11, color=Colors.TEXT_SECONDARY),
-                                ],
-                                spacing=1, expand=True,
-                            ),
-                            ft.IconButton(icon=ft.Icons.CLOSE, tooltip="إغلاق", on_click=close),
-                        ],
-                        spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Container(
-                        ft.Column([
-                            ft.Container(ft.Column([money_row(voucher.get("amount"), self.ctx.settings, size=28, weight=ft.FontWeight.BOLD, color=accent), ft.Text(title, size=11, color=Colors.TEXT_SECONDARY)], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2), padding=14, bgcolor=Colors.BACKGROUND, border_radius=16),
-                            ft.Row([
-                                _detail_chip(ft.Icons.CALENDAR_MONTH_OUTLINED, "التاريخ", str(voucher.get("voucher_date") or "—")),
-                                _detail_chip(ft.Icons.PERSON_OUTLINE, "الحساب", str(voucher.get("party_name") or "نقدي")),
-                                _detail_chip(ft.Icons.TAG_OUTLINED, "المرجع", str(voucher.get("reference") or "—")),
-                                _detail_chip(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, "على الحساب", self.money(voucher.get("unallocated_amount"))),
-                            ], spacing=8, wrap=True),
-                            ft.Text(voucher.get("notes") or "بدون ملاحظات", size=10, color=Colors.TEXT_SECONDARY),
-                            ft.Divider(height=8), ft.Text("التوزيعات", size=13, weight=ft.FontWeight.BOLD), ft.Column(alloc_controls, spacing=5),
-                        ], spacing=8, scroll=ft.ScrollMode.AUTO),
-                        expand=True, padding=ft.padding.only(top=4),
-                    ),
-                    ft.Container(
-                        ft.Row(
-                            [
-                                ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _: (close(), self.confirm_delete_voucher(voucher_id))),
-                                ft.TextButton("تكرار", icon=ft.Icons.CONTENT_COPY, on_click=duplicate),
-                                secondary_button("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=print_voucher, width=None, size="md"),
-                                secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, width=None, size="md"),
-                                primary_button("إغلاق", on_click=close, width=None, size="md"),
-                            ],
-                            spacing=8, run_spacing=8, wrap=True,
-                        ),
-                        padding=ft.padding.only(top=4),
-                    ),
-                ],
-                spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        summary = ft.Row(
+            [
+                amount_chip(self.money(voucher.get("amount")), role="success" if receipt else "due", label=title, size=22,
+                            icon=ft.Icons.PAYMENTS_OUTLINED if receipt else ft.Icons.REQUEST_QUOTE_OUTLINED),
+                amount_chip(self.money(voucher.get("unallocated_amount")), role="gold", label="على الحساب", size=17,
+                            icon=ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED),
+            ],
+            spacing=8, wrap=True, run_spacing=8,
+        )
+        meta = [
+            detail_meta(ft.Icons.CALENDAR_MONTH_OUTLINED, "التاريخ", str(voucher.get("voucher_date") or "—")),
+            detail_meta(ft.Icons.PERSON_OUTLINE, "الحساب", str(voucher.get("party_name") or "نقدي")),
+            detail_meta(ft.Icons.TAG_OUTLINED, "المرجع", str(voucher.get("reference") or "—")),
+        ]
+        sections = [
+            detail_section(
+                "التوزيعات",
+                detail_table(
+                    [
+                        GridColumn("invoice", "الفاتورة", width=120, align="center"),
+                        GridColumn("amount", "المبلغ", width=140, align="end", kind="money"),
+                    ],
+                    alloc_rows or [{"invoice": "—", "amount": "لا توجد توزيعات على فواتير"}],
+                    height=180,
+                ),
             ),
+            detail_section("ملاحظات", ft.Text(voucher.get("notes") or "بدون ملاحظات", size=11, color=Colors.TEXT_SECONDARY)),
+        ]
+        actions = [
+            ft.TextButton("حذف", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda _: (close(), self.confirm_delete_voucher(voucher_id))),
+            ft.TextButton("تكرار", icon=ft.Icons.CONTENT_COPY, on_click=duplicate),
+            secondary_button("طباعة", icon=ft.Icons.PRINT_OUTLINED, on_click=print_voucher, width=None, size="md"),
+            secondary_button("تعديل", icon=ft.Icons.EDIT_OUTLINED, on_click=edit, width=None, size="md"),
+            primary_button("إغلاق", on_click=close, width=None, size="md"),
+        ]
+        detail_sheet.content = detail_sheet_content(
+            title=f"{title} #{voucher_id}",
+            subtitle=str(voucher.get("party_name") or "نقدي"),
+            icon=ft.Icons.PAYMENTS_OUTLINED if receipt else ft.Icons.REQUEST_QUOTE_OUTLINED,
+            icon_color=accent,
+            icon_bg=Colors.SUCCESS_BG if receipt else Colors.DANGER_BG,
+            on_close=close,
+            meta=meta,
+            summary=summary,
+            sections=sections,
+            actions=actions,
             width=sheet_w,
             height=sheet_h,
         )
