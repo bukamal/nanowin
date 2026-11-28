@@ -72,6 +72,13 @@ def new_desktop_sheet(page, *, cap: int | None = 1200) -> tuple[ft.BottomSheet, 
         is_scroll_controlled=True,
         enable_drag=True,
         maintain_bottom_view_insets_padding=True,
+        # Paint the sheet surface itself white and round only the *top*
+        # corners. Without an explicit background the Material default
+        # surface (a grey tint) leaked through as a strip under the white
+        # frame / in the bottom-corner notches.
+        bgcolor=Colors.WHITE,
+        shape=ft.RoundedRectangleBorder(radius=ft.border_radius.only(top_left=28, top_right=28)),
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
     )
     constrain_width(sheet, width)
     return sheet, width

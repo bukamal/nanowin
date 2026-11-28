@@ -160,6 +160,7 @@ def detail_sheet_content(
     root = ft.Column(
         [*fixed_top, *lower],
         spacing=10,
+        expand=True,
         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
     )
     return sheets.sheet_frame(root, width=width, height=height)

@@ -28,3 +28,16 @@ def test_detail_sheet_content_assembles_fixed_frame():
     )
     assert isinstance(content, ft.Container)
     assert content.content is not None
+
+def test_desktop_sheet_paints_white_surface_with_top_radius():
+    from nano_offline.components import sheets
+    from nano_offline.core.theme import Colors
+
+    class _Page:
+        width = 1280
+        height = 800
+
+    sheet, width = sheets.new_desktop_sheet(_Page())
+    assert sheet.bgcolor == Colors.WHITE
+    assert sheet.shape is not None
+    assert width > 0
