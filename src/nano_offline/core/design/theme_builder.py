@@ -27,16 +27,20 @@ def build_page_theme(settings, *, family: str | None = None, is_dark: bool | Non
     def _px(base: int) -> int:
         return max(8, round(base * scale))
 
+    # Global bold: push every Material text style to W_700 so controls that
+    # inherit their weight from the theme follow it (explicit per-widget
+    # weights still win, which is desirable).
+    _bold = {"weight": ft.FontWeight.W_700} if font_settings.ui_bold(settings) else {}
     text_theme = ft.TextTheme(
-        body_large=ft.TextStyle(size=_px(16), color=theme.Colors.TEXT_PRIMARY),
-        body_medium=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY),
-        body_small=ft.TextStyle(size=_px(12), color=theme.Colors.TEXT_PRIMARY),
-        label_large=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY),
-        label_medium=ft.TextStyle(size=_px(12), color=theme.Colors.TEXT_PRIMARY),
-        label_small=ft.TextStyle(size=_px(11), color=theme.Colors.TEXT_PRIMARY),
-        title_large=ft.TextStyle(size=_px(22), color=theme.Colors.TEXT_PRIMARY),
-        title_medium=ft.TextStyle(size=_px(16), color=theme.Colors.TEXT_PRIMARY),
-        title_small=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY),
+        body_large=ft.TextStyle(size=_px(16), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        body_medium=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        body_small=ft.TextStyle(size=_px(12), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        label_large=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        label_medium=ft.TextStyle(size=_px(12), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        label_small=ft.TextStyle(size=_px(11), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        title_large=ft.TextStyle(size=_px(22), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        title_medium=ft.TextStyle(size=_px(16), color=theme.Colors.TEXT_PRIMARY, **_bold),
+        title_small=ft.TextStyle(size=_px(14), color=theme.Colors.TEXT_PRIMARY, **_bold),
     )
     page_theme = ft.Theme(
         color_scheme_seed=theme.Colors.PRIMARY,

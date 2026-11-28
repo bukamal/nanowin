@@ -2719,6 +2719,10 @@ class AdminCenter:
             options=[SegmentOption(str(px), label) for px, label in font_settings.SIZES],
             value=str(font_settings.print_font_size(sset)),
         )
+        bold_font_switch = ft.Switch(
+            label="خط عريض في كامل الواجهة (يُطبَّق على الخط المختار أعلاه)",
+            value=font_settings.ui_bold(sset),
+        )
         fit_width_switch = ft.Switch(
             label="ملاءمة عرض أعمدة الجداول للشاشة تلقائيًا (توزيع نسبي بلا فيض)",
             value=grid_settings.fit_width(sset),
@@ -2749,6 +2753,7 @@ class AdminCenter:
                 font_settings.SETTING_SIZE: font_size_field.value or str(font_settings.DEFAULT_SIZE),
                 font_settings.SETTING_PRINT_FAMILY: print_family_field.value or "",
                 font_settings.SETTING_PRINT_SIZE: print_size_field.value or str(font_settings.print_font_size(sset)),
+                font_settings.SETTING_BOLD: "1" if bold_font_switch.value else "0",
                 grid_settings.FIT_WIDTH_KEY: "1" if fit_width_switch.value else "0",
                 grid_settings.VERTICAL_LINES_KEY: "1" if vertical_lines_switch.value else "0",
                 grid_settings.DARK_LINES_KEY: "1" if dark_lines_switch.value else "0",
@@ -3354,6 +3359,7 @@ class AdminCenter:
                     font_family_field,
                     ft.Text("حجم خط الواجهة", size=11, color=Colors.TEXT_SECONDARY),
                     font_size_field,
+                    bold_font_switch,
                     ft.Divider(height=1, color=Colors.BACKGROUND_ALT),
                     ft.Text("الطباعة (الفواتير وملفات PDF)", size=12, weight=ft.FontWeight.W_600),
                     ft.Text(

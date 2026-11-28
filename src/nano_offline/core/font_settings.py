@@ -15,6 +15,8 @@ from __future__ import annotations
 
 SETTING_FAMILY = "ui.font_family"
 SETTING_SIZE = "ui.font_size"
+# Global bold: renders every text style of the chosen family in bold.
+SETTING_BOLD = "ui.font_bold"
 # Separate print typography, so screen and paper can differ. Both fall back to
 # the UI values when unset (existing installs keep printing as before).
 SETTING_PRINT_FAMILY = "print.font_family"
@@ -22,6 +24,7 @@ SETTING_PRINT_SIZE = "print.font_size"
 
 DEFAULT_FAMILY = "auto"
 DEFAULT_SIZE = 13
+DEFAULT_BOLD = False
 
 # (key, label). ``auto`` = the bundled app typeface when available.
 FAMILIES: list[tuple[str, str]] = [
@@ -72,6 +75,14 @@ def font_size(settings) -> int:
     except Exception:
         return DEFAULT_SIZE
     return value if value in _SIZE_VALUES else DEFAULT_SIZE
+
+
+def ui_bold(settings) -> bool:
+    """Whether the whole UI should render in a bold weight of the chosen font."""
+    try:
+        return str(settings.get(SETTING_BOLD, "1" if DEFAULT_BOLD else "0")).strip() == "1"
+    except Exception:
+        return DEFAULT_BOLD
 
 
 def ui_scale_factor(settings) -> float:

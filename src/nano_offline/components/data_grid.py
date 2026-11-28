@@ -1335,7 +1335,9 @@ class DataGrid(ft.Column):
         from nano_offline.components.amount_chip import chip_colors
 
         role_chip = {
-            "success": "success", "danger": "due", "warning": "gold",
+            # Money (a total) reads gold; an outstanding/remaining figure reads
+            # red so the two never look alike.
+            "success": "success", "danger": "due", "warning": "due",
             "gold": "gold", "primary": "primary", "purple": "primary",
         }
         for col in self._columns:
@@ -1345,16 +1347,29 @@ class DataGrid(ft.Column):
                 role = self._col_role_name(col)
                 if role:
                     chip = chip_colors(role_chip.get(role, "neutral"))
+            if chip:
+                # A rounded, filled pill (not a full-height block) so each
+                # figure reads as its own coloured rectangle, like the POS
+                # total / home cash-movement chips.
+                inner: ft.Control = ft.Container(
+                    ft.Text(text, size=12, weight=ft.FontWeight.BOLD, color=chip[1]),
+                    bgcolor=chip[0],
+                    border_radius=Radius.SM,
+                    padding=ft.padding.symmetric(horizontal=10, vertical=5),
+                    alignment=ft.alignment.center,
+                )
+            else:
+                inner = ft.Container(
+                    ft.Text(text, size=12, weight=ft.FontWeight.BOLD, color=Colors.TEXT_PRIMARY),
+                    padding=ft.padding.symmetric(horizontal=12),
+                    alignment=self._col_align(col),
+                )
             cells.append(
                 ft.Container(
-                    ft.Text(
-                        text, size=12, weight=ft.FontWeight.BOLD,
-                        color=chip[1] if chip else Colors.TEXT_PRIMARY,
-                    ),
+                    inner,
                     height=self._header_height,
                     alignment=self._col_align(col),
-                    padding=ft.padding.symmetric(horizontal=12),
-                    bgcolor=chip[0] if chip else None,
+                    padding=ft.padding.symmetric(horizontal=6),
                     border=self._vline_border(),
                     **self._cell_kwargs(col),
                 )

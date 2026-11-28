@@ -41,3 +41,15 @@ def test_desktop_sheet_paints_white_surface_with_top_radius():
     assert sheet.bgcolor == Colors.WHITE
     assert sheet.shape is not None
     assert width > 0
+
+
+def test_detail_sheet_footer_strips_expand_from_wrapped_actions():
+    expand_btn = ft.FilledButton("إغلاق", expand=True)
+    content = detail_sheet_content(
+        title="t", icon=ft.Icons.INFO, on_close=lambda _=None: None,
+        sections=[ft.Text("body")], actions=[expand_btn],
+    )
+    # The action was created with expand=True; the template must clear it so a
+    # wrapping Row never hosts an Expanded child (which renders a grey box).
+    assert expand_btn.expand is False
+    assert isinstance(content, ft.Container)

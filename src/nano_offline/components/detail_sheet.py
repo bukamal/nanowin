@@ -146,6 +146,16 @@ def detail_sheet_content(
     lower: list[ft.Control] = [scroll_area]
     if actions:
         lower.append(ft.Divider(height=1, color=Colors.BORDER_ALT))
+        # Flutter's Wrap (what a wrapping ft.Row becomes) cannot host
+        # Expanded children -- it fails to build and paints a silent solid-grey
+        # box over the sheet. Action buttons are usually created with
+        # expand=True by callers, so strip that here before wrapping.
+        for control in actions:
+            try:
+                if getattr(control, "expand", False):
+                    control.expand = False
+            except Exception:
+                pass
         lower.append(
             ft.Row(
                 actions,

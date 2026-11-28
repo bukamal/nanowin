@@ -897,5 +897,6 @@ def test_footer_amount_columns_render_coloured_chips():
     )
     g.set_footer({"label": "الإجمالي", "amount": "100"})
     row = g._footer_slot.content.content
-    assert row.controls[1].bgcolor is not None   # money column -> coloured chip
-    assert row.controls[0].bgcolor is None       # plain label column stays flat
+    assert row.controls[1].content.bgcolor is not None   # money column -> coloured pill
+    assert row.controls[1].content.border_radius is not None
+    assert row.controls[0].content.bgcolor is None       # plain label column stays flat
